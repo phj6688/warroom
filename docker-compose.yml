@@ -1,0 +1,9 @@
+services:
+  war-room:
+    build: .
+    container_name: war-room
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
