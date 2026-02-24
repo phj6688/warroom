@@ -382,7 +382,6 @@ html, body {
 .message-badge .emoji { font-size: 13px; }
 .message-phase { font-size: 9px; color: var(--text-dimmer); margin-left: auto; }
 .message-time { font-size: 9px; color: var(--text-dimmer); }
-.message-timestamp { font-size: 10px; color: #555; margin-top: 4px; padding-left: 2px; font-family: var(--mono); }
 
 .message-body {
   padding: 12px 14px;
@@ -506,80 +505,6 @@ html, body {
   0% { opacity: 0.3; }
   50% { opacity: 0.7; }
   100% { opacity: 0.3; }
-}
-
-/* Init/Session Brief Card */
-.init-message {
-  font-family: "JetBrains Mono", monospace;
-  margin-bottom: 18px;
-  border: 1px solid var(--border-bright);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-  animation: fadeSlideIn 0.4s var(--transition);
-  overflow: hidden;
-}
-.init-message-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-  min-height: 44px;
-  transition: background 0.2s;
-}
-.init-message-header:active {
-  background: rgba(0, 255, 65, 0.06);
-}
-.init-message-header .init-icon {
-  font-size: 16px;
-  flex-shrink: 0;
-}
-.init-message-header .init-label {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--green);
-  text-shadow: 0 0 8px var(--green-glow);
-  flex: 1;
-  min-width: 0;
-}
-.init-message-header .init-preview {
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-.init-message-header .init-chevron {
-  font-size: 12px;
-  color: var(--text-dimmer);
-  flex-shrink: 0;
-  transition: transform 0.25s var(--transition);
-}
-.init-message.expanded .init-chevron {
-  transform: rotate(90deg);
-}
-.init-message-body {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.35s var(--transition), padding 0.35s var(--transition);
-  padding: 0 14px;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  border-top: 0 solid var(--border);
-  color: var(--text);
-}
-.init-message.expanded .init-message-body {
-  max-height: 600px;
-  padding: 12px 14px;
-  border-top-width: 1px;
 }
 
 /* Complete banner */
@@ -1115,7 +1040,6 @@ function handleMessage(data) {
       document.getElementById('status-badge').textContent = 'Active';
       document.getElementById('status-badge').className = 'status-badge active';
       clearFeed();
-      addInitMessage(data.session.problem, true);
       startDurationTimer();
       break;
 
@@ -1206,7 +1130,6 @@ function handleMessage(data) {
         document.getElementById('btn-stop').style.display = '';
       }
       clearFeed();
-      addInitMessage(data.session.problem, true);
       // Merge messages + human messages, sort by timestamp, interleave
       const allItems = [];
       (data.session.messages || []).forEach(m => allItems.push({ ...m, _type: 'agent' }));
@@ -1343,33 +1266,6 @@ function escHtml(s) {
 function clearFeed() { document.getElementById('feed').innerHTML = ''; }
 function scrollFeed() { const f = document.getElementById('feed'); requestAnimationFrame(() => f.scrollTop = f.scrollHeight); }
 
-function addInitMessage(problem, collapsed) {
-  const existing = document.getElementById('init-message');
-  if (existing) existing.remove();
-  const preview = problem.length > 80 ? problem.slice(0, 80) + '…' : problem;
-  const d = document.createElement('div');
-  d.className = 'init-message' + (collapsed ? '' : ' expanded');
-  d.id = 'init-message';
-  d.innerHTML = `
-    <div class="init-message-header">
-      <span class="init-icon">📋</span>
-      <span class="init-label">Session Brief</span>
-      <span class="init-preview">${escHtml(preview)}</span>
-      <span class="init-chevron">▸</span>
-    </div>
-    <div class="init-message-body">${escHtml(problem)}</div>
-  `;
-  d.querySelector('.init-message-header').addEventListener('click', () => {
-    d.classList.toggle('expanded');
-    // Hide preview when expanded, show when collapsed
-    const prev = d.querySelector('.init-preview');
-    prev.style.display = d.classList.contains('expanded') ? 'none' : '';
-  });
-  // Set initial preview visibility
-  if (!collapsed) d.querySelector('.init-preview').style.display = 'none';
-  document.getElementById('feed').prepend(d);
-}
-
 function addPhaseSeparator(name) {
   const d = document.createElement('div');
   d.className = 'phase-separator';
@@ -1390,7 +1286,6 @@ function addMessage(msg) {
       <span class="message-time">${time}</span>
     </div>
     <div class="message-body" style="border-color:${msg.agentColor}15">${content}</div>
-    <div class="message-timestamp">${time}</div>
   `;
   document.getElementById('feed').appendChild(d);
   scrollFeed();
@@ -1502,7 +1397,6 @@ function addHumanMessage(data) {
       <span class="message-time">${time}</span>
     </div>
     <div class="message-body">${data.content}</div>
-    <div class="message-timestamp">${time}</div>
   `;
   document.getElementById('feed').appendChild(d);
   scrollFeed();
