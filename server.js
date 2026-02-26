@@ -690,7 +690,24 @@ async function runDeliberation(session) {
   session.active = false;
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   activeSessions.delete(session.id);
-  broadcast({ type: 'deliberation-complete', sessionId: session.id });
+  // Notify clients deliberation is done + expose export options
+  const synthCount = db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'").get(session.id).c;
+  const qaCount = db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?').get(session.id).c;
+  const totalMsgs = session.messages.length;
+
+  broadcast({
+    type: 'deliberation-complete',
+    sessionId: session.id,
+    export: {
+      available: true,
+      modes: [
+        { id: 'full_transcript',       label: 'Full Transcript (A–Z)',          available: totalMsgs > 0 },
+        { id: 'end_result',            label: 'End Result Only',                available: synthCount > 0 },
+        { id: 'end_result_with_qa',    label: 'End Result + Q&A',               available: synthCount > 0 || qaCount > 0 },
+      ],
+      formats: ['txt', 'md', 'json'],
+    }
+  });
 }
 
 // ─── Follow-up Q&A (post-deliberation) ───────────────────────
@@ -882,6 +899,7 @@ wss.on('connection', (ws) => {
 });
 
 // ─── REST endpoints ──────────────────────────────────────────
+app.get('/health', (req, res) => { const sc = db.prepare("SELECT COUNT(*) as count FROM sessions").get().count; res.json({ status: "ok", service: "war-room", sessions: sc, activeSessions: activeSessions.size, uptime: process.uptime() }); });
 app.get('/api/health', (req, res) => {
   const sessionCount = db.prepare('SELECT COUNT(*) as count FROM sessions').get().count;
   res.json({ status: 'ok', service: 'war-room', sessions: sessionCount, activeSessions: activeSessions.size, uptime: process.uptime() });
@@ -923,6 +941,361 @@ app.get('/api/sessions/:id', (req, res) => {
   if (!session) return res.status(404).json({ error: 'Session not found' });
   res.json(session);
 });
+
+
+// ─── Export helpers ──────────────────────────────────────────
+
+/**
+ * Validate export mode.
+ * Allowed: 'full_transcript' | 'end_result' | 'end_result_with_qa'
+ */
+function validateExportMode(mode) {
+  const allowed = ['full_transcript', 'end_result', 'end_result_with_qa'];
+  return allowed.includes(mode) ? mode : null;
+}
+
+/**
+ * Validate export format.
+ * Allowed: 'txt' | 'json' | 'md'
+ */
+function validateExportFormat(fmt) {
+  const allowed = ['txt', 'json', 'md'];
+  return allowed.includes(fmt) ? fmt : 'txt';
+}
+
+/**
+ * Build the export document for a session.
+ * @param {object} session - full session object from loadSession()
+ * @param {string} mode - 'full_transcript' | 'end_result' | 'end_result_with_qa'
+ * @param {string} format - 'txt' | 'md' | 'json'
+ */
+function buildExport(session, mode, format) {
+  const createdAt = new Date(session.createdAt).toISOString();
+  const finishedAt = session.active ? null : new Date(session.updatedAt || session.createdAt).toISOString();
+
+  if (format === 'json') {
+    return buildJsonExport(session, mode, createdAt, finishedAt);
+  }
+  return buildTextExport(session, mode, format, createdAt, finishedAt);
+}
+
+function buildJsonExport(session, mode, createdAt, finishedAt) {
+  const base = {
+    sessionId: session.id,
+    problem: session.problem,
+    mode,
+    createdAt,
+    finishedAt,
+    totalPhases: PHASES.length,
+  };
+
+  if (mode === 'full_transcript') {
+    return {
+      ...base,
+      transcript: session.messages.map(m => ({
+        agent: m.agentName,
+        emoji: m.agentEmoji,
+        phase: m.phase,
+        content: m.content,
+        timestamp: new Date(m.timestamp).toISOString(),
+      })),
+      questions: session.escalations.map(e => ({
+        askedBy: e.agentName,
+        question: e.question,
+        answer: e.answer || null,
+        answered: e.answered,
+      })),
+      humanMessages: (session.humanMessages || []).map(h => ({
+        content: h.content,
+        timestamp: new Date(h.timestamp).toISOString(),
+      })),
+    };
+  }
+
+  if (mode === 'end_result') {
+    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
+    return {
+      ...base,
+      synthesis: synthesis.map(m => ({
+        agent: m.agentName,
+        emoji: m.agentEmoji,
+        content: m.content,
+        timestamp: new Date(m.timestamp).toISOString(),
+      })),
+    };
+  }
+
+  if (mode === 'end_result_with_qa') {
+    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
+    return {
+      ...base,
+      synthesis: synthesis.map(m => ({
+        agent: m.agentName,
+        emoji: m.agentEmoji,
+        content: m.content,
+        timestamp: new Date(m.timestamp).toISOString(),
+      })),
+      questions: session.escalations.map(e => ({
+        askedBy: e.agentName,
+        question: e.question,
+        answer: e.answer || null,
+        answered: e.answered,
+      })),
+      humanMessages: (session.humanMessages || []).map(h => ({
+        content: h.content,
+        timestamp: new Date(h.timestamp).toISOString(),
+      })),
+    };
+  }
+
+  return base;
+}
+
+function hr(char, len) { return char.repeat(len || 70); }
+
+function buildTextExport(session, mode, format, createdAt, finishedAt) {
+  const isMd = format === 'md';
+  const lines = [];
+
+  const h1 = (t) => isMd ? `# ${t}` : `${hr('═')}\n${t}\n${hr('═')}`;
+  const h2 = (t) => isMd ? `## ${t}` : `\n${hr('─')}\n${t}\n${hr('─')}`;
+  const h3 = (t) => isMd ? `### ${t}` : `\n── ${t} ──`;
+  const blockquote = (t) => isMd ? t.split('\n').map(l => `> ${l}`).join('\n') : t;
+
+  lines.push(h1('AI Research War Room — Export'));
+  lines.push('');
+  lines.push(isMd ? `**Problem:** ${session.problem}` : `Problem: ${session.problem}`);
+  lines.push(isMd ? `**Session ID:** \`${session.id}\`` : `Session ID: ${session.id}`);
+  lines.push(isMd ? `**Started:** ${createdAt}` : `Started: ${createdAt}`);
+  if (finishedAt) lines.push(isMd ? `**Completed:** ${finishedAt}` : `Completed: ${finishedAt}`);
+  lines.push(isMd ? `**Export Mode:** ${mode}` : `Export Mode: ${mode}`);
+  lines.push('');
+
+  // ── Full Transcript ──────────────────────────────────────
+  if (mode === 'full_transcript') {
+    lines.push(h2('Full Deliberation Transcript'));
+    lines.push('');
+
+    let currentPhase = null;
+    for (const msg of session.messages) {
+      if (msg.phase !== currentPhase) {
+        currentPhase = msg.phase;
+        lines.push('');
+        lines.push(h2(`Phase: ${currentPhase}`));
+        lines.push('');
+      }
+      lines.push(h3(`${msg.agentEmoji || ''} ${msg.agentName}`));
+      const ts = new Date(msg.timestamp).toLocaleTimeString('en-DE', { hour12: false });
+      lines.push(isMd ? `*${ts}*` : `[${ts}]`);
+      lines.push('');
+      lines.push(msg.content);
+      lines.push('');
+    }
+
+    if (session.escalations && session.escalations.length > 0) {
+      lines.push('');
+      lines.push(h2('Questions & Answers'));
+      lines.push('');
+      for (const e of session.escalations) {
+        lines.push(h3(`${e.agentEmoji || ''} ${e.agentName} asked:`));
+        lines.push(isMd ? `> ${e.question}` : e.question);
+        lines.push('');
+        if (e.answered && e.answer) {
+          lines.push(isMd ? `**Answer:** ${e.answer}` : `Answer: ${e.answer}`);
+        } else {
+          lines.push(isMd ? `*[No answer provided]*` : '[No answer provided]');
+        }
+        lines.push('');
+      }
+    }
+
+    if (session.humanMessages && session.humanMessages.length > 0) {
+      lines.push('');
+      lines.push(h2('Human Messages'));
+      lines.push('');
+      for (const hm of session.humanMessages) {
+        const ts = new Date(hm.timestamp).toISOString();
+        lines.push(isMd ? `**[${ts}]**` : `[${ts}]`);
+        lines.push(hm.content);
+        lines.push('');
+      }
+    }
+  }
+
+  // ── End Result Only ──────────────────────────────────────
+  else if (mode === 'end_result') {
+    lines.push(h2('Final Synthesis'));
+    lines.push('');
+
+    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
+    if (synthesis.length === 0) {
+      lines.push('_The synthesis phase has not completed yet._');
+    } else {
+      for (const msg of synthesis) {
+        lines.push(h3(`${msg.agentEmoji || ''} ${msg.agentName}`));
+        lines.push('');
+        lines.push(msg.content);
+        lines.push('');
+      }
+    }
+  }
+
+  // ── End Result + Q&A ─────────────────────────────────────
+  else if (mode === 'end_result_with_qa') {
+    lines.push(h2('Final Synthesis'));
+    lines.push('');
+
+    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
+    if (synthesis.length === 0) {
+      lines.push('_The synthesis phase has not completed yet._');
+    } else {
+      for (const msg of synthesis) {
+        lines.push(h3(`${msg.agentEmoji || ''} ${msg.agentName}`));
+        lines.push('');
+        lines.push(msg.content);
+        lines.push('');
+      }
+    }
+
+    if (session.escalations && session.escalations.length > 0) {
+      lines.push('');
+      lines.push(h2('Questions & Answers'));
+      lines.push('');
+      for (const e of session.escalations) {
+        lines.push(h3(`${e.agentEmoji || ''} ${e.agentName} asked:`));
+        lines.push(isMd ? `> ${e.question}` : e.question);
+        lines.push('');
+        if (e.answered && e.answer) {
+          lines.push(isMd ? `**Answer:** ${e.answer}` : `Answer: ${e.answer}`);
+        } else {
+          lines.push(isMd ? `*[No answer provided]*` : '[No answer provided]');
+        }
+        lines.push('');
+      }
+    }
+
+    if (session.humanMessages && session.humanMessages.length > 0) {
+      lines.push('');
+      lines.push(h2('Human Messages'));
+      lines.push('');
+      for (const hm of session.humanMessages) {
+        const ts = new Date(hm.timestamp).toISOString();
+        lines.push(isMd ? `**[${ts}]**` : `[${ts}]`);
+        lines.push(hm.content);
+        lines.push('');
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ─── Export REST endpoint ─────────────────────────────────────
+// GET /api/sessions/:id/export
+//   ?mode=full_transcript|end_result|end_result_with_qa  (default: full_transcript)
+//   ?format=txt|md|json                                  (default: txt)
+//
+app.get('/api/sessions/:id/export', (req, res) => {
+  const { id } = req.params;
+
+  // Validate id — alphanumeric + base-36 chars only
+  if (!/^[a-z0-9]{6,32}$/i.test(id)) {
+    return res.status(400).json({ error: 'Invalid session id' });
+  }
+
+  const mode = validateExportMode(req.query.mode) || 'full_transcript';
+  const format = validateExportFormat(req.query.format);
+
+  const session = loadSession(id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  // Load updatedAt from DB (loadSession doesn't include it currently)
+  const sessionRow = stmts.getSession.get(id);
+  session.updatedAt = sessionRow ? sessionRow.updated_at : session.createdAt;
+
+  try {
+    const exportData = buildExport(session, mode, format);
+
+    const modeSlug = mode.replace(/_/g, '-');
+    const filename = `war-room-${id}-${modeSlug}.${format}`;
+
+    if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.json(exportData);
+    }
+
+    const mimeType = format === 'md' ? 'text/markdown' : 'text/plain';
+    res.setHeader('Content-Type', `${mimeType}; charset=utf-8`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(exportData);
+
+  } catch (err) {
+    console.error('Export error:', err);
+    return res.status(500).json({ error: 'Export failed', detail: err.message });
+  }
+});
+
+// ─── Export options endpoint ──────────────────────────────────
+// GET /api/sessions/:id/export/options
+// Returns available export options and session metadata.
+//
+app.get('/api/sessions/:id/export/options', (req, res) => {
+  const { id } = req.params;
+
+  if (!/^[a-z0-9]{6,32}$/i.test(id)) {
+    return res.status(400).json({ error: 'Invalid session id' });
+  }
+
+  const sessionRow = stmts.getSession.get(id);
+  if (!sessionRow) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  const messageCount = db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(id).c;
+  const synthesisCount = db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'").get(id).c;
+  const qaCount = db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?').get(id).c;
+
+  const isComplete = !sessionRow.active;
+
+  res.json({
+    sessionId: id,
+    problem: sessionRow.problem,
+    isComplete,
+    messageCount,
+    hasSynthesis: synthesisCount > 0,
+    hasQA: qaCount > 0,
+    modes: [
+      {
+        id: 'full_transcript',
+        label: 'Full Transcript (A to Z)',
+        description: 'Every agent message from all phases, questions & answers, and human messages',
+        available: messageCount > 0,
+      },
+      {
+        id: 'end_result',
+        label: 'End Result Only',
+        description: 'Final synthesis from the Process Architect only',
+        available: synthesisCount > 0,
+      },
+      {
+        id: 'end_result_with_qa',
+        label: 'End Result + Questions & Answers',
+        description: 'Final synthesis plus all escalation Q&A and human messages',
+        available: synthesisCount > 0 || qaCount > 0,
+      },
+    ],
+    formats: [
+      { id: 'txt', label: 'Plain Text (.txt)', mimeType: 'text/plain' },
+      { id: 'md', label: 'Markdown (.md)', mimeType: 'text/markdown' },
+      { id: 'json', label: 'JSON (.json)', mimeType: 'application/json' },
+    ],
+  });
+});
+
+
 
 // ─── MCP Server Setup ────────────────────────────────────────
 const { setupMCPServer } = require('./mcp-server.js');
