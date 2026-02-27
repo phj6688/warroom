@@ -508,9 +508,8 @@ html, body {
   100% { opacity: 0.3; }
 }
 
-/* Init/Session Brief Card */
+/* Init/Problem Statement Card */
 .init-message {
-  font-family: "JetBrains Mono", monospace;
   margin-bottom: 18px;
   border: 1px solid var(--border-bright);
   border-radius: var(--radius);
@@ -590,6 +589,104 @@ html, body {
 }
 .complete-banner h3 { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; text-shadow: 0 0 10px var(--green-glow); margin-bottom: 4px; }
 .complete-banner p { font-size: 11px; color: var(--text-dim); }
+
+
+/* ─── Export Modal ────────────────────────────────────────── */
+.export-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 300; display: none; align-items: center; justify-content: center;
+  padding: 16px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.export-modal-overlay.open { display: flex; }
+.export-modal {
+  width: 100%; max-width: 480px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-bright);
+  border-radius: 20px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 40px rgba(0,255,65,0.06);
+  overflow: hidden;
+  animation: cmdSlideIn 0.25s var(--transition);
+}
+.export-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.export-modal-title { font-size: 14px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; text-shadow: 0 0 10px var(--green-glow); }
+.export-modal-close {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-dim); font-size: 16px; cursor: pointer;
+  transition: all 0.2s;
+}
+.export-modal-close:hover { border-color: var(--border-bright); color: var(--text); }
+.export-section { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.export-section-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px;
+  color: var(--text-dimmer); margin-bottom: 10px;
+}
+.export-option {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px; border-radius: 10px;
+  border: 1px solid transparent; margin-bottom: 6px;
+  cursor: pointer; transition: all 0.2s;
+  min-height: 44px;
+}
+.export-option:hover { background: rgba(0,255,65,0.04); border-color: var(--border); }
+.export-option.selected { background: rgba(0,255,65,0.08); border-color: var(--green-dim); }
+.export-option.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+.export-radio {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border-bright);
+  flex-shrink: 0; margin-top: 1px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.export-option.selected .export-radio { border-color: var(--green); background: var(--green); }
+.export-option.selected .export-radio::after { content: ''; display: block; width: 6px; height: 6px; border-radius: 50%; background: #000; }
+.export-option-text { flex: 1; min-width: 0; }
+.export-option-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.export-option-desc { font-size: 11px; color: var(--text-dimmer); line-height: 1.4; }
+.export-format-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.export-format-btn {
+  flex: 1; min-width: 80px;
+  padding: 10px 8px; border-radius: 8px;
+  border: 1px solid var(--border);
+  background: none; color: var(--text-dim);
+  font-family: var(--font); font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; text-align: center;
+  min-height: 44px;
+}
+.export-format-btn:hover { border-color: var(--border-bright); color: var(--text); }
+.export-format-btn.selected { background: rgba(0,255,65,0.1); border-color: var(--green-dim); color: var(--green); }
+.export-submit-row { padding: 16px 20px; }
+.export-submit {
+  width: 100%; padding: 14px;
+  background: rgba(0,255,65,0.15); border: 1px solid var(--green-dim);
+  border-radius: 12px; color: var(--green);
+  font-family: var(--font); font-size: 13px; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; transition: all 0.2s var(--transition);
+  min-height: 52px; text-shadow: 0 0 8px var(--green-glow);
+}
+.export-submit:hover { background: rgba(0,255,65,0.22); }
+.export-submit:active { transform: scale(0.97); }
+.export-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 20px; margin-top: 14px;
+  background: rgba(0,255,65,0.12); border: 1px solid var(--green-dim);
+  border-radius: 10px; color: var(--green);
+  font-family: var(--font); font-size: 12px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; transition: all 0.2s var(--transition);
+  min-height: 44px;
+}
+.export-btn:hover { background: rgba(0,255,65,0.2); }
+.export-btn:active { transform: scale(0.96); }
 
 /* ─── Chat Input Bar ──────────────────────────────────── */
 .chat-bar {
@@ -887,6 +984,7 @@ html, body {
     <div class="problem-display" id="problem-display"></div>
     <div class="status-badge idle" id="status-badge">Idle</div>
     <button class="top-btn mobile-only" id="btn-phases" title="Phases">📊</button>
+    <button class="top-btn" id="btn-export" title="Export Results" style="display:none">📤</button>
     <button class="top-btn mobile-only has-badge" id="btn-escalations" title="Escalations">
       🔴
       <span class="badge-dot" id="esc-badge" style="display:none"></span>
@@ -993,6 +1091,27 @@ html, body {
       <span><kbd>↑↓</kbd> navigate</span>
       <span><kbd>↵</kbd> open</span>
       <span><kbd>esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<!-- Export Modal -->
+<div class="export-modal-overlay" id="export-modal-overlay">
+  <div class="export-modal">
+    <div class="export-modal-header">
+      <div class="export-modal-title">📤 Export Results</div>
+      <button class="export-modal-close" id="export-modal-close">✕</button>
+    </div>
+    <div class="export-section">
+      <div class="export-section-label">Content</div>
+      <div id="export-mode-list"></div>
+    </div>
+    <div class="export-section">
+      <div class="export-section-label">Format</div>
+      <div class="export-format-row" id="export-format-row"></div>
+    </div>
+    <div class="export-submit-row">
+      <button class="export-submit" id="export-submit">⬇ Download</button>
     </div>
   </div>
 </div>
@@ -1181,8 +1300,11 @@ function handleMessage(data) {
       document.getElementById('status-badge').className = 'status-badge idle';
       document.getElementById('chat-input').placeholder = 'Ask a follow-up question about this deliberation...';
       document.getElementById('btn-stop').style.display = 'none';
+      document.getElementById('btn-export').style.display = 'flex';
       stopDurationTimer();
       resetAgentStates();
+      // Auto-prompt export after short delay
+      setTimeout(() => openExportModal(), 800);
       break;
 
     case 'session-stopped':
@@ -1201,6 +1323,7 @@ function handleMessage(data) {
       if (!data.session.active) {
         document.getElementById('chat-input').placeholder = 'Ask a follow-up question about this deliberation...';
         document.getElementById('btn-stop').style.display = 'none';
+        document.getElementById('btn-export').style.display = 'flex';
       } else {
         document.getElementById('chat-input').placeholder = 'Add context, answer questions...';
         document.getElementById('btn-stop').style.display = '';
@@ -1353,7 +1476,7 @@ function addInitMessage(problem, collapsed) {
   d.innerHTML = `
     <div class="init-message-header">
       <span class="init-icon">📋</span>
-      <span class="init-label">Session Brief</span>
+      <span class="init-label">Problem Statement</span>
       <span class="init-preview">${escHtml(preview)}</span>
       <span class="init-chevron">▸</span>
     </div>
@@ -1435,22 +1558,32 @@ function addSearchIndicator(queries) {
 function addEscalationInline(data) {
   const agent = agents.find(a => a.id === data.agentId);
   const d = document.createElement('div');
-  d.className = 'escalation-card'; d.id = `esc-${data.id}`;
-  d.innerHTML = `
-    <div class="esc-header-row">
-      <div class="esc-header">⚠️ Input Required — ${agent ? agent.name : 'Agent'}</div>
-      <button class="esc-dismiss" data-id="${data.id}" title="Dismiss">✕</button>
-    </div>
-    <div class="esc-question">${data.question}</div>
-    <div class="esc-input-row">
-      <input type="text" class="esc-input" id="esc-in-${data.id}" placeholder="Your response...">
-      <button class="esc-submit" data-id="${data.id}">▸</button>
-    </div>
-  `;
+  d.className = `escalation-card${data.answered ? ' answered' : ''}`; d.id = `esc-${data.id}`;
+  if (data.answered) {
+    d.innerHTML = `
+      <div class="esc-header-row">
+        <div class="esc-header">✅ Answered — ${agent ? agent.name : 'Agent'}</div>
+      </div>
+      <div class="esc-question">${data.question}</div>
+      <div class="esc-answer">✅ ${data.answer || ''}</div>
+    `;
+  } else {
+    d.innerHTML = `
+      <div class="esc-header-row">
+        <div class="esc-header">⚠️ Input Required — ${agent ? agent.name : 'Agent'}</div>
+        <button class="esc-dismiss" data-id="${data.id}" title="Dismiss">✕</button>
+      </div>
+      <div class="esc-question">${data.question}</div>
+      <div class="esc-input-row">
+        <input type="text" class="esc-input" id="esc-in-${data.id}" placeholder="Your response...">
+        <button class="esc-submit" data-id="${data.id}">▸</button>
+      </div>
+    `;
+    d.querySelector(`#esc-in-${data.id}`).addEventListener('keydown', e => { if (e.key === 'Enter') respondEscalation(data.id); });
+    d.querySelector('.esc-submit').addEventListener('click', () => respondEscalation(data.id));
+    d.querySelector('.esc-dismiss').addEventListener('click', () => dismissEscalation(data.id));
+  }
   document.getElementById('feed').appendChild(d);
-  d.querySelector(`#esc-in-${data.id}`).addEventListener('keydown', e => { if (e.key === 'Enter') respondEscalation(data.id); });
-  d.querySelector('.esc-submit').addEventListener('click', () => respondEscalation(data.id));
-  d.querySelector('.esc-dismiss').addEventListener('click', () => dismissEscalation(data.id));
   scrollFeed();
 }
 
@@ -1511,8 +1644,13 @@ function addHumanMessage(data) {
 function addCompleteBanner() {
   const d = document.createElement('div');
   d.className = 'complete-banner';
-  d.innerHTML = `<h3>✅ Deliberation Complete</h3><p>Review the synthesis above for findings and recommendations.</p>`;
+  d.innerHTML = `
+    <h3>✅ Deliberation Complete</h3>
+    <p>Review the synthesis above for findings and recommendations.</p>
+    <button class="export-btn" id="banner-export-btn">📤 Export Results</button>
+  `;
   document.getElementById('feed').appendChild(d);
+  d.querySelector('#banner-export-btn').addEventListener('click', () => openExportModal());
   scrollFeed();
 }
 
@@ -1610,11 +1748,13 @@ document.getElementById('chat-input').addEventListener('keydown', e => { if (e.k
 
 // Back to welcome on logo tap
 document.querySelector('.logo').addEventListener('click', goHome);
+document.getElementById('btn-export').addEventListener('click', () => openExportModal());
 
 function goHome() {
   currentSession = null;
   showView('view-welcome');
   document.getElementById('problem-display').textContent = '';
+  document.getElementById('btn-export').style.display = 'none';
   document.getElementById('status-badge').textContent = 'Idle';
   document.getElementById('status-badge').className = 'status-badge idle';
   stopDurationTimer();
@@ -1768,6 +1908,88 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ─── Init ────────────────────────────────────────────────
+
+// ─── Export Modal ─────────────────────────────────────────────
+let exportOptions = null;
+let selectedExportMode = 'full_transcript';
+let selectedExportFormat = 'md';
+
+const EXPORT_MODES = [
+  { id: 'full_transcript', label: 'Full Transcript (A to Z)', desc: 'Every agent message from all phases, questions & answers, and human messages' },
+  { id: 'end_result', label: 'End Result Only', desc: 'Final synthesis from all synthesis-phase agents' },
+  { id: 'end_result_with_qa', label: 'End Result + Questions & Answers', desc: 'Final synthesis plus all escalation Q&A and human messages' },
+];
+const EXPORT_FORMATS = [
+  { id: 'txt', label: 'Plain Text' },
+  { id: 'md', label: 'Markdown' },
+  { id: 'json', label: 'JSON' },
+];
+
+async function openExportModal() {
+  if (!currentSession) { showToast('No active session'); return; }
+  const overlay = document.getElementById('export-modal-overlay');
+  overlay.classList.add('open');
+  try {
+    const res = await fetch(apiUrl('/api/sessions/' + currentSession.id + '/export/options'));
+    if (res.ok) exportOptions = await res.json();
+  } catch (e) { exportOptions = null; }
+  renderExportModal();
+}
+
+function closeExportModal() {
+  document.getElementById('export-modal-overlay').classList.remove('open');
+}
+
+function renderExportModal() {
+  const modeList = document.getElementById('export-mode-list');
+  const formatRow = document.getElementById('export-format-row');
+
+  modeList.innerHTML = EXPORT_MODES.map(m => {
+    const info = exportOptions && exportOptions.modes ? exportOptions.modes.find(x => x.id === m.id) : null;
+    const available = info ? info.available : true;
+    const sel = m.id === selectedExportMode;
+    return '<div class="export-option' + (sel ? ' selected' : '') + (available ? '' : ' disabled') + '" data-mode="' + m.id + '">' +
+      '<div class="export-radio"></div>' +
+      '<div class="export-option-text">' +
+        '<div class="export-option-title">' + m.label + '</div>' +
+        '<div class="export-option-desc">' + (available ? m.desc : 'Not available yet') + '</div>' +
+      '</div></div>';
+  }).join('');
+
+  modeList.querySelectorAll('.export-option:not(.disabled)').forEach(el => {
+    el.addEventListener('click', () => {
+      selectedExportMode = el.dataset.mode;
+      modeList.querySelectorAll('.export-option').forEach(o => o.classList.toggle('selected', o.dataset.mode === selectedExportMode));
+    });
+  });
+
+  formatRow.innerHTML = EXPORT_FORMATS.map(f =>
+    '<button class="export-format-btn' + (f.id === selectedExportFormat ? ' selected' : '') + '" data-fmt="' + f.id + '">' + f.label + '</button>'
+  ).join('');
+
+  formatRow.querySelectorAll('.export-format-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedExportFormat = btn.dataset.fmt;
+      formatRow.querySelectorAll('.export-format-btn').forEach(b => b.classList.toggle('selected', b.dataset.fmt === selectedExportFormat));
+    });
+  });
+}
+
+function doExport() {
+  if (!currentSession) return;
+  const url = apiUrl('/api/sessions/' + currentSession.id + '/export?mode=' + selectedExportMode + '&format=' + selectedExportFormat);
+  const a = document.createElement('a');
+  a.href = url; a.download = ''; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  closeExportModal();
+  showToast('📤 Downloading export...');
+}
+
+document.getElementById('export-modal-close').addEventListener('click', closeExportModal);
+document.getElementById('export-modal-overlay').addEventListener('click', e => { if (e.target === document.getElementById('export-modal-overlay')) closeExportModal(); });
+document.getElementById('export-submit').addEventListener('click', doExport);
+
+
 connect();
 </script>
 </body>
