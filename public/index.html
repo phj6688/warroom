@@ -1200,12 +1200,28 @@ function getWsUrl() {
   return `${proto}//${location.host}${BASE_PATH}`;
 }
 
+let wsFailCount = 0;
+let httpPollTimer = null;
+
 function connect() {
-  ws = new WebSocket(getWsUrl());
-  ws.onopen = () => console.log('Connected');
-  ws.onclose = () => { console.log('Disconnected'); setTimeout(connect, 3000); };
+  const url = getWsUrl();
+  ws = new WebSocket(url);
+  ws.onopen = () => { console.log('WS connected'); wsFailCount = 0; if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; } };
+  ws.onclose = () => { wsFailCount++; if (wsFailCount >= 2 && !httpPollTimer) { loadViaHttp(); httpPollTimer = setInterval(loadViaHttp, 15000); } setTimeout(connect, 5000); };
   ws.onerror = (e) => console.error('WS error:', e);
   ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+}
+
+function loadViaHttp() {
+  fetch(apiUrl('/api/sessions')).then(r => r.ok ? r.json() : []).then(sessions => {
+    handleMessage({ type: 'sessions', sessions: sessions.map(s => ({ ...s, problem: (s.problem||'').substring(0,120) })) });
+  }).catch(() => {});
+  fetch(apiUrl('/api/agents')).then(r => r.ok ? r.json() : []).then(agents => {
+    if (agents.length) handleMessage({ type: 'agents', agents });
+  }).catch(() => {});
+  fetch(apiUrl('/api/phases')).then(r => r.ok ? r.json() : []).then(phases => {
+    if (phases.length) handleMessage({ type: 'phases', phases });
+  }).catch(() => {});
 }
 
 function handleMessage(data) {
@@ -1660,9 +1676,17 @@ async function submitFromWelcome() {
   let problem = textarea.value.trim();
   if (!problem && !pendingFiles.length) { showToast('⚠️ Describe a problem'); return; }
   if (!problem) problem = 'Analyze the attached file(s).';
-  if (!ws || ws.readyState !== 1) { showToast('⚠️ Reconnecting...'); connect(); return; }
-
   const btn = document.getElementById('welcome-submit');
+  if (!ws || ws.readyState !== 1) {
+    btn.disabled = true; btn.textContent = '⚡ Deploying...';
+    fetch(apiUrl('/api/sessions'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem, files: [] }) })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => { showToast('✅ Session created!'); textarea.value = ''; pendingFiles = []; renderFileList(); loadViaHttp(); })
+      .catch(e => showToast('⚠️ Deploy failed: ' + e.message))
+      .finally(() => { btn.disabled = false; btn.textContent = '⚡ Deploy War Room'; });
+    return;
+  }
+
   btn.disabled = true; btn.textContent = '⏳ Uploading...';
 
   const files = await uploadFiles();
@@ -1739,6 +1763,59 @@ function startDurationTimer() {
 function stopDurationTimer() { if (durationInterval) clearInterval(durationInterval); }
 
 // ─── Event Listeners ─────────────────────────────────────
+// Improver
+const btnImprove = document.getElementById(btn-improve);
+const improverPanel = document.getElementById(improver-panel);
+const improverOutput = document.getElementById(improver-output);
+const btnDeployImproved = document.getElementById(btn-deploy-improved);
+const btnEditFurther = document.getElementById(btn-edit-further);
+const improverError = document.getElementById(improver-error);
+
+btnImprove.addEventListener(click, async () => {
+  const raw = document.getElementById(welcome-input).value.trim();
+  if (!raw) return;
+  btnImprove.disabled = true;
+  btnImprove.textContent = ⏳ Improving...;
+  btnImprove.classList.add(loading);
+  improverPanel.style.display = none;
+  improverError.style.display = none;
+  try {
+    const res = await fetch(/api/improve, {
+      method: POST,
+      headers: { Content-Type: application/json },
+      body: JSON.stringify({ problem: raw })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      improverError.textContent = ⚠  + (data.error || Improve failed);
+      improverError.style.display = block;
+      return;
+    }
+    improverOutput.value = data.improved;
+    improverPanel.style.display = block;
+  } catch (err) {
+    improverError.textContent = ⚠  + err.message;
+    improverError.style.display = block;
+  } finally {
+    btnImprove.disabled = false;
+    btnImprove.textContent = ✨ Improve;
+    btnImprove.classList.remove(loading);
+  }
+});
+
+btnDeployImproved.addEventListener(click, () => {
+  const improved = improverOutput.value.trim();
+  if (!improved) return;
+  document.getElementById(welcome-input).value = improved;
+  document.getElementById(welcome-submit).click();
+});
+
+btnEditFurther.addEventListener(click, () => {
+  document.getElementById(welcome-input).value = improverOutput.value;
+  improverPanel.style.display = none;
+  document.getElementById(welcome-input).focus();
+});
+
 document.getElementById('btn-back').addEventListener('click', goHome);
 document.getElementById('welcome-submit').addEventListener('click', submitFromWelcome);
 document.getElementById('welcome-input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitFromWelcome(); });

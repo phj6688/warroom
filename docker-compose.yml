@@ -10,6 +10,7 @@ services:
     environment:
       - OPENCLAW_GATEWAY_URL=http://100.79.164.120:18789
       - OPENCLAW_GATEWAY_TOKEN=6406bfa9823514424d00e68157b01ab138d949f55d8c5367
+      - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads

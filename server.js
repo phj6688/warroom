@@ -151,6 +151,26 @@ app.post('/api/upload', upload.array('files', 10), (req, res) => {
   res.json({ ok: true, files });
 });
 
+
+// ─── Improve endpoint ─────────────────────────────────────────
+app.post('/api/improve', async (req, res) => {
+  const systemPrompt = process.env.IMPROVER_SYSTEM_PROMPT;
+  if (!systemPrompt || !systemPrompt.trim()) {
+    return res.status(503).json({ error: "Improver not configured" });
+  }
+  const problem = (req.body && req.body.problem || "").trim();
+  if (!problem) {
+    return res.status(400).json({ error: "problem required" });
+  }
+  try {
+    const improved = await callAnthropic(systemPrompt, [{ role: "user", content: problem }], "improver");
+    return res.json({ improved });
+  } catch (err) {
+    console.error("Improve error:", err.message);
+    return res.status(500).json({ error: "LLM call failed", detail: err.message });
+  }
+});
+
 // ─── Agent Definitions ───────────────────────────────────────
 const AGENTS = [
   {
@@ -771,7 +791,7 @@ wss.on('connection', (ws) => {
 
   // Send sessions list from DB
   const sessionList = stmts.getRecentSessions.all().map(s => ({
-    id: s.id, problem: s.problem, phase: s.phase,
+    id: s.id, problem: s.problem.substring(0, 150), phase: s.phase,
     active: !!s.active, messageCount: stmts.getSessionMessages.all(s.id).length,
     createdAt: s.created_at
   }));
@@ -874,7 +894,7 @@ wss.on('connection', (ws) => {
 
         case 'get-sessions': {
           const sessions = stmts.getRecentSessions.all().map(s => ({
-            id: s.id, problem: s.problem, phase: s.phase,
+            id: s.id, problem: s.problem.substring(0, 150), phase: s.phase,
             active: !!s.active, createdAt: s.created_at
           }));
           ws.send(JSON.stringify({ type: 'sessions', sessions }));
@@ -916,6 +936,19 @@ app.get('/api/sessions', (req, res) => {
     messageCount: stmts.getSessionMessages.all(s.id).length
   }));
   res.json(sessions);
+});
+
+app.post('/api/sessions', (req, res) => {
+  const { problem, files } = req.body || {};
+  if (!problem) return res.status(400).json({ error: 'Problem required' });
+  const session = createSession(problem, files || []);
+  broadcast({ type: 'session-created', session: { id: session.id, problem: session.problem, phase: session.phase, active: session.active, createdAt: session.createdAt } });
+  runDeliberation(session).catch(err => console.error('Deliberation error:', err));
+  res.json({ id: session.id, problem: session.problem, phase: session.phase, active: true, createdAt: session.createdAt });
+});
+
+app.get('/api/phases', (req, res) => {
+  res.json(PHASES);
 });
 
 app.get('/api/search', (req, res) => {
