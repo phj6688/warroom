@@ -252,6 +252,189 @@ html, body {
 .welcome-submit:active { transform: scale(0.97); }
 .welcome-submit:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
+/* ─── Improver ───────────────────────────────────────── */
+.improve-btn {
+  position: relative;
+  padding: 10px 22px;
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius);
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.3s, border-color 0.3s, opacity 0.3s;
+  min-height: 52px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.improve-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 100%; height: 2px;
+  background: var(--green);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s var(--transition);
+}
+.improve-btn:hover { background: rgba(0,255,65,0.05); }
+.improve-btn:hover::after { transform: scaleX(1); }
+.improve-btn:active { transform: scale(0.97); }
+.improve-btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+.improve-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.improve-btn.loading { border-color: var(--green); }
+.improve-btn.loading::after {
+  transform: none;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--green) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: improver-scan 1.4s ease-in-out infinite;
+}
+@keyframes improver-scan {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.improver-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+  margin-top: 12px;
+}
+.improver-panel.open { grid-template-rows: 1fr; }
+.improver-inner { overflow: hidden; }
+.improver-card {
+  padding: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-top: 2px solid var(--green-dim);
+}
+.improver-panel.open .improver-card {
+  animation: improver-reveal 0.35s ease 0.12s both;
+}
+@keyframes improver-reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.improver-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--text-dimmer);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.improver-label::before {
+  content: '';
+  width: 5px; height: 5px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--green-glow);
+  flex-shrink: 0;
+}
+.improver-textarea {
+  width: 100%;
+  min-height: 120px;
+  max-height: 400px;
+  padding: 16px;
+  background: rgba(0,20,5,0.8);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.7;
+  resize: none;
+  outline: none;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.improver-textarea:focus {
+  border-color: var(--border-bright);
+  box-shadow: 0 0 16px rgba(0,255,65,0.06);
+}
+.improver-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.deploy-improved-btn {
+  flex: 1;
+  padding: 14px 16px;
+  background: rgba(0,255,65,0.12);
+  border: 1px solid var(--green-dim);
+  border-radius: var(--radius);
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.25s var(--transition);
+  text-shadow: 0 0 8px var(--green-glow);
+}
+.deploy-improved-btn:hover {
+  background: rgba(0,255,65,0.2);
+  box-shadow: 0 0 24px rgba(0,255,65,0.08);
+}
+.deploy-improved-btn:active { transform: scale(0.97); }
+.deploy-improved-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.edit-further-btn {
+  padding: 14px 22px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.25s, color 0.25s;
+}
+.edit-further-btn:hover { border-color: var(--border-bright); color: var(--green); }
+.edit-further-btn:active { transform: scale(0.97); }
+.edit-further-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+.improver-error {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+  margin-top: 8px;
+}
+.improver-error.visible { grid-template-rows: 1fr; }
+.improver-error-inner { overflow: hidden; }
+.improver-error-content {
+  padding: 10px 14px;
+  background: rgba(255,65,65,0.05);
+  border: 1px solid rgba(255,65,65,0.18);
+  border-radius: 10px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.welcome-actions .welcome-submit { margin-top: 0; flex: 1; }
+
+@media (max-width: 480px) {
+  .welcome-actions { flex-direction: column; }
+  .improver-actions { flex-direction: column; }
+}
+
 /* ─── Session History ─────────────────────────────────── */
 .session-list {
   margin-top: 28px;
@@ -1003,7 +1186,27 @@ html, body {
           <input type="file" id="file-input" multiple>
         </div>
         <div class="file-list" id="file-list"></div>
-        <button class="welcome-submit" id="welcome-submit">⚡ Deploy War Room</button>
+        <div class="improver-panel" id="improver-panel">
+          <div class="improver-inner">
+            <div class="improver-card">
+              <div class="improver-label">IMPROVED PROBLEM STATEMENT</div>
+              <textarea class="improver-textarea" id="improver-output"></textarea>
+              <div class="improver-actions">
+                <button class="deploy-improved-btn" id="btn-deploy-improved">⚡ Deploy with This</button>
+                <button class="edit-further-btn" id="btn-edit-further">✏️ Edit Further</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="improver-error" id="improver-error">
+          <div class="improver-error-inner">
+            <div class="improver-error-content" id="improver-error-text"></div>
+          </div>
+        </div>
+        <div class="welcome-actions">
+          <button class="improve-btn" id="btn-improve">✨ Improve</button>
+          <button class="welcome-submit" id="welcome-submit">⚡ Deploy War Room</button>
+        </div>
       </div>
       <div class="session-list" id="session-list-container" style="display:none">
         <div class="session-list-header">
@@ -1764,56 +1967,75 @@ function stopDurationTimer() { if (durationInterval) clearInterval(durationInter
 
 // ─── Event Listeners ─────────────────────────────────────
 // Improver
-const btnImprove = document.getElementById(btn-improve);
-const improverPanel = document.getElementById(improver-panel);
-const improverOutput = document.getElementById(improver-output);
-const btnDeployImproved = document.getElementById(btn-deploy-improved);
-const btnEditFurther = document.getElementById(btn-edit-further);
-const improverError = document.getElementById(improver-error);
+const btnImprove = document.getElementById('btn-improve');
+const improverPanel = document.getElementById('improver-panel');
+const improverOutput = document.getElementById('improver-output');
+const btnDeployImproved = document.getElementById('btn-deploy-improved');
+const btnEditFurther = document.getElementById('btn-edit-further');
+const improverError = document.getElementById('improver-error');
+const improverErrorText = document.getElementById('improver-error-text');
+let improverErrorTimer = null;
 
-btnImprove.addEventListener(click, async () => {
-  const raw = document.getElementById(welcome-input).value.trim();
+function autoResizeImprover() {
+  improverOutput.style.height = 'auto';
+  improverOutput.style.height = Math.min(Math.max(improverOutput.scrollHeight, 120), 400) + 'px';
+}
+improverOutput.addEventListener('input', autoResizeImprover);
+
+function showImproverError(msg) {
+  improverErrorText.textContent = msg;
+  improverError.classList.add('visible');
+  clearTimeout(improverErrorTimer);
+  improverErrorTimer = setTimeout(() => improverError.classList.remove('visible'), 6000);
+}
+
+btnImprove.addEventListener('click', async () => {
+  const raw = document.getElementById('welcome-input').value.trim();
   if (!raw) return;
   btnImprove.disabled = true;
-  btnImprove.textContent = ⏳ Improving...;
-  btnImprove.classList.add(loading);
-  improverPanel.style.display = none;
-  improverError.style.display = none;
+  btnImprove.textContent = 'Improving\u2026';
+  btnImprove.classList.add('loading');
+  improverPanel.classList.remove('open');
+  improverError.classList.remove('visible');
   try {
-    const res = await fetch(/api/improve, {
-      method: POST,
-      headers: { Content-Type: application/json },
+    const res = await fetch(apiUrl('/api/improve'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ problem: raw })
     });
     const data = await res.json();
     if (!res.ok) {
-      improverError.textContent = ⚠  + (data.error || Improve failed);
-      improverError.style.display = block;
+      showImproverError(data.error || 'Improve failed');
       return;
     }
     improverOutput.value = data.improved;
-    improverPanel.style.display = block;
+    improverPanel.classList.add('open');
+    requestAnimationFrame(autoResizeImprover);
+    setTimeout(() => {
+      improverPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 250);
   } catch (err) {
-    improverError.textContent = ⚠  + err.message;
-    improverError.style.display = block;
+    showImproverError(err.message);
   } finally {
     btnImprove.disabled = false;
-    btnImprove.textContent = ✨ Improve;
-    btnImprove.classList.remove(loading);
+    btnImprove.textContent = '\u2728 Improve';
+    btnImprove.classList.remove('loading');
   }
 });
 
-btnDeployImproved.addEventListener(click, () => {
+btnDeployImproved.addEventListener('click', () => {
   const improved = improverOutput.value.trim();
   if (!improved) return;
-  document.getElementById(welcome-input).value = improved;
-  document.getElementById(welcome-submit).click();
+  document.getElementById('welcome-input').value = improved;
+  improverPanel.classList.remove('open');
+  document.getElementById('welcome-submit').click();
 });
 
-btnEditFurther.addEventListener(click, () => {
-  document.getElementById(welcome-input).value = improverOutput.value;
-  improverPanel.style.display = none;
-  document.getElementById(welcome-input).focus();
+btnEditFurther.addEventListener('click', () => {
+  const welcomeInput = document.getElementById('welcome-input');
+  welcomeInput.value = improverOutput.value;
+  improverPanel.classList.remove('open');
+  setTimeout(() => welcomeInput.focus(), 300);
 });
 
 document.getElementById('btn-back').addEventListener('click', goHome);

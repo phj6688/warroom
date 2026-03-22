@@ -154,16 +154,16 @@ app.post('/api/upload', upload.array('files', 10), (req, res) => {
 
 // ─── Improve endpoint ─────────────────────────────────────────
 app.post('/api/improve', async (req, res) => {
-  const systemPrompt = process.env.IMPROVER_SYSTEM_PROMPT;
-  if (!systemPrompt || !systemPrompt.trim()) {
-    return res.status(503).json({ error: "Improver not configured" });
-  }
   const problem = (req.body && req.body.problem || "").trim();
   if (!problem) {
     return res.status(400).json({ error: "problem required" });
   }
+  const systemPrompt = process.env.IMPROVER_SYSTEM_PROMPT;
+  if (!systemPrompt || !systemPrompt.trim() || systemPrompt.trim() === '__PLACEHOLDER__') {
+    return res.status(503).json({ error: "Improver not configured" });
+  }
   try {
-    const improved = await callAnthropic(systemPrompt, [{ role: "user", content: problem }], "improver");
+    const improved = await callAnthropic(systemPrompt, [{ role: "user", content: problem }], "improver", 1000);
     return res.json({ improved });
   } catch (err) {
     console.error("Improve error:", err.message);
@@ -406,13 +406,13 @@ function loadSession(id) {
 }
 
 // ─── LLM Call ────────────────────────────────────────────────
-async function callAnthropic(systemPrompt, messages, agentId) {
+async function callAnthropic(systemPrompt, messages, agentId, maxTokens = 1500) {
   if (GATEWAY_URL && GATEWAY_TOKEN) {
     const openaiMessages = [{ role: 'system', content: systemPrompt }, ...messages];
     const res = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GATEWAY_TOKEN}` },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1500, messages: openaiMessages })
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: openaiMessages })
     });
     if (!res.ok) { const err = await res.text(); throw new Error(`Gateway error (${res.status}): ${err}`); }
     const data = await res.json();
@@ -421,7 +421,7 @@ async function callAnthropic(systemPrompt, messages, agentId) {
   if (ANTHROPIC_API_KEY) {
     const Anthropic = require('@anthropic-ai/sdk');
     const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const response = await client.messages.create({ model: MODEL, max_tokens: 1500, system: systemPrompt, messages });
+    const response = await client.messages.create({ model: MODEL, max_tokens: maxTokens, system: systemPrompt, messages });
     return response.content[0].text;
   }
   throw new Error('No LLM configuration available');
