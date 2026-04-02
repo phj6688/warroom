@@ -986,6 +986,11 @@ html, body {
 .sa-dot.speaking { background: var(--green); box-shadow: 0 0 6px var(--green-glow); animation: pulse 1s infinite; }
 .sa-dot.searching { background: #41a0ff; box-shadow: 0 0 6px rgba(65,160,255,0.5); animation: pulse 1.2s infinite; }
 .sheet-agent.searching { background: rgba(65,160,255,0.08); border-color: rgba(65,160,255,0.3); }
+.sheet-agent.specialist { border-left: 2px solid var(--warning); }
+.sheet-agent.specialist .sa-role::after { content: ' · Specialist'; color: var(--warning); font-size: 9px; }
+.quality-badge { font-size: 10px; color: var(--green-dim); padding: 2px 8px; border: 1px solid var(--border); border-radius: 8px; white-space: nowrap; display: none; }
+.quality-badge.visible { display: inline-block; }
+.memory-note { font-size: 11px; color: var(--text-dimmer); padding: 8px 16px; text-align: center; border-bottom: 1px solid var(--border); }
 @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.4); opacity: 0.7; } }
 
 /* Phase items in sheet */
@@ -1166,6 +1171,7 @@ html, body {
     <div class="logo">⚡ War Room</div>
     <div class="problem-display" id="problem-display"></div>
     <div class="status-badge idle" id="status-badge">Idle</div>
+    <div class="quality-badge" id="quality-badge" title="Quality Score"></div>
     <button class="top-btn mobile-only" id="btn-phases" title="Phases">📊</button>
     <button class="top-btn" id="btn-export" title="Export Results" style="display:none">📤</button>
     <button class="top-btn mobile-only has-badge" id="btn-escalations" title="Escalations">
@@ -1522,6 +1528,15 @@ function handleMessage(data) {
       document.getElementById('btn-export').style.display = 'flex';
       stopDurationTimer();
       resetAgentStates();
+      // Fetch quality score when available
+      if (data.sessionId) {
+        setTimeout(() => {
+          fetch(apiUrl(`/api/sessions/${data.sessionId}/quality`))
+            .then(r => r.ok ? r.json() : null)
+            .then(q => { if (q) handleMessage({ type: 'quality-scored', score: q.score }); })
+            .catch(() => {});
+        }, 5000);
+      }
       // Auto-prompt export after short delay
       setTimeout(() => openExportModal(), 800);
       break;
@@ -1581,6 +1596,29 @@ function handleMessage(data) {
       showToast('🗑️ Session deleted');
       break;
 
+    case 'quality-scored': {
+      const badge = document.getElementById('quality-badge');
+      if (badge && data.score != null) {
+        badge.textContent = `Q: ${(data.score * 100).toFixed(0)}%`;
+        badge.classList.add('visible');
+        badge.title = `Quality Score: ${(data.score * 100).toFixed(1)}%`;
+      }
+      break;
+    }
+
+    case 'memory-injected':
+      if (data.count > 0) {
+        const feed = document.getElementById('feed');
+        if (feed) {
+          const note = document.createElement('div');
+          note.className = 'memory-note';
+          note.textContent = `🧠 Memory: ${data.count} prior session${data.count > 1 ? 's' : ''} loaded`;
+          feed.appendChild(note);
+          note.scrollIntoView({ behavior: 'smooth' });
+        }
+      }
+      break;
+
     case 'error':
       showToast(`⚠️ ${data.message}`);
       break;
@@ -1590,7 +1628,7 @@ function handleMessage(data) {
 // ─── Render Agents ───────────────────────────────────────
 function renderAgents() {
   const html = agents.map(a => `
-    <div class="sheet-agent" id="agent-${a.id}">
+    <div class="sheet-agent${a.isSpecialist ? ' specialist' : ''}" id="agent-${a.id}">
       <div class="sa-emoji">${a.emoji}</div>
       <div class="sa-info">
         <div class="sa-name" style="color:${a.color}">${a.name}</div>

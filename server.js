@@ -6,14 +6,16 @@ const crypto = require('crypto');
 
 // ─── Modules ────────────────────────────────────────────────
 const { db, stmts } = require('./db');
-const { AGENTS } = require('./lib/agents');
-const { PHASES } = require('./lib/phases');
+const { AGENTS, getAgentsForSession } = require('./lib/agents');
+const { PHASES, createRouter } = require('./lib/phases');
 const { callAnthropic } = require('./lib/llm');
 const { setupRoutes } = require('./lib/routes');
 const { setupWebSocket } = require('./lib/ws-handler');
 const { setupMCPServer } = require('./mcp/http');
 const { createMemoryManager } = require('./lib/memory');
 const { createQualityManager } = require('./lib/quality');
+const { createFingerprintClassifier } = require('./lib/fingerprint');
+const { createSpecialistSpawner } = require('./lib/specialist');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 
 const PORT = process.env.PORT || 8090;
@@ -49,6 +51,8 @@ const wss = new WebSocketServer({ server });
 const activeSessions = new Map();
 const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES });
 const quality = createQualityManager({ db, stmts, callAnthropic, PHASES });
+const fingerprint = createFingerprintClassifier({ callAnthropic });
+const specialist = createSpecialistSpawner({ db, stmts });
 
 function genId() { return crypto.randomUUID(); }
 
@@ -176,10 +180,11 @@ function extractEscalations(text, agentId, sessionId) {
 
 // ─── Context Building ───────────────────────────────────────
 function buildContext(session, agentId, phase) {
-  const agent = AGENTS.find(a => a.id === agentId);
+  const sessionAgents = getAgentsForSession(session);
+  const agent = sessionAgents.find(a => a.id === agentId);
   const phaseName = PHASES[phase].name;
   const priorMessages = session.messages.map(m => {
-    const a = AGENTS.find(x => x.id === m.agentId);
+    const a = sessionAgents.find(x => x.id === m.agentId);
     return `[${a ? a.name : 'Human'}]: ${m.content}`;
   }).join('\n\n');
   const answeredEscalations = session.escalations
@@ -188,7 +193,7 @@ function buildContext(session, agentId, phase) {
   const otherAnswers = session.escalations
     .filter(e => e.answered && e.agentId !== agentId)
     .map(e => {
-      const a = AGENTS.find(x => x.id === e.agentId);
+      const a = sessionAgents.find(x => x.id === e.agentId);
       return `[Human responded to ${a ? a.name : 'agent'}]: Q: "${e.question}" A: ${e.answer}`;
     }).join('\n');
 
@@ -248,7 +253,8 @@ Format this as a clear, actionable brief.`;
 
 // ─── Agent Turn ─────────────────────────────────────────────
 async function runAgentTurn(session, agentId, phase) {
-  const agent = AGENTS.find(a => a.id === agentId);
+  const sessionAgents = getAgentsForSession(session);
+  const agent = sessionAgents.find(a => a.id === agentId);
   const isResearchScout = agentId === 'research-scout';
   session.agentStates[agentId] = 'thinking';
   broadcast({ type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
@@ -307,6 +313,38 @@ async function runAgentTurn(session, agentId, phase) {
 
 // ─── Deliberation Loop ─────────────────────────────────────
 async function runDeliberation(session) {
+  // Fingerprint classification + specialist spawning (before Phase 0)
+  try {
+    const classification = await fingerprint.classify(session.problem);
+    if (classification.archetype && classification.confidence >= fingerprint.MIN_CONFIDENCE) {
+      console.log(`🔍 Fingerprint: archetype="${classification.archetype}" confidence=${classification.confidence.toFixed(2)} specialists=[${classification.recommendedSpecialists.join(',')}]`);
+      stmts.updateSessionArchetype.run(classification.archetype, Date.now(), session.id);
+
+      // Store archetype
+      const now = Date.now();
+      stmts.insertArchetype.run(classification.archetype, classification.archetype, classification.reasoning, now, now);
+      stmts.insertSessionArchetype.run(session.id, classification.archetype, classification.confidence);
+
+      // Spawn specialists
+      if (classification.recommendedSpecialists.length > 0) {
+        const specialists = specialist.spawnSpecialists(classification.recommendedSpecialists);
+        if (specialists.length > 0) {
+          session._specialists = specialists;
+          stmts.updateSessionSpecialists.run(JSON.stringify(specialists.map(s => s.id)), Date.now(), session.id);
+          // Initialize specialist agent states
+          specialists.forEach(s => { session.agentStates[s.id] = 'idle'; });
+          // Broadcast updated agent list
+          const allAgents = getAgentsForSession(session);
+          broadcast({ type: 'agents', agents: allAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat, isSpecialist: !!a.isSpecialist })) });
+        }
+      }
+    } else {
+      console.log(`🔍 Fingerprint: no confident archetype (confidence=${classification.confidence.toFixed(2)}), proceeding with core 8`);
+    }
+  } catch (err) {
+    console.warn(`[fingerprint] Classification error (proceeding with core 8): ${err.message}`);
+  }
+
   // Retrieve relevant prior sessions for memory injection
   try {
     const memories = await memory.retrieveSimilar(session.problem, 3);
@@ -314,19 +352,39 @@ async function runDeliberation(session) {
       session._memories = memories;
       stmts.updateSessionMemoryInjected.run(Date.now(), session.id);
       console.log(`🧠 Memory: ${memories.length} prior sessions injected for ${session.id}`);
+      broadcast({ type: 'memory-injected', sessionId: session.id, count: memories.length });
     }
   } catch (err) {
     console.warn(`⚠️  Memory retrieval failed (proceeding without): ${err.message}`);
   }
 
+  // Create PhaseRouter
+  const router = createRouter();
+
+  // Build agent list per phase (inject specialists into divergence + convergence)
+  function getPhaseAgents(phase) {
+    const baseAgents = [...phase.agents];
+    if (session._specialists && session._specialists.length > 0) {
+      // Specialists participate in Divergence and Convergence phases
+      if (phase.id === 'divergence' || phase.id === 'convergence') {
+        session._specialists.forEach(s => {
+          if (!baseAgents.includes(s.id)) baseAgents.push(s.id);
+        });
+      }
+    }
+    return baseAgents;
+  }
+
   for (let phaseIdx = 0; phaseIdx < PHASES.length; phaseIdx++) {
     if (!session.active) break;
+    router.setIndex(phaseIdx);
+    const phase = router.current();
     session.phase = phaseIdx;
     stmts.updateSessionPhase.run(phaseIdx, Date.now(), session.id);
-    const phase = PHASES[phaseIdx];
-    broadcast({ type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents: phase.agents, sessionId: session.id });
+    const phaseAgents = getPhaseAgents(phase);
+    broadcast({ type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents, sessionId: session.id });
 
-    for (const agentId of phase.agents) {
+    for (const agentId of phaseAgents) {
       if (!session.active) break;
       const pending = session.escalations.filter(e => !e.answered);
       if (pending.length > 0) {
@@ -388,12 +446,13 @@ async function runDeliberation(session) {
 // ─── Follow-up Q&A ──────────────────────────────────────────
 async function runFollowUp(sessionId, session, question) {
   const responderId = 'process-architect';
-  const agent = AGENTS.find(a => a.id === responderId);
+  const sessionAgents = getAgentsForSession(session);
+  const agent = sessionAgents.find(a => a.id === responderId);
   broadcast({ type: 'agent-state', agentId: responderId, state: 'thinking', sessionId });
 
   try {
     const priorMessages = (session.messages || []).map(m => {
-      const a = AGENTS.find(x => x.id === m.agentId);
+      const a = sessionAgents.find(x => x.id === m.agentId);
       return `[${a ? a.name : m.agentName || 'Agent'}]: ${m.content}`;
     }).join('\n\n');
     const humanHistory = (session.humanMessages || []).map(h => `[Human]: ${h.content}`).join('\n');
@@ -416,7 +475,7 @@ async function runFollowUp(sessionId, session, question) {
 }
 
 // ─── Wire Modules ───────────────────────────────────────────
-const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, memory, quality };
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, memory, quality, fingerprint, specialist, getAgentsForSession };
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);

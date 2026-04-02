@@ -91,6 +91,18 @@ const stmts = {
   updateSessionShadowAnswer: db.prepare('UPDATE sessions SET shadow_answer = ?, updated_at = ? WHERE id = ?'),
   insertQualityScore: db.prepare('INSERT INTO quality_scores (id, session_id, phase_completion_rate, escalation_efficiency, synthesis_structure_score, cross_ref_count, shadow_delta, composite_score, evaluator_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   getQualityScore: db.prepare('SELECT * FROM quality_scores WHERE session_id = ?'),
+  // Agent templates
+  getActiveAgentTemplates: db.prepare('SELECT * FROM agent_templates WHERE active = 1 ORDER BY domain'),
+  getAgentTemplateByDomain: db.prepare('SELECT * FROM agent_templates WHERE domain = ? AND active = 1 LIMIT 1'),
+  getAgentTemplateById: db.prepare('SELECT * FROM agent_templates WHERE id = ?'),
+  incrementAgentTemplateUsage: db.prepare('UPDATE agent_templates SET usage_count = usage_count + 1, updated_at = ? WHERE id = ?'),
+  // Archetypes
+  getArchetype: db.prepare('SELECT * FROM archetypes WHERE id = ?'),
+  insertArchetype: db.prepare('INSERT OR IGNORE INTO archetypes (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'),
+  insertSessionArchetype: db.prepare('INSERT OR REPLACE INTO session_archetypes (session_id, archetype_id, confidence) VALUES (?, ?, ?)'),
+  // Session specialist tracking
+  updateSessionArchetype: db.prepare('UPDATE sessions SET archetype_id = ?, updated_at = ? WHERE id = ?'),
+  updateSessionSpecialists: db.prepare('UPDATE sessions SET specialist_agents = ?, updated_at = ? WHERE id = ?'),
   insertEmbedding: db.prepare('INSERT INTO session_embeddings(embedding) VALUES (?)'),
   insertEmbeddingMeta: db.prepare('INSERT INTO embedding_meta (rowid, session_id, content_type, created_at) VALUES (?, ?, ?, ?)'),
   getEmbeddingMetaBySession: db.prepare('SELECT * FROM embedding_meta WHERE session_id = ?'),
