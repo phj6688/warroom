@@ -2,23 +2,27 @@ const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
-const multer = require('multer');
-const fs = require('fs');
-const Database = require('better-sqlite3');
+const crypto = require('crypto');
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// ─── Modules ────────────────────────────────────────────────
+const { db, stmts } = require('./db');
+const { AGENTS } = require('./lib/agents');
+const { PHASES } = require('./lib/phases');
+const { callAnthropic } = require('./lib/llm');
+const { setupRoutes } = require('./lib/routes');
+const { setupWebSocket } = require('./lib/ws-handler');
+const { setupMCPServer } = require('./mcp/http');
+const { createMemoryManager } = require('./lib/memory');
+const { createQualityManager } = require('./lib/quality');
+const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 
 const PORT = process.env.PORT || 8090;
-const MODEL = process.env.MODEL || 'anthropic/claude-sonnet-4-5';
 
-// LLM Proxy
+// ─── LLM config logging ────────────────────────────────────
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || null;
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || null;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || null;
-
-// Search — Tavily API for Research Scout
+const MODEL = process.env.MODEL || 'anthropic/claude-sonnet-4-5';
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || null;
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS || '5');
 
@@ -36,334 +40,31 @@ if (TAVILY_API_KEY) {
   console.warn('⚠️  No TAVILY_API_KEY — Research Scout will operate without live search');
 }
 
-// ─── Database ────────────────────────────────────────────────
-const dataDir = path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+// ─── Express + WebSocket ────────────────────────────────────
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
-const db = new Database(path.join(dataDir, 'warroom.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+// ─── Shared State ───────────────────────────────────────────
+const activeSessions = new Map();
+const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES });
+const quality = createQualityManager({ db, stmts, callAnthropic, PHASES });
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    problem TEXT NOT NULL,
-    phase INTEGER DEFAULT 0,
-    active INTEGER DEFAULT 1,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
+function genId() { return crypto.randomUUID(); }
 
-  CREATE TABLE IF NOT EXISTS session_files (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    size INTEGER,
-    type TEXT,
-    content TEXT,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    agent_id TEXT NOT NULL,
-    agent_name TEXT NOT NULL,
-    agent_emoji TEXT,
-    agent_color TEXT,
-    content TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS escalations (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    agent_id TEXT NOT NULL,
-    agent_name TEXT,
-    agent_emoji TEXT,
-    question TEXT NOT NULL,
-    answer TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at INTEGER NOT NULL,
-    answered_at INTEGER
-  );
-
-  CREATE TABLE IF NOT EXISTS human_messages (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-  CREATE INDEX IF NOT EXISTS idx_escalations_session ON escalations(session_id);
-  CREATE INDEX IF NOT EXISTS idx_human_messages_session ON human_messages(session_id);
-  CREATE INDEX IF NOT EXISTS idx_session_files_session ON session_files(session_id);
-`);
-
-// Prepared statements
-const stmts = {
-  insertSession: db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)'),
-  updateSessionPhase: db.prepare('UPDATE sessions SET phase = ?, updated_at = ? WHERE id = ?'),
-  updateSessionActive: db.prepare('UPDATE sessions SET active = ?, updated_at = ? WHERE id = ?'),
-  insertFile: db.prepare('INSERT INTO session_files (id, session_id, name, size, type, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
-  insertMessage: db.prepare('INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-  insertEscalation: db.prepare('INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, NULL, \'pending\', ?, NULL)'),
-  answerEscalation: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ? WHERE id = ?'),
-  insertHumanMessage: db.prepare('INSERT INTO human_messages (id, session_id, content, created_at) VALUES (?, ?, ?, ?)'),
-  getSessions: db.prepare('SELECT * FROM sessions ORDER BY created_at DESC'),
-  getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
-  getSessionMessages: db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC'),
-  getSessionEscalations: db.prepare('SELECT * FROM escalations WHERE session_id = ? ORDER BY created_at ASC'),
-  getSessionHumanMessages: db.prepare('SELECT * FROM human_messages WHERE session_id = ? ORDER BY created_at ASC'),
-  getSessionFiles: db.prepare('SELECT * FROM session_files WHERE session_id = ? ORDER BY created_at ASC'),
-  getRecentSessions: db.prepare('SELECT * FROM sessions ORDER BY created_at DESC LIMIT 50'),
-  getPendingEscalations: db.prepare('SELECT * FROM escalations WHERE session_id = ? AND status = \'pending\''),
-};
-
-// File uploads
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadsDir),
-    filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
-  }),
-  limits: { fileSize: 10 * 1024 * 1024 }
-});
-
-app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0, setHeaders: (res) => { res.set('Cache-Control', 'no-store'); } }));
-app.use(express.json({ limit: '10mb' }));
-
-// File upload endpoint
-app.post('/api/upload', upload.array('files', 10), (req, res) => {
-  const files = (req.files || []).map(f => {
-    const ext = path.extname(f.originalname).toLowerCase();
-    const textExts = ['.txt', '.md', '.csv', '.json', '.xml', '.yaml', '.yml', '.html', '.js', '.ts', '.py', '.java', '.c', '.cpp', '.h', '.css', '.sql', '.sh', '.log', '.env', '.toml', '.ini', '.cfg', '.conf', '.tex', '.rst', '.org'];
-    let content = null;
-    if (textExts.includes(ext)) {
-      try { content = fs.readFileSync(f.path, 'utf-8').slice(0, 50000); } catch (e) { }
-    }
-    return { id: path.basename(f.path), name: f.originalname, size: f.size, type: f.mimetype, content };
-  });
-  res.json({ ok: true, files });
-});
-
-
-// ─── Improve endpoint ─────────────────────────────────────────
-app.post('/api/improve', async (req, res) => {
-  const problem = (req.body && req.body.problem || "").trim();
-  if (!problem) {
-    return res.status(400).json({ error: "problem required" });
-  }
-  const systemPrompt = process.env.IMPROVER_SYSTEM_PROMPT;
-  if (!systemPrompt || !systemPrompt.trim() || systemPrompt.trim() === '__PLACEHOLDER__') {
-    return res.status(503).json({ error: "Improver not configured" });
-  }
-  try {
-    const improved = await callAnthropic(systemPrompt, [{ role: "user", content: problem }], "improver", 1000);
-    return res.json({ improved });
-  } catch (err) {
-    console.error("Improve error:", err.message);
-    return res.status(500).json({ error: "LLM call failed", detail: err.message });
-  }
-});
-
-// ─── Agent Definitions ───────────────────────────────────────
-const AGENTS = [
-  {
-    id: 'process-architect', name: 'Process Architect', emoji: '🎯', color: '#00ff41',
-    role: 'Metacognitive Conductor', hat: 'Blue Hat',
-    systemPrompt: `You are the Process Architect — the metacognitive conductor of a research war room with 8 specialized AI agents.
-
-Your role:
-- Manage the overall thinking process and deliberation flow
-- Decide when to diverge (explore) vs converge (focus)
-- Ensure equal participation across all agents
-- Frame problems clearly before analysis begins
-- Identify when the team needs external information
-
-Cognitive style: Blue Hat thinking. You think ABOUT thinking. You orchestrate, sequence, and ensure quality of the deliberation process itself.
-
-When you identify information gaps that require human input (internal documents, company-specific data, domain expertise, stakeholder preferences, budget constraints, regulatory specifics), you MUST flag them by including exactly this marker in your response:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Keep responses focused and structured. Use bullet points. Be directive about next steps.`
-  },
-  {
-    id: 'systems-synthesizer', name: 'Systems Synthesizer', emoji: '🔗', color: '#00e639',
-    role: 'Boundary Spanner', hat: 'Cross-Domain',
-    systemPrompt: `You are the Systems Synthesizer — the boundary spanner in a research war room.
-
-Your role:
-- See cross-domain connections others miss
-- Translate between different professional vocabularies
-- Find structural analogies across fields
-- Map system dynamics, feedback loops, and emergent properties
-- Bridge technical and non-technical perspectives
-
-Cognitive style: You think in systems, networks, and patterns. You see the forest AND the trees AND the mycelium connecting them underground.
-
-When you identify information gaps that require human input (internal documents, company-specific data, domain expertise, organizational context), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Keep responses insightful. Use analogies. Show connections.`
-  },
-  {
-    id: 'divergent-generator', name: 'Divergent Generator', emoji: '💡', color: '#00cc30',
-    role: 'Creative Disruptor', hat: 'Green Hat',
-    systemPrompt: `You are the Divergent Generator — the creative disruptor in a research war room.
-
-Your role:
-- Generate novel hypotheses and unconventional ideas
-- Reframe problems from unexpected angles
-- Expand the solution space beyond obvious approaches
-- Challenge assumptions and "obvious" answers
-- Propose wild ideas that might contain seeds of brilliance
-
-Cognitive style: Green Hat thinking. Pure creative energy. No idea is too weird. You generate, you don't judge. Quantity and variety over polish.
-
-When you identify information gaps that require human input (sample documents, creative constraints, stakeholder preferences, examples of prior work), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Be bold. Be weird. Be generative. Number your ideas.`
-  },
-  {
-    id: 'convergent-evaluator', name: 'Convergent Evaluator', emoji: '⚖️', color: '#00b328',
-    role: 'Analytical Engine', hat: 'Black/White Hat',
-    systemPrompt: `You are the Convergent Evaluator — the analytical engine in a research war room.
-
-Your role:
-- Apply Bayesian reasoning to assess probabilities
-- Use Analysis of Competing Hypotheses (ACH) methodology
-- Evaluate evidence quality and weight
-- Identify which ideas have the strongest support
-- Quantify uncertainty and confidence levels
-
-Cognitive style: Black Hat (critical) + White Hat (data-driven). You are rigorous, evidence-based, and probabilistic. You assign likelihoods, not certainties.
-
-When you identify information gaps that require human input (data sources, empirical evidence, prior results, quantitative constraints), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Be precise. Use probability language. Structure evaluations clearly.`
-  },
-  {
-    id: 'red-teamer', name: 'Red Teamer', emoji: '🔴', color: '#00991f',
-    role: 'Adversarial Stress-Tester', hat: "Devil's Advocate",
-    systemPrompt: `You are the Red Teamer — the adversarial stress-tester in a research war room.
-
-Your role:
-- Attack conclusions and expose weaknesses
-- Run pre-mortems: "Assume this failed. Why?"
-- Find failure modes, edge cases, and blind spots
-- Challenge groupthink and comfortable consensus
-- Identify second and third-order consequences
-
-Cognitive style: You are the constructive antagonist. You break things to make them stronger. You find the crack in every argument, the flaw in every plan.
-
-When you identify information gaps that require human input (risk tolerance, known constraints, historical failures, competitive intelligence), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Be incisive. Be uncomfortable. Be necessary.`
-  },
-  {
-    id: 'quantitative-expert', name: 'Quantitative Expert', emoji: '📐', color: '#008017',
-    role: 'Technical Depth', hat: 'STEM',
-    systemPrompt: `You are the Quantitative Expert — the technical depth specialist in a research war room.
-
-Your role:
-- Provide engineering, math, CS, and physical sciences perspective
-- Assess technical feasibility and complexity
-- Estimate resource requirements (compute, time, money)
-- Identify technical risks and dependencies
-- Propose concrete technical approaches
-
-Cognitive style: You think in numbers, algorithms, architectures, and physical constraints. You ground abstract ideas in technical reality.
-
-When you identify information gaps that require human input (tech stack details, infrastructure specs, performance requirements, existing codebases), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Be specific. Use numbers. Estimate ranges. Ground everything in reality.`
-  },
-  {
-    id: 'qualitative-expert', name: 'Qualitative Expert', emoji: '📜', color: '#00660f',
-    role: 'Institutional Depth', hat: 'Policy/Business',
-    systemPrompt: `You are the Qualitative Expert — the institutional depth specialist in a research war room.
-
-Your role:
-- Analyze legal, regulatory, and compliance implications
-- Assess organizational behavior and change management
-- Map incentive structures and stakeholder dynamics
-- Evaluate financial models and business viability
-- Consider cultural, political, and social factors
-
-Cognitive style: You think in institutions, incentives, regulations, and human systems. You understand that technically correct ≠ actually implementable.
-
-When you identify information gaps that require human input (regulatory requirements, organizational structure, budget, legal constraints, stakeholder map), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Be practical. Consider implementation. Think about people and power.`
-  },
-  {
-    id: 'research-scout', name: 'Research Scout', emoji: '🔍', color: '#00ff41',
-    role: 'Information Architect', hat: 'Intel',
-    systemPrompt: `You are the Research Scout — the information architect in a research war room.
-
-Your role:
-- Identify what information is needed and what's missing
-- Evaluate source quality and reliability
-- Organize and structure the team's knowledge base
-- Flag knowledge gaps and information asymmetries
-- Suggest research directions and data sources
-
-You have LIVE INTERNET SEARCH capability. When you need to look something up, include search queries using this exact marker (one per line, up to 5 queries):
-SEARCH: [your search query]
-
-Examples:
-SEARCH: knowledge graph insurance tariff data best practices
-SEARCH: neo4j vs dgraph performance comparison 2025
-
-After your searches execute, you will receive the results and get a second turn to synthesize findings for the team. Use specific, targeted queries. Don't search for things you already know well.
-
-Cognitive style: You are the team's librarian, intelligence analyst, and search engine combined. You know what you know, what you don't know, and what you don't know you don't know.
-
-When you identify information gaps that require human input (internal documents, proprietary data, unpublished research, institutional knowledge), you MUST flag them by including exactly this marker:
-NEED_HUMAN_INPUT: [Your specific question for the human]
-
-Be organized. Cite what you reference. Flag confidence levels on information.`
-  }
-];
-
-// ─── Session State (in-memory cache backed by DB) ────────────
-const activeSessions = new Map(); // Only active sessions in memory
-
-const PHASES = [
-  { id: 'framing', name: 'Problem Framing', agents: ['process-architect', 'research-scout', 'systems-synthesizer'] },
-  { id: 'divergence', name: 'Divergence', agents: ['divergent-generator', 'systems-synthesizer', 'quantitative-expert', 'qualitative-expert'] },
-  { id: 'convergence', name: 'Convergence', agents: ['convergent-evaluator', 'quantitative-expert', 'qualitative-expert', 'research-scout'] },
-  { id: 'red-team', name: 'Red Team', agents: ['red-teamer', 'convergent-evaluator', 'process-architect'] },
-  { id: 'synthesis', name: 'Synthesis', agents: ['process-architect'] }
-];
-
-function genId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function broadcast(data) {
+  const msg = JSON.stringify(data);
+  wss.clients.forEach(client => { if (client.readyState === 1) client.send(msg); });
 }
 
+// ─── Session Management ─────────────────────────────────────
 function createSession(problem, files = []) {
   const id = genId();
   const now = Date.now();
-
-  // Insert into DB
   stmts.insertSession.run(id, problem, now, now);
-
-  // Store files
   files.forEach(f => {
     stmts.insertFile.run(f.id || genId(), id, f.name, f.size || 0, f.type || '', f.content || null, now);
   });
-
-  // In-memory state for active deliberation
   const session = {
     id, problem, files, phase: 0,
     messages: [], humanMessages: [], escalations: [],
@@ -371,94 +72,53 @@ function createSession(problem, files = []) {
   };
   AGENTS.forEach(a => { session.agentStates[a.id] = 'idle'; });
   activeSessions.set(id, session);
+
+  // Generate shadow (adversarial twin) answer async, non-blocking
+  quality.generateShadowAnswer(id, problem).catch(err =>
+    console.warn(`[quality] Shadow generation error: ${err.message}`)
+  );
+
   return session;
 }
 
 function loadSession(id) {
   const row = stmts.getSession.get(id);
   if (!row) return null;
-
   const messages = stmts.getSessionMessages.all(id).map(m => ({
     id: m.id, agentId: m.agent_id, agentName: m.agent_name,
     agentEmoji: m.agent_emoji, agentColor: m.agent_color,
     content: m.content, phase: m.phase, timestamp: m.created_at
   }));
-
   const escalations = stmts.getSessionEscalations.all(id).map(e => ({
     id: e.id, agentId: e.agent_id, agentName: e.agent_name, agentEmoji: e.agent_emoji,
     question: e.question, sessionId: id, answered: e.status === 'answered',
     answer: e.answer, createdAt: e.created_at
   }));
-
   const humanMessages = stmts.getSessionHumanMessages.all(id).map(h => ({
     id: h.id, content: h.content, timestamp: h.created_at
   }));
-
   const files = stmts.getSessionFiles.all(id).map(f => ({
     id: f.id, name: f.name, size: f.size, type: f.type, content: f.content
   }));
-
   return {
     id: row.id, problem: row.problem, phase: row.phase,
     active: !!row.active, messages, escalations, humanMessages,
-    files, agentStates: {}, createdAt: row.created_at
+    files, agentStates: {}, createdAt: row.created_at, updatedAt: row.updated_at
   };
 }
 
-// ─── LLM Call ────────────────────────────────────────────────
-async function callAnthropic(systemPrompt, messages, agentId, maxTokens = 1500) {
-  if (GATEWAY_URL && GATEWAY_TOKEN) {
-    const openaiMessages = [{ role: 'system', content: systemPrompt }, ...messages];
-    const res = await fetch(`${GATEWAY_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GATEWAY_TOKEN}` },
-      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: openaiMessages })
-    });
-    if (!res.ok) { const err = await res.text(); throw new Error(`Gateway error (${res.status}): ${err}`); }
-    const data = await res.json();
-    return data.choices[0].message.content;
-  }
-  if (ANTHROPIC_API_KEY) {
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
-    const response = await client.messages.create({ model: MODEL, max_tokens: maxTokens, system: systemPrompt, messages });
-    return response.content[0].text;
-  }
-  throw new Error('No LLM configuration available');
-}
-
-// ─── Broadcast ───────────────────────────────────────────────
-function broadcast(data) {
-  const msg = JSON.stringify(data);
-  wss.clients.forEach(client => { if (client.readyState === 1) client.send(msg); });
-}
-
-// ─── Tavily Search ───────────────────────────────────────────
+// ─── Tavily Search ──────────────────────────────────────────
 async function tavilySearch(query) {
   if (!TAVILY_API_KEY) return null;
   try {
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${TAVILY_API_KEY}`,
-      },
-      body: JSON.stringify({
-        query,
-        max_results: SEARCH_MAX_RESULTS,
-        search_depth: 'basic',
-        include_answer: true,
-      }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TAVILY_API_KEY}` },
+      body: JSON.stringify({ query, max_results: SEARCH_MAX_RESULTS, search_depth: 'basic', include_answer: true }),
     });
-    if (!res.ok) {
-      console.error(`Tavily search error (${res.status}):`, await res.text());
-      return null;
-    }
+    if (!res.ok) { console.error(`Tavily search error (${res.status}):`, await res.text()); return null; }
     return await res.json();
-  } catch (err) {
-    console.error('Tavily search failed:', err.message);
-    return null;
-  }
+  } catch (err) { console.error('Tavily search failed:', err.message); return null; }
 }
 
 function extractSearchQueries(text) {
@@ -469,7 +129,7 @@ function extractSearchQueries(text) {
     const q = match[1].trim().replace(/^\[|\]$/g, '');
     if (q.length > 2) queries.push(q);
   }
-  return queries.slice(0, 5); // max 5 queries per turn
+  return queries.slice(0, 5);
 }
 
 async function executeSearches(queries) {
@@ -477,17 +137,10 @@ async function executeSearches(queries) {
   for (const query of queries) {
     const data = await tavilySearch(query);
     if (data) {
-      const formatted = {
-        query,
-        answer: data.answer || null,
-        sources: (data.results || []).map(r => ({
-          title: r.title,
-          url: r.url,
-          snippet: (r.content || '').slice(0, 500),
-          score: r.score,
-        })),
-      };
-      results.push(formatted);
+      results.push({
+        query, answer: data.answer || null,
+        sources: (data.results || []).map(r => ({ title: r.title, url: r.url, snippet: (r.content || '').slice(0, 500), score: r.score })),
+      });
     } else {
       results.push({ query, answer: null, sources: [], error: 'Search unavailable' });
     }
@@ -504,9 +157,7 @@ function formatSearchResults(results) {
     if (r.answer) text += `Summary: ${r.answer}\n`;
     if (r.sources.length) {
       text += `Sources:\n`;
-      r.sources.forEach((s, j) => {
-        text += `  ${j + 1}. ${s.title}\n     ${s.url}\n     ${s.snippet}\n`;
-      });
+      r.sources.forEach((s, j) => { text += `  ${j + 1}. ${s.title}\n     ${s.url}\n     ${s.snippet}\n`; });
     }
   });
   text += '\n=== END SEARCH RESULTS ===\n';
@@ -518,27 +169,22 @@ function extractEscalations(text, agentId, sessionId) {
   const regex = /NEED_HUMAN_INPUT:\s*(.+?)(?:\n|$)/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
-    escalations.push({
-      id: genId(), agentId, question: match[1].trim(),
-      sessionId, answered: false, answer: null, createdAt: Date.now()
-    });
+    escalations.push({ id: genId(), agentId, question: match[1].trim(), sessionId, answered: false, answer: null, createdAt: Date.now() });
   }
   return escalations;
 }
 
+// ─── Context Building ───────────────────────────────────────
 function buildContext(session, agentId, phase) {
   const agent = AGENTS.find(a => a.id === agentId);
   const phaseName = PHASES[phase].name;
-
   const priorMessages = session.messages.map(m => {
     const a = AGENTS.find(x => x.id === m.agentId);
     return `[${a ? a.name : 'Human'}]: ${m.content}`;
   }).join('\n\n');
-
   const answeredEscalations = session.escalations
     .filter(e => e.answered && e.agentId === agentId)
     .map(e => `Human answered your question "${e.question}": ${e.answer}`).join('\n');
-
   const otherAnswers = session.escalations
     .filter(e => e.answered && e.agentId !== agentId)
     .map(e => {
@@ -548,6 +194,10 @@ function buildContext(session, agentId, phase) {
 
   let userContent = `PROBLEM: ${session.problem}\n\nCURRENT PHASE: ${phaseName}\n\n`;
 
+  // Inject memory context for Process Architect in first phase only
+  if (phase === 0 && agentId === 'process-architect' && session._memories && session._memories.length > 0) {
+    userContent += memory.injectMemory(session._memories);
+  }
   if (session.files && session.files.length > 0) {
     userContent += `ATTACHED FILES:\n`;
     session.files.forEach(f => {
@@ -557,21 +207,15 @@ function buildContext(session, agentId, phase) {
     });
     userContent += '\n';
   }
-
   if (session.humanMessages && session.humanMessages.length > 0) {
     userContent += `HUMAN INTERJECTIONS (from the problem owner):\n`;
-    session.humanMessages.forEach(hm => {
-      userContent += `[Human @ ${new Date(hm.timestamp).toLocaleTimeString()}]: ${hm.content}\n`;
-    });
+    session.humanMessages.forEach(hm => { userContent += `[Human @ ${new Date(hm.timestamp).toLocaleTimeString()}]: ${hm.content}\n`; });
     userContent += '\n';
   }
-
   if (priorMessages) userContent += `PRIOR DELIBERATION:\n${priorMessages}\n\n`;
   if (answeredEscalations) userContent += `YOUR ESCALATION ANSWERS:\n${answeredEscalations}\n\n`;
   if (otherAnswers) userContent += `SHARED HUMAN INPUT:\n${otherAnswers}\n\n`;
-
   userContent += `Now provide your contribution as ${agent.name} (${agent.role}) for the ${phaseName} phase. Stay in character. Be concise but thorough.`;
-
   if (phase === PHASES.length - 1 && agentId === 'process-architect') {
     userContent += `\n\nThis is the FINAL SYNTHESIS phase. Deliver a comprehensive summary that includes:
 1. Key findings and recommendations
@@ -582,13 +226,30 @@ function buildContext(session, agentId, phase) {
 Format this as a clear, actionable brief.`;
   }
 
+  // Token counting + budget enforcement (S01)
+  const budget = contextBudget(MODEL);
+  const systemTokens = countTokens(agent.systemPrompt);
+  const contextTokens = countTokens(userContent);
+  const totalTokens = systemTokens + contextTokens;
+  const utilization = totalTokens / budget;
+
+  if (utilization > 0.9) {
+    // Auto-trim: remove oldest prior messages from context
+    const trimmedContent = userContent.slice(0, Math.floor(userContent.length * (budget * 0.8) / totalTokens));
+    console.log(`[tokens] TRIMMED context for ${agentId}: ${totalTokens} → ~${countTokens(trimmedContent)} tokens (${(utilization * 100).toFixed(0)}% of budget)`);
+    return [{ role: 'user', content: trimmedContent }];
+  }
+  if (utilization > 0.8) {
+    console.warn(`[tokens] WARNING: context for ${agentId} at ${(utilization * 100).toFixed(0)}% of budget (${totalTokens}/${budget} tokens)`);
+  }
+
   return [{ role: 'user', content: userContent }];
 }
 
+// ─── Agent Turn ─────────────────────────────────────────────
 async function runAgentTurn(session, agentId, phase) {
   const agent = AGENTS.find(a => a.id === agentId);
   const isResearchScout = agentId === 'research-scout';
-
   session.agentStates[agentId] = 'thinking';
   broadcast({ type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
 
@@ -596,68 +257,36 @@ async function runAgentTurn(session, agentId, phase) {
     const messages = buildContext(session, agentId, phase);
     let response = await callAnthropic(agent.systemPrompt, messages, agentId);
 
-    // ─── Research Scout: two-pass search flow ─────────────────
     if (isResearchScout && TAVILY_API_KEY) {
       const searchQueries = extractSearchQueries(response);
       if (searchQueries.length > 0) {
-        // Broadcast first pass (with search intent)
         session.agentStates[agentId] = 'searching';
         broadcast({ type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
-        broadcast({
-          type: 'search-started',
-          agentId,
-          queries: searchQueries,
-          sessionId: session.id,
-        });
-
+        broadcast({ type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
         console.log(`🔍 Research Scout searching: ${searchQueries.join(' | ')}`);
-
-        // Execute searches
         const searchResults = await executeSearches(searchQueries);
         const resultsText = formatSearchResults(searchResults);
-
-        broadcast({
-          type: 'search-complete',
-          agentId,
-          resultCount: searchResults.reduce((n, r) => n + r.sources.length, 0),
-          sessionId: session.id,
-        });
-
-        // Second pass: synthesize with search results
+        broadcast({ type: 'search-complete', agentId, resultCount: searchResults.reduce((n, r) => n + r.sources.length, 0), sessionId: session.id });
         session.agentStates[agentId] = 'thinking';
         broadcast({ type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
-
         const synthesisMessages = [
           ...messages,
           { role: 'assistant', content: response },
-          {
-            role: 'user',
-            content: `Your search queries have been executed. Here are the results:${resultsText}\n\nNow synthesize these findings into a comprehensive research brief for the team. Include:\n1. Key findings from the search results\n2. Source quality assessment\n3. How this information relates to the problem\n4. Remaining knowledge gaps\n\nDo NOT include any SEARCH: markers in this response.`,
-          },
+          { role: 'user', content: `Your search queries have been executed. Here are the results:${resultsText}\n\nNow synthesize these findings into a comprehensive research brief for the team. Include:\n1. Key findings from the search results\n2. Source quality assessment\n3. How this information relates to the problem\n4. Remaining knowledge gaps\n\nDo NOT include any SEARCH: markers in this response.` },
         ];
-
         response = await callAnthropic(agent.systemPrompt, synthesisMessages, agentId);
       }
     }
-    // ─── End search flow ──────────────────────────────────────
 
     session.agentStates[agentId] = 'speaking';
     broadcast({ type: 'agent-state', agentId, state: 'speaking', sessionId: session.id });
-
     const now = Date.now();
     const msgId = genId();
-    const msg = {
-      id: msgId, agentId, agentName: agent.name, agentEmoji: agent.emoji,
-      agentColor: agent.color, content: response, phase: PHASES[phase].name, timestamp: now
-    };
+    const msg = { id: msgId, agentId, agentName: agent.name, agentEmoji: agent.emoji, agentColor: agent.color, content: response, phase: PHASES[phase].name, timestamp: now };
     session.messages.push(msg);
-
-    // Persist
     stmts.insertMessage.run(msgId, session.id, agentId, agent.name, agent.emoji, agent.color, response, PHASES[phase].name, now);
-
     broadcast({ type: 'message', ...msg, sessionId: session.id });
 
-    // Escalations
     const escalations = extractEscalations(response, agentId, session.id);
     escalations.forEach(esc => {
       session.escalations.push(esc);
@@ -667,7 +296,6 @@ async function runAgentTurn(session, agentId, phase) {
 
     session.agentStates[agentId] = 'idle';
     broadcast({ type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
-
     await new Promise(r => setTimeout(r, 500));
   } catch (err) {
     console.error(`Agent ${agentId} error:`, err.message);
@@ -677,19 +305,29 @@ async function runAgentTurn(session, agentId, phase) {
   }
 }
 
+// ─── Deliberation Loop ─────────────────────────────────────
 async function runDeliberation(session) {
+  // Retrieve relevant prior sessions for memory injection
+  try {
+    const memories = await memory.retrieveSimilar(session.problem, 3);
+    if (memories.length > 0) {
+      session._memories = memories;
+      stmts.updateSessionMemoryInjected.run(Date.now(), session.id);
+      console.log(`🧠 Memory: ${memories.length} prior sessions injected for ${session.id}`);
+    }
+  } catch (err) {
+    console.warn(`⚠️  Memory retrieval failed (proceeding without): ${err.message}`);
+  }
+
   for (let phaseIdx = 0; phaseIdx < PHASES.length; phaseIdx++) {
     if (!session.active) break;
-
     session.phase = phaseIdx;
     stmts.updateSessionPhase.run(phaseIdx, Date.now(), session.id);
-
     const phase = PHASES[phaseIdx];
     broadcast({ type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents: phase.agents, sessionId: session.id });
 
     for (const agentId of phase.agents) {
       if (!session.active) break;
-
       const pending = session.escalations.filter(e => !e.answered);
       if (pending.length > 0) {
         broadcast({ type: 'waiting-for-human', pendingCount: pending.length, sessionId: session.id });
@@ -702,7 +340,6 @@ async function runDeliberation(session) {
           broadcast({ type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
         }
       }
-
       await runAgentTurn(session, agentId, phaseIdx);
     }
   }
@@ -710,73 +347,66 @@ async function runDeliberation(session) {
   session.active = false;
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   activeSessions.delete(session.id);
-  // Notify clients deliberation is done + expose export options
+
+  // Post-synthesis: embed session and extract archival facts
+  memory.storeSessionMemory(session.id).catch(err =>
+    console.warn(`⚠️  Post-session embedding failed: ${err.message}`)
+  );
+  memory.extractArchivalFacts(session.id).then(facts => {
+    if (facts) console.log(`📋 Archival facts for ${session.id}: archetype="${facts.archetype || 'unknown'}"`);
+  }).catch(err =>
+    console.warn(`⚠️  Archival fact extraction failed: ${err.message}`)
+  );
+
+  // Quality evaluation — async, non-blocking, after deliberation-complete
+  quality.evaluateSession(session.id).then(result => {
+    if (result) {
+      console.log(`📊 Quality score for ${session.id}: ${result.score.toFixed(3)}`);
+      broadcast({ type: 'quality-scored', sessionId: session.id, score: result.score, breakdown: result.breakdown });
+    }
+  }).catch(err =>
+    console.warn(`[quality] Evaluation failed for ${session.id}: ${err.message}`)
+  );
+
   const synthCount = db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'").get(session.id).c;
   const qaCount = db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?').get(session.id).c;
   const totalMsgs = session.messages.length;
-
   broadcast({
-    type: 'deliberation-complete',
-    sessionId: session.id,
+    type: 'deliberation-complete', sessionId: session.id,
     export: {
       available: true,
       modes: [
-        { id: 'full_transcript',       label: 'Full Transcript (A–Z)',          available: totalMsgs > 0 },
-        { id: 'end_result',            label: 'End Result Only',                available: synthCount > 0 },
-        { id: 'end_result_with_qa',    label: 'End Result + Q&A',               available: synthCount > 0 || qaCount > 0 },
+        { id: 'full_transcript', label: 'Full Transcript (A–Z)', available: totalMsgs > 0 },
+        { id: 'end_result', label: 'End Result Only', available: synthCount > 0 },
+        { id: 'end_result_with_qa', label: 'End Result + Q&A', available: synthCount > 0 || qaCount > 0 },
       ],
       formats: ['txt', 'md', 'json'],
     }
   });
 }
 
-// ─── Follow-up Q&A (post-deliberation) ───────────────────────
+// ─── Follow-up Q&A ──────────────────────────────────────────
 async function runFollowUp(sessionId, session, question) {
-  // Pick the best agent to answer based on the question
-  // Process Architect synthesizes, but Research Scout handles research questions
   const responderId = 'process-architect';
   const agent = AGENTS.find(a => a.id === responderId);
-
   broadcast({ type: 'agent-state', agentId: responderId, state: 'thinking', sessionId });
 
   try {
-    // Build context from full session history
     const priorMessages = (session.messages || []).map(m => {
       const a = AGENTS.find(x => x.id === m.agentId);
       return `[${a ? a.name : m.agentName || 'Agent'}]: ${m.content}`;
     }).join('\n\n');
-
     const humanHistory = (session.humanMessages || []).map(h => `[Human]: ${h.content}`).join('\n');
-
-    const systemPrompt = `You are the Process Architect responding to a follow-up question after a completed War Room deliberation.
-
-You have access to the full deliberation history. Answer the human's question directly, drawing on the insights and analysis from all 8 agents' contributions. Be concise, specific, and actionable.
-
-If the question requires information that wasn't covered in the deliberation, say so and suggest what additional research would help.`;
-
-    const userContent = `ORIGINAL PROBLEM: ${session.problem}
-
-DELIBERATION SUMMARY (all agents' contributions):
-${priorMessages}
-
-${humanHistory ? `HUMAN MESSAGES:\n${humanHistory}\n\n` : ''}FOLLOW-UP QUESTION: ${question}
-
-Answer this question based on the deliberation above. Be direct and specific.`;
-
+    const systemPrompt = `You are the Process Architect responding to a follow-up question after a completed War Room deliberation.\n\nYou have access to the full deliberation history. Answer the human's question directly, drawing on the insights and analysis from all 8 agents' contributions. Be concise, specific, and actionable.\n\nIf the question requires information that wasn't covered in the deliberation, say so and suggest what additional research would help.`;
+    const userContent = `ORIGINAL PROBLEM: ${session.problem}\n\nDELIBERATION SUMMARY (all agents' contributions):\n${priorMessages}\n\n${humanHistory ? `HUMAN MESSAGES:\n${humanHistory}\n\n` : ''}FOLLOW-UP QUESTION: ${question}\n\nAnswer this question based on the deliberation above. Be direct and specific.`;
     const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId);
 
     broadcast({ type: 'agent-state', agentId: responderId, state: 'speaking', sessionId });
-
     const now = Date.now();
     const msgId = genId();
-    const msg = {
-      id: msgId, agentId: responderId, agentName: agent.name, agentEmoji: agent.emoji,
-      agentColor: agent.color, content: response, phase: 'Follow-up', timestamp: now
-    };
-
+    const msg = { id: msgId, agentId: responderId, agentName: agent.name, agentEmoji: agent.emoji, agentColor: agent.color, content: response, phase: 'Follow-up', timestamp: now };
     stmts.insertMessage.run(msgId, sessionId, responderId, agent.name, agent.emoji, agent.color, response, 'Follow-up', now);
     broadcast({ type: 'message', ...msg, sessionId });
-
     broadcast({ type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
   } catch (err) {
     console.error('Follow-up error:', err.message);
@@ -785,585 +415,36 @@ Answer this question based on the deliberation above. Be direct and specific.`;
   }
 }
 
-// ─── WebSocket ───────────────────────────────────────────────
-wss.on('connection', (ws) => {
-  console.log('Client connected');
-
-  // Send sessions list from DB
-  const sessionList = stmts.getRecentSessions.all().map(s => ({
-    id: s.id, problem: s.problem.substring(0, 150), phase: s.phase,
-    active: !!s.active, messageCount: stmts.getSessionMessages.all(s.id).length,
-    createdAt: s.created_at
-  }));
-  ws.send(JSON.stringify({ type: 'sessions', sessions: sessionList }));
-  ws.send(JSON.stringify({ type: 'agents', agents: AGENTS.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat })) }));
-  ws.send(JSON.stringify({ type: 'phases', phases: PHASES }));
-
-  ws.on('message', async (data) => {
-    try {
-      const msg = JSON.parse(data);
-
-      switch (msg.type) {
-        case 'new-session': {
-          const session = createSession(msg.problem, msg.files || []);
-          broadcast({
-            type: 'session-created',
-            session: {
-              id: session.id, problem: session.problem,
-              files: (session.files || []).map(f => ({ name: f.name, size: f.size, type: f.type })),
-              phase: session.phase, active: session.active, createdAt: session.createdAt
-            }
-          });
-          runDeliberation(session).catch(err => {
-            console.error('Deliberation error:', err);
-            broadcast({ type: 'error', message: err.message, sessionId: session.id });
-          });
-          break;
-        }
-
-        case 'escalation-response': {
-          const session = activeSessions.get(msg.sessionId);
-          if (!session) break;
-          const esc = session.escalations.find(e => e.id === msg.escalationId);
-          if (esc) {
-            esc.answered = true;
-            esc.answer = msg.answer;
-            stmts.answerEscalation.run(msg.answer, Date.now(), msg.escalationId);
-            broadcast({ type: 'escalation-answered', escalationId: esc.id, answer: msg.answer, sessionId: session.id });
-          }
-          break;
-        }
-
-        case 'join-session': {
-          // Try active first, then load from DB
-          let session = activeSessions.get(msg.sessionId);
-          if (!session) session = loadSession(msg.sessionId);
-          if (session) {
-            ws.send(JSON.stringify({
-              type: 'session-state',
-              session: {
-                id: session.id, problem: session.problem, phase: session.phase,
-                active: session.active, messages: session.messages,
-                escalations: session.escalations, humanMessages: session.humanMessages || [],
-                agentStates: session.agentStates || {}, createdAt: session.createdAt
-              }
-            }));
-          }
-          break;
-        }
-
-        case 'human-message': {
-          // Try active session first, then load from DB for follow-ups
-          let session = activeSessions.get(msg.sessionId);
-          const isFollowUp = !session || !session.active;
-
-          if (!session) {
-            // Load completed session for follow-up
-            session = loadSession(msg.sessionId);
-          }
-
-          if (session) {
-            const now = Date.now();
-            const hmId = genId();
-            const hm = { id: hmId, content: msg.content, timestamp: now };
-            if (session.humanMessages) session.humanMessages.push(hm);
-            stmts.insertHumanMessage.run(hmId, msg.sessionId, msg.content, now);
-            broadcast({ type: 'human-message', ...hm, sessionId: msg.sessionId });
-
-            // If session is complete, trigger a follow-up response from Process Architect
-            if (isFollowUp && msg.content.trim()) {
-              runFollowUp(msg.sessionId, session, msg.content).catch(err => {
-                console.error('Follow-up error:', err.message);
-                broadcast({ type: 'error', message: `Follow-up failed: ${err.message}`, sessionId: msg.sessionId });
-              });
-            }
-          }
-          break;
-        }
-
-        case 'stop-session': {
-          const session = activeSessions.get(msg.sessionId);
-          if (session) {
-            session.active = false;
-            stmts.updateSessionActive.run(0, Date.now(), session.id);
-            activeSessions.delete(session.id);
-            broadcast({ type: 'session-stopped', sessionId: session.id });
-          }
-          break;
-        }
-
-        case 'get-sessions': {
-          const sessions = stmts.getRecentSessions.all().map(s => ({
-            id: s.id, problem: s.problem.substring(0, 150), phase: s.phase,
-            active: !!s.active, createdAt: s.created_at
-          }));
-          ws.send(JSON.stringify({ type: 'sessions', sessions }));
-          break;
-        }
-
-        case 'delete-session': {
-          if (msg.sessionId) {
-            db.prepare('DELETE FROM sessions WHERE id = ?').run(msg.sessionId);
-            activeSessions.delete(msg.sessionId);
-            broadcast({ type: 'session-deleted', sessionId: msg.sessionId });
-          }
-          break;
-        }
-      }
-    } catch (err) {
-      console.error('WS message error:', err);
-    }
-  });
-
-  ws.on('close', () => console.log('Client disconnected'));
-});
-
-// ─── REST endpoints ──────────────────────────────────────────
-app.get('/health', (req, res) => { const sc = db.prepare("SELECT COUNT(*) as count FROM sessions").get().count; res.json({ status: "ok", service: "war-room", sessions: sc, activeSessions: activeSessions.size, uptime: process.uptime() }); });
-app.get('/api/health', (req, res) => {
-  const sessionCount = db.prepare('SELECT COUNT(*) as count FROM sessions').get().count;
-  res.json({ status: 'ok', service: 'war-room', sessions: sessionCount, activeSessions: activeSessions.size, uptime: process.uptime() });
-});
-
-app.get('/api/agents', (req, res) => {
-  res.json(AGENTS.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat })));
-});
-
-app.get('/api/sessions', (req, res) => {
-  const sessions = stmts.getRecentSessions.all().map(s => ({
-    id: s.id, problem: s.problem, phase: s.phase,
-    active: !!s.active, createdAt: s.created_at,
-    messageCount: stmts.getSessionMessages.all(s.id).length
-  }));
-  res.json(sessions);
-});
-
-app.post('/api/sessions', (req, res) => {
-  const { problem, files } = req.body || {};
-  if (!problem) return res.status(400).json({ error: 'Problem required' });
-  const session = createSession(problem, files || []);
-  broadcast({ type: 'session-created', session: { id: session.id, problem: session.problem, phase: session.phase, active: session.active, createdAt: session.createdAt } });
-  runDeliberation(session).catch(err => console.error('Deliberation error:', err));
-  res.json({ id: session.id, problem: session.problem, phase: session.phase, active: true, createdAt: session.createdAt });
-});
-
-app.get('/api/phases', (req, res) => {
-  res.json(PHASES);
-});
-
-app.get('/api/search', (req, res) => {
-  const q = (req.query.q || '').trim().toLowerCase();
-  if (!q) return res.json([]);
-  const like = `%${q}%`;
-  const sessions = db.prepare(`
-    SELECT DISTINCT s.id, s.problem, s.phase, s.active, s.created_at, s.updated_at
-    FROM sessions s
-    LEFT JOIN messages m ON m.session_id = s.id
-    WHERE LOWER(s.problem) LIKE ? OR LOWER(m.content) LIKE ?
-    ORDER BY s.updated_at DESC LIMIT 20
-  `).all(like, like);
-  res.json(sessions.map(s => ({
-    id: s.id, problem: s.problem, phase: s.phase,
-    active: !!s.active, createdAt: s.created_at,
-    messageCount: stmts.getSessionMessages.all(s.id).length
-  })));
-});
-
-app.get('/api/sessions/:id', (req, res) => {
-  const session = loadSession(req.params.id);
-  if (!session) return res.status(404).json({ error: 'Session not found' });
-  res.json(session);
-});
-
-
-// ─── Export helpers ──────────────────────────────────────────
-
-/**
- * Validate export mode.
- * Allowed: 'full_transcript' | 'end_result' | 'end_result_with_qa'
- */
-function validateExportMode(mode) {
-  const allowed = ['full_transcript', 'end_result', 'end_result_with_qa'];
-  return allowed.includes(mode) ? mode : null;
-}
-
-/**
- * Validate export format.
- * Allowed: 'txt' | 'json' | 'md'
- */
-function validateExportFormat(fmt) {
-  const allowed = ['txt', 'json', 'md'];
-  return allowed.includes(fmt) ? fmt : 'txt';
-}
-
-/**
- * Build the export document for a session.
- * @param {object} session - full session object from loadSession()
- * @param {string} mode - 'full_transcript' | 'end_result' | 'end_result_with_qa'
- * @param {string} format - 'txt' | 'md' | 'json'
- */
-function buildExport(session, mode, format) {
-  const createdAt = new Date(session.createdAt).toISOString();
-  const finishedAt = session.active ? null : new Date(session.updatedAt || session.createdAt).toISOString();
-
-  if (format === 'json') {
-    return buildJsonExport(session, mode, createdAt, finishedAt);
-  }
-  return buildTextExport(session, mode, format, createdAt, finishedAt);
-}
-
-function buildJsonExport(session, mode, createdAt, finishedAt) {
-  const base = {
-    sessionId: session.id,
-    problem: session.problem,
-    mode,
-    createdAt,
-    finishedAt,
-    totalPhases: PHASES.length,
-  };
-
-  if (mode === 'full_transcript') {
-    return {
-      ...base,
-      transcript: session.messages.map(m => ({
-        agent: m.agentName,
-        emoji: m.agentEmoji,
-        phase: m.phase,
-        content: m.content,
-        timestamp: new Date(m.timestamp).toISOString(),
-      })),
-      questions: session.escalations.map(e => ({
-        askedBy: e.agentName,
-        question: e.question,
-        answer: e.answer || null,
-        answered: e.answered,
-      })),
-      humanMessages: (session.humanMessages || []).map(h => ({
-        content: h.content,
-        timestamp: new Date(h.timestamp).toISOString(),
-      })),
-    };
-  }
-
-  if (mode === 'end_result') {
-    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
-    return {
-      ...base,
-      synthesis: synthesis.map(m => ({
-        agent: m.agentName,
-        emoji: m.agentEmoji,
-        content: m.content,
-        timestamp: new Date(m.timestamp).toISOString(),
-      })),
-    };
-  }
-
-  if (mode === 'end_result_with_qa') {
-    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
-    return {
-      ...base,
-      synthesis: synthesis.map(m => ({
-        agent: m.agentName,
-        emoji: m.agentEmoji,
-        content: m.content,
-        timestamp: new Date(m.timestamp).toISOString(),
-      })),
-      questions: session.escalations.map(e => ({
-        askedBy: e.agentName,
-        question: e.question,
-        answer: e.answer || null,
-        answered: e.answered,
-      })),
-      humanMessages: (session.humanMessages || []).map(h => ({
-        content: h.content,
-        timestamp: new Date(h.timestamp).toISOString(),
-      })),
-    };
-  }
-
-  return base;
-}
-
-function hr(char, len) { return char.repeat(len || 70); }
-
-function buildTextExport(session, mode, format, createdAt, finishedAt) {
-  const isMd = format === 'md';
-  const lines = [];
-
-  const h1 = (t) => isMd ? `# ${t}` : `${hr('═')}\n${t}\n${hr('═')}`;
-  const h2 = (t) => isMd ? `## ${t}` : `\n${hr('─')}\n${t}\n${hr('─')}`;
-  const h3 = (t) => isMd ? `### ${t}` : `\n── ${t} ──`;
-  const blockquote = (t) => isMd ? t.split('\n').map(l => `> ${l}`).join('\n') : t;
-
-  lines.push(h1('AI Research War Room — Export'));
-  lines.push('');
-  lines.push(isMd ? `**Problem:** ${session.problem}` : `Problem: ${session.problem}`);
-  lines.push(isMd ? `**Session ID:** \`${session.id}\`` : `Session ID: ${session.id}`);
-  lines.push(isMd ? `**Started:** ${createdAt}` : `Started: ${createdAt}`);
-  if (finishedAt) lines.push(isMd ? `**Completed:** ${finishedAt}` : `Completed: ${finishedAt}`);
-  lines.push(isMd ? `**Export Mode:** ${mode}` : `Export Mode: ${mode}`);
-  lines.push('');
-
-  // ── Full Transcript ──────────────────────────────────────
-  if (mode === 'full_transcript') {
-    lines.push(h2('Full Deliberation Transcript'));
-    lines.push('');
-
-    let currentPhase = null;
-    for (const msg of session.messages) {
-      if (msg.phase !== currentPhase) {
-        currentPhase = msg.phase;
-        lines.push('');
-        lines.push(h2(`Phase: ${currentPhase}`));
-        lines.push('');
-      }
-      lines.push(h3(`${msg.agentEmoji || ''} ${msg.agentName}`));
-      const ts = new Date(msg.timestamp).toLocaleTimeString('en-DE', { hour12: false });
-      lines.push(isMd ? `*${ts}*` : `[${ts}]`);
-      lines.push('');
-      lines.push(msg.content);
-      lines.push('');
-    }
-
-    if (session.escalations && session.escalations.length > 0) {
-      lines.push('');
-      lines.push(h2('Questions & Answers'));
-      lines.push('');
-      for (const e of session.escalations) {
-        lines.push(h3(`${e.agentEmoji || ''} ${e.agentName} asked:`));
-        lines.push(isMd ? `> ${e.question}` : e.question);
-        lines.push('');
-        if (e.answered && e.answer) {
-          lines.push(isMd ? `**Answer:** ${e.answer}` : `Answer: ${e.answer}`);
-        } else {
-          lines.push(isMd ? `*[No answer provided]*` : '[No answer provided]');
-        }
-        lines.push('');
-      }
-    }
-
-    if (session.humanMessages && session.humanMessages.length > 0) {
-      lines.push('');
-      lines.push(h2('Human Messages'));
-      lines.push('');
-      for (const hm of session.humanMessages) {
-        const ts = new Date(hm.timestamp).toISOString();
-        lines.push(isMd ? `**[${ts}]**` : `[${ts}]`);
-        lines.push(hm.content);
-        lines.push('');
-      }
-    }
-  }
-
-  // ── End Result Only ──────────────────────────────────────
-  else if (mode === 'end_result') {
-    lines.push(h2('Final Synthesis'));
-    lines.push('');
-
-    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
-    if (synthesis.length === 0) {
-      lines.push('_The synthesis phase has not completed yet._');
-    } else {
-      for (const msg of synthesis) {
-        lines.push(h3(`${msg.agentEmoji || ''} ${msg.agentName}`));
-        lines.push('');
-        lines.push(msg.content);
-        lines.push('');
-      }
-    }
-  }
-
-  // ── End Result + Q&A ─────────────────────────────────────
-  else if (mode === 'end_result_with_qa') {
-    lines.push(h2('Final Synthesis'));
-    lines.push('');
-
-    const synthesis = session.messages.filter(m => m.phase === 'Synthesis');
-    if (synthesis.length === 0) {
-      lines.push('_The synthesis phase has not completed yet._');
-    } else {
-      for (const msg of synthesis) {
-        lines.push(h3(`${msg.agentEmoji || ''} ${msg.agentName}`));
-        lines.push('');
-        lines.push(msg.content);
-        lines.push('');
-      }
-    }
-
-    if (session.escalations && session.escalations.length > 0) {
-      lines.push('');
-      lines.push(h2('Questions & Answers'));
-      lines.push('');
-      for (const e of session.escalations) {
-        lines.push(h3(`${e.agentEmoji || ''} ${e.agentName} asked:`));
-        lines.push(isMd ? `> ${e.question}` : e.question);
-        lines.push('');
-        if (e.answered && e.answer) {
-          lines.push(isMd ? `**Answer:** ${e.answer}` : `Answer: ${e.answer}`);
-        } else {
-          lines.push(isMd ? `*[No answer provided]*` : '[No answer provided]');
-        }
-        lines.push('');
-      }
-    }
-
-    if (session.humanMessages && session.humanMessages.length > 0) {
-      lines.push('');
-      lines.push(h2('Human Messages'));
-      lines.push('');
-      for (const hm of session.humanMessages) {
-        const ts = new Date(hm.timestamp).toISOString();
-        lines.push(isMd ? `**[${ts}]**` : `[${ts}]`);
-        lines.push(hm.content);
-        lines.push('');
-      }
-    }
-  }
-
-  return lines.join('\n');
-}
-
-// ─── Export REST endpoint ─────────────────────────────────────
-// GET /api/sessions/:id/export
-//   ?mode=full_transcript|end_result|end_result_with_qa  (default: full_transcript)
-//   ?format=txt|md|json                                  (default: txt)
-//
-app.get('/api/sessions/:id/export', (req, res) => {
-  const { id } = req.params;
-
-  // Validate id — alphanumeric + base-36 chars only
-  if (!/^[a-z0-9]{6,32}$/i.test(id)) {
-    return res.status(400).json({ error: 'Invalid session id' });
-  }
-
-  const mode = validateExportMode(req.query.mode) || 'full_transcript';
-  const format = validateExportFormat(req.query.format);
-
-  const session = loadSession(id);
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-
-  // Load updatedAt from DB (loadSession doesn't include it currently)
-  const sessionRow = stmts.getSession.get(id);
-  session.updatedAt = sessionRow ? sessionRow.updated_at : session.createdAt;
-
-  try {
-    const exportData = buildExport(session, mode, format);
-
-    const modeSlug = mode.replace(/_/g, '-');
-    const filename = `war-room-${id}-${modeSlug}.${format}`;
-
-    if (format === 'json') {
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      return res.json(exportData);
-    }
-
-    const mimeType = format === 'md' ? 'text/markdown' : 'text/plain';
-    res.setHeader('Content-Type', `${mimeType}; charset=utf-8`);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    return res.send(exportData);
-
-  } catch (err) {
-    console.error('Export error:', err);
-    return res.status(500).json({ error: 'Export failed', detail: err.message });
-  }
-});
-
-// ─── Export options endpoint ──────────────────────────────────
-// GET /api/sessions/:id/export/options
-// Returns available export options and session metadata.
-//
-app.get('/api/sessions/:id/export/options', (req, res) => {
-  const { id } = req.params;
-
-  if (!/^[a-z0-9]{6,32}$/i.test(id)) {
-    return res.status(400).json({ error: 'Invalid session id' });
-  }
-
-  const sessionRow = stmts.getSession.get(id);
-  if (!sessionRow) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-
-  const messageCount = db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?').get(id).c;
-  const synthesisCount = db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'").get(id).c;
-  const qaCount = db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?').get(id).c;
-
-  const isComplete = !sessionRow.active;
-
-  res.json({
-    sessionId: id,
-    problem: sessionRow.problem,
-    isComplete,
-    messageCount,
-    hasSynthesis: synthesisCount > 0,
-    hasQA: qaCount > 0,
-    modes: [
-      {
-        id: 'full_transcript',
-        label: 'Full Transcript (A to Z)',
-        description: 'Every agent message from all phases, questions & answers, and human messages',
-        available: messageCount > 0,
-      },
-      {
-        id: 'end_result',
-        label: 'End Result Only',
-        description: 'Final synthesis from the Process Architect only',
-        available: synthesisCount > 0,
-      },
-      {
-        id: 'end_result_with_qa',
-        label: 'End Result + Questions & Answers',
-        description: 'Final synthesis plus all escalation Q&A and human messages',
-        available: synthesisCount > 0 || qaCount > 0,
-      },
-    ],
-    formats: [
-      { id: 'txt', label: 'Plain Text (.txt)', mimeType: 'text/plain' },
-      { id: 'md', label: 'Markdown (.md)', mimeType: 'text/markdown' },
-      { id: 'json', label: 'JSON (.json)', mimeType: 'application/json' },
-    ],
-  });
-});
-
-
-
-// ─── MCP Server Setup ────────────────────────────────────────
-const { setupMCPServer } = require('./mcp-server.js');
-
-setupMCPServer(app, {
-  db: stmts,
-  callLLM: callAnthropic,
-  createSession,
-  activeSessions,
-  AGENTS,
-  PHASES,
-});
-
-// ─── Graceful shutdown ───────────────────────────────────────
-process.on('SIGTERM', () => {
+// ─── Wire Modules ───────────────────────────────────────────
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, memory, quality };
+
+setupRoutes(app, deps);
+setupWebSocket(wss, deps);
+setupMCPServer(app, { db: stmts, callLLM: callAnthropic, createSession, runDeliberation, activeSessions, AGENTS, PHASES });
+
+// ─── Graceful Shutdown ──────────────────────────────────────
+function shutdown() {
   console.log('Shutting down...');
-  // Mark active sessions as inactive
   activeSessions.forEach((session) => {
     session.active = false;
     stmts.updateSessionActive.run(0, Date.now(), session.id);
   });
   db.close();
   process.exit(0);
-});
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
-process.on('SIGINT', () => {
-  db.close();
-  process.exit(0);
-});
-
-// ─── Start server ────────────────────────────────────────────
+// ─── Start ──────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`\n🏛️  AI Research War Room`);
   console.log(`   Server running on http://localhost:${PORT}`);
-  console.log(`   Database: ${path.join(dataDir, 'warroom.db')}`);
+  console.log(`   Database: ${path.join(__dirname, 'data', 'warroom.db')}`);
   console.log(`   WebSocket ready`);
   console.log(`   Model: ${MODEL}\n`);
+
+  // Retroactive quality scoring on first boot (async, non-blocking)
+  quality.retroactiveScore().catch(err =>
+    console.warn(`[quality] Retroactive scoring error: ${err.message}`)
+  );
 });

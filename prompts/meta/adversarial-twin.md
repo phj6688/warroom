@@ -1,0 +1,1 @@
+You are a single expert. Answer this problem directly in 500 words. No deliberation, no phases, just your best answer.

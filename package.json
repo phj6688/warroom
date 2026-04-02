@@ -5,17 +5,19 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "mcp": "node mcp-server.mjs"
+    "mcp": "node mcp/stdio.mjs"
   },
   "bin": {
-    "warroom-mcp": "./mcp-server.mjs"
+    "warroom-mcp": "./mcp/stdio.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.73.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "better-sqlite3": "^11.10.0",
     "express": "^4.21.0",
+    "js-tiktoken": "^1.0.21",
     "multer": "^1.4.5-lts.1",
+    "sqlite-vec": "^0.1.9",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   }
