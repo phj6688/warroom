@@ -116,7 +116,9 @@ describe('F8 — migration runner txn + checksums', () => {
         const fooExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='foo'").get();
         let versionRow = null;
         try {
-          versionRow = db.prepare("SELECT * FROM schema_version WHERE version=900").get();
+          // .get() returns undefined for "no row"; coerce to null so JSON
+          // serialization preserves the field across the IPC boundary.
+          versionRow = db.prepare("SELECT * FROM schema_version WHERE version=900").get() || null;
         } catch (e) { /* table may not even exist */ }
         db.close();
 

@@ -5,10 +5,10 @@ const path = require('path');
 const crypto = require('crypto');
 
 // ─── Modules ────────────────────────────────────────────────
-const { db, stmts } = require('./db');
+const { db, stmts, dbPath } = require('./db');
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic } = require('./lib/llm');
+const { callAnthropic, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
 const { setupRoutes } = require('./lib/routes');
 const { setupWebSocket } = require('./lib/ws-handler');
 const { requireAuthWS } = require('./lib/auth');
@@ -18,6 +18,23 @@ const { createQualityManager } = require('./lib/quality');
 const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
+const { buildContext } = require('./lib/context');
+const jobs = require('./lib/jobs');
+
+// F10 — process-level error handlers. Installed immediately after imports
+// and BEFORE any other setup so a throw during boot still gets logged.
+// unhandledRejection: log and stay alive (the job worker and flaky LLM
+// calls should not be allowed to take the server down).
+// uncaughtException: log fatal, attempt graceful shutdown.
+// Logger plumbing comes in S5 — these handlers use console intentionally
+// so they cannot themselves fail on a not-yet-wired logger.
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandledRejection:', reason && reason.stack || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaughtException:', err && err.stack || err);
+  try { shutdown(); } catch (_) { process.exit(1); }
+});
 
 const PORT = process.env.PORT || 8090;
 
@@ -208,77 +225,8 @@ function extractEscalations(text, agentId, sessionId) {
 }
 
 // ─── Context Building ───────────────────────────────────────
-function buildContext(session, agentId, phase) {
-  const sessionAgents = getAgentsForSession(session);
-  const agent = sessionAgents.find(a => a.id === agentId);
-  const phaseName = PHASES[phase].name;
-  const priorMessages = session.messages.map(m => {
-    const a = sessionAgents.find(x => x.id === m.agentId);
-    return `[${a ? a.name : 'Human'}]: ${m.content}`;
-  }).join('\n\n');
-  const answeredEscalations = session.escalations
-    .filter(e => e.answered && e.agentId === agentId)
-    .map(e => `Human answered your question "${e.question}": ${e.answer}`).join('\n');
-  const otherAnswers = session.escalations
-    .filter(e => e.answered && e.agentId !== agentId)
-    .map(e => {
-      const a = sessionAgents.find(x => x.id === e.agentId);
-      return `[Human responded to ${a ? a.name : 'agent'}]: Q: "${e.question}" A: ${e.answer}`;
-    }).join('\n');
-
-  let userContent = `PROBLEM: ${session.problem}\n\nCURRENT PHASE: ${phaseName}\n\n`;
-
-  // Inject memory context for Process Architect in first phase only
-  if (phase === 0 && agentId === 'process-architect' && session._memories && session._memories.length > 0) {
-    userContent += memory.injectMemory(session._memories);
-  }
-  if (session.files && session.files.length > 0) {
-    userContent += `ATTACHED FILES:\n`;
-    session.files.forEach(f => {
-      userContent += `--- ${f.name} (${f.type || 'unknown'}) ---\n`;
-      if (f.content) userContent += f.content.slice(0, 10000) + (f.content.length > 10000 ? '\n[...truncated]' : '') + '\n';
-      else userContent += `[Binary file, ${f.size} bytes]\n`;
-    });
-    userContent += '\n';
-  }
-  if (session.humanMessages && session.humanMessages.length > 0) {
-    userContent += `HUMAN INTERJECTIONS (from the problem owner):\n`;
-    session.humanMessages.forEach(hm => { userContent += `[Human @ ${new Date(hm.timestamp).toLocaleTimeString()}]: ${hm.content}\n`; });
-    userContent += '\n';
-  }
-  if (priorMessages) userContent += `PRIOR DELIBERATION:\n${priorMessages}\n\n`;
-  if (answeredEscalations) userContent += `YOUR ESCALATION ANSWERS:\n${answeredEscalations}\n\n`;
-  if (otherAnswers) userContent += `SHARED HUMAN INPUT:\n${otherAnswers}\n\n`;
-  userContent += `Now provide your contribution as ${agent.name} (${agent.role}) for the ${phaseName} phase. Stay in character. Be concise but thorough.`;
-  if (phase === PHASES.length - 1 && agentId === 'process-architect') {
-    userContent += `\n\nThis is the FINAL SYNTHESIS phase. Deliver a comprehensive summary that includes:
-1. Key findings and recommendations
-2. Confidence levels (high/medium/low) for each recommendation
-3. Key uncertainties and open questions
-4. Dissenting views and their merit
-5. Recommended next steps
-Format this as a clear, actionable brief.`;
-  }
-
-  // Token counting + budget enforcement (S01)
-  const budget = contextBudget(MODEL);
-  const systemTokens = countTokens(agent.systemPrompt);
-  const contextTokens = countTokens(userContent);
-  const totalTokens = systemTokens + contextTokens;
-  const utilization = totalTokens / budget;
-
-  if (utilization > 0.9) {
-    // Auto-trim: remove oldest prior messages from context
-    const trimmedContent = userContent.slice(0, Math.floor(userContent.length * (budget * 0.8) / totalTokens));
-    console.log(`[tokens] TRIMMED context for ${agentId}: ${totalTokens} → ~${countTokens(trimmedContent)} tokens (${(utilization * 100).toFixed(0)}% of budget)`);
-    return [{ role: 'user', content: trimmedContent }];
-  }
-  if (utilization > 0.8) {
-    console.warn(`[tokens] WARNING: context for ${agentId} at ${(utilization * 100).toFixed(0)}% of budget (${totalTokens}/${budget} tokens)`);
-  }
-
-  return [{ role: 'user', content: userContent }];
-}
+// buildContext lives in lib/context.js (F6) — extracted so the trim loop is
+// testable in isolation and so the static header/footer survive every trim.
 
 // ─── Agent Turn ─────────────────────────────────────────────
 async function runAgentTurn(session, agentId, phase) {
@@ -382,6 +330,10 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     const memories = await memory.retrieveSimilar(session.problem, 3);
     if (memories.length > 0) {
       session._memories = memories;
+      // Pre-render so lib/context.js can inject without reaching back into
+      // the memory manager (which would re-create the dependency it was
+      // extracted to avoid).
+      session._memoryText = memory.injectMemory(memories);
       stmts.updateSessionMemoryInjected.run(Date.now(), session.id);
       console.log(`🧠 Memory: ${memories.length} prior sessions injected for ${session.id}`);
       broadcast(session.id, { type: 'memory-injected', sessionId: session.id, count: memories.length });
@@ -438,28 +390,15 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   activeSessions.delete(session.id);
 
-  // Post-synthesis: embed session and extract archival facts
-  memory.storeSessionMemory(session.id).catch(err =>
-    console.warn(`⚠️  Post-session embedding failed: ${err.message}`)
-  );
-  memory.extractArchivalFacts(session.id).then(facts => {
-    if (facts) console.log(`📋 Archival facts for ${session.id}: archetype="${facts.archetype || 'unknown'}"`);
-  }).catch(err =>
-    console.warn(`⚠️  Archival fact extraction failed: ${err.message}`)
-  );
+  // F11 — Post-synthesis work goes through the durable job table so a
+  // crash before completion gets retried, and so a job that throws does
+  // not crash the request path.
+  jobs.enqueue('memory.storeSessionMemory', { sessionId: session.id });
+  jobs.enqueue('memory.extractArchivalFacts', { sessionId: session.id });
+  jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
 
-  // Quality evaluation — async, non-blocking, after deliberation-complete
-  quality.evaluateSession(session.id).then(result => {
-    if (result) {
-      console.log(`📊 Quality score for ${session.id}: ${result.score.toFixed(3)}`);
-      broadcast(session.id, { type: 'quality-scored', sessionId: session.id, score: result.score, breakdown: result.breakdown });
-    }
-  }).catch(err =>
-    console.warn(`[quality] Evaluation failed for ${session.id}: ${err.message}`)
-  );
-
-  const synthCount = db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'").get(session.id).c;
-  const qaCount = db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?').get(session.id).c;
+  const synthCount = stmts.synthCountForSession.get(session.id).c;
+  const qaCount = stmts.escalationCountForSession.get(session.id).c;
   const totalMsgs = session.messages.length;
   broadcast(session.id, {
     type: 'deliberation-complete', sessionId: session.id,
@@ -513,14 +452,44 @@ setupRoutes(app, deps);
 setupWebSocket(wss, deps);
 setupMCPServer(app, { db: stmts, callLLM: callAnthropic, createSession, runDeliberation, activeSessions, AGENTS, PHASES });
 
+// ─── Background Job Handlers (F11) ──────────────────────────
+// Replace the three fire-and-forget post-deliberation calls. The worker
+// drains these from the background_jobs table, retrying with backoff.
+jobs.register('memory.storeSessionMemory', ({ sessionId }) => memory.storeSessionMemory(sessionId));
+jobs.register('memory.extractArchivalFacts', ({ sessionId }) => memory.extractArchivalFacts(sessionId));
+jobs.register('quality.evaluateSession', async ({ sessionId }) => {
+  const result = await quality.evaluateSession(sessionId);
+  if (result) {
+    broadcast(sessionId, { type: 'quality-scored', sessionId, score: result.score, breakdown: result.breakdown });
+  }
+  return result;
+});
+
+let jobWorkerHandle = null;
+
 // ─── Graceful Shutdown ──────────────────────────────────────
-function shutdown() {
+let shuttingDown = false;
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('Shutting down...');
   activeSessions.forEach((session) => {
     session.active = false;
-    stmts.updateSessionActive.run(0, Date.now(), session.id);
+    try { stmts.updateSessionActive.run(0, Date.now(), session.id); } catch (_) {}
   });
-  db.close();
+
+  // Wait up to 10 s for in-flight LLM calls so an agent turn can finish
+  // writing its row before db.close() yanks the file out from under it.
+  const start = Date.now();
+  while (anyLLMInFlight() && Date.now() - start < 10_000) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (anyLLMInFlight()) {
+    console.warn(`[shutdown] ${inFlightLLMCount()} LLM call(s) still in flight after 10s — closing anyway`);
+  }
+
+  try { await jobs.stopWorker(jobWorkerHandle); } catch (_) {}
+  try { db.close(); } catch (_) {}
   process.exit(0);
 }
 process.on('SIGTERM', shutdown);
@@ -530,9 +499,29 @@ process.on('SIGINT', shutdown);
 server.listen(PORT, () => {
   console.log(`\n🏛️  AI Research War Room`);
   console.log(`   Server running on http://localhost:${PORT}`);
-  console.log(`   Database: ${path.join(__dirname, 'data', 'warroom.db')}`);
+  console.log(`   Database: ${dbPath}`);
   console.log(`   WebSocket ready`);
   console.log(`   Model: ${MODEL}\n`);
+
+  // F4 — boot reconciliation. Anything still flagged active=1 belongs to a
+  // previous (crashed) process. Mark it crash-recovered, do NOT auto-resume,
+  // tell connected clients so their UI can render the recovery state.
+  try {
+    const orphaned = stmts.getActiveSessions.all();
+    const ts = Date.now();
+    for (const row of orphaned) {
+      stmts.markCrashRecovered.run(ts, ts, row.id);
+      console.warn(`[boot] crash-recovered orphaned session ${row.id}`);
+    }
+    if (orphaned.length > 0) {
+      broadcastGlobal({ type: 'crash-recovered', sessionIds: orphaned.map(r => r.id) });
+    }
+  } catch (err) {
+    console.error(`[boot] reconciliation failed: ${err && err.message || err}`);
+  }
+
+  // Start the durable job worker.
+  jobWorkerHandle = jobs.runWorker();
 
   // Retroactive quality scoring on first boot (async, non-blocking)
   quality.retroactiveScore().catch(err =>

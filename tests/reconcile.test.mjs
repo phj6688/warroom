@@ -37,22 +37,25 @@ before(async () => {
   temp = makeTempDir('warroom-reconcile-');
   dbPath = path.join(temp.dir, 'warroom.db');
 
-  // Build a minimal schema in the temp DB by replaying the project's
-  // initial migration. We do NOT replay every migration — we only need
-  // the `sessions` table for this test.
+  // Replay every migration into the temp DB and stamp schema_version so
+  // the server's own runMigrations() is a no-op. db.js prepares statements
+  // against tables created by 004+ (quality_scores, agent_templates,
+  // archetypes, etc.), so a partial schema would crash boot before the
+  // reconciler ever runs.
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
-  const initialSql = fs.readFileSync(
-    path.join(REPO_ROOT, 'migrations', '001_initial.sql'),
-    'utf-8'
-  );
-  db.exec(initialSql);
+  db.exec('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at INTEGER)');
 
-  // Add the column F4 will introduce; if it already exists from a future
-  // migration we silently continue.
-  try {
-    db.exec('ALTER TABLE sessions ADD COLUMN crash_recovered_at INTEGER');
-  } catch { /* already there */ }
+  const migrationsDir = path.join(REPO_ROOT, 'migrations');
+  const migrationFiles = fs.readdirSync(migrationsDir)
+    .filter(f => /^\d{3}_.+\.sql$/.test(f))
+    .sort();
+  const insertVersion = db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)');
+  for (const file of migrationFiles) {
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+    db.exec(sql);
+    insertVersion.run(parseInt(file.split('_')[0], 10), Date.now());
+  }
 
   // Insert the orphaned active session.
   const now = Date.now();
