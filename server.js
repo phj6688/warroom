@@ -11,6 +11,7 @@ const { PHASES, createRouter } = require('./lib/phases');
 const { callAnthropic } = require('./lib/llm');
 const { setupRoutes } = require('./lib/routes');
 const { setupWebSocket } = require('./lib/ws-handler');
+const { requireAuthWS } = require('./lib/auth');
 const { setupMCPServer } = require('./mcp/http');
 const { createMemoryManager } = require('./lib/memory');
 const { createQualityManager } = require('./lib/quality');
@@ -45,7 +46,19 @@ if (TAVILY_API_KEY) {
 // ─── Express + WebSocket ────────────────────────────────────
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// noServer mode lets us auth-gate the upgrade handshake (F1 / S01).
+const wss = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (req, socket, head) => {
+  if (!requireAuthWS(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit('connection', ws, req);
+  });
+});
 
 // ─── Shared State ───────────────────────────────────────────
 const activeSessions = new Map();

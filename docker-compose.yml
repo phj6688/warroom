@@ -9,7 +9,9 @@ services:
       - .env
     environment:
       - OPENCLAW_GATEWAY_URL=http://100.79.164.120:18789
-      - OPENCLAW_GATEWAY_TOKEN=6406bfa9823514424d00e68157b01ab138d949f55d8c5367
+      # OPENCLAW_GATEWAY_TOKEN, WAR_ROOM_TOKEN, MCP_API_KEY, etc. are
+      # loaded from .env via env_file above. NEVER inline secrets here —
+      # docker-compose.yml is in git. See forge/hardening/SCARS.md §S03.
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
       - EMBEDDING_URL=http://localhost:11434/api/embed
       - EMBEDDING_MODEL=nomic-embed-text

@@ -17,16 +17,23 @@
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnServer } from './_helpers.mjs';
+import { spawnServer, makeTempDir } from './_helpers.mjs';
 
 let server;
+let temp;
 
 before(async () => {
-  server = await spawnServer({ env: { WAR_ROOM_TOKEN: '' } });
+  // Use a writable temp dir for uploads — the project's ./uploads dir is
+  // sometimes owned by root from prior docker runs.
+  temp = makeTempDir('warroom-upload-');
+  server = await spawnServer({
+    env: { WAR_ROOM_TOKEN: '', UPLOADS_DIR: temp.dir },
+  });
 });
 
 after(async () => {
   await server?.dispose();
+  temp?.cleanup();
 });
 
 // ─── multipart helpers (file-local) ──────────────────────────
