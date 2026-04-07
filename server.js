@@ -20,19 +20,19 @@ const { createSpecialistSpawner } = require('./lib/specialist');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 const { buildContext } = require('./lib/context');
 const jobs = require('./lib/jobs');
+const { log, withSession } = require('./lib/logger');
+const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
 
 // F10 — process-level error handlers. Installed immediately after imports
 // and BEFORE any other setup so a throw during boot still gets logged.
 // unhandledRejection: log and stay alive (the job worker and flaky LLM
 // calls should not be allowed to take the server down).
 // uncaughtException: log fatal, attempt graceful shutdown.
-// Logger plumbing comes in S5 — these handlers use console intentionally
-// so they cannot themselves fail on a not-yet-wired logger.
 process.on('unhandledRejection', (reason) => {
-  console.error('[fatal] unhandledRejection:', reason && reason.stack || reason);
+  log.error({ err: reason && reason.stack || reason }, 'unhandledRejection');
 });
 process.on('uncaughtException', (err) => {
-  console.error('[fatal] uncaughtException:', err && err.stack || err);
+  log.fatal({ err: err && err.stack || err }, 'uncaughtException');
   try { shutdown(); } catch (_) { process.exit(1); }
 });
 
@@ -47,17 +47,17 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY || null;
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS || '5');
 
 if (GATEWAY_URL && GATEWAY_TOKEN) {
-  console.log(`✅ LLM proxy: LLM gateway Gateway at ${GATEWAY_URL}`);
+  log.info({ gateway: GATEWAY_URL }, 'LLM proxy: LLM gateway Gateway');
 } else if (ANTHROPIC_API_KEY) {
-  console.log(`✅ LLM: Direct Anthropic API (${ANTHROPIC_API_KEY.slice(0, 12)}...)`);
+  log.info({ keyPrefix: ANTHROPIC_API_KEY.slice(0, 12) }, 'LLM: Direct Anthropic API');
 } else {
-  console.warn('⚠️  No LLM config — set OPENCLAW_GATEWAY_URL+TOKEN or ANTHROPIC_API_KEY');
+  log.warn('No LLM config — set OPENCLAW_GATEWAY_URL+TOKEN or ANTHROPIC_API_KEY');
 }
 
 if (TAVILY_API_KEY) {
-  console.log(`✅ Search: Tavily API configured (Research Scout enabled)`);
+  log.info('Search: Tavily API configured (Research Scout enabled)');
 } else {
-  console.warn('⚠️  No TAVILY_API_KEY — Research Scout will operate without live search');
+  log.warn('No TAVILY_API_KEY — Research Scout will operate without live search');
 }
 
 // ─── Express + WebSocket ────────────────────────────────────
@@ -125,7 +125,7 @@ function createSession(problem, files = []) {
 
   // Generate shadow (adversarial twin) answer async, non-blocking
   quality.generateShadowAnswer(id, problem).catch(err =>
-    console.warn(`[quality] Shadow generation error: ${err.message}`)
+    log.warn({ sessionId: id, err: err.message }, 'shadow generation error')
   );
 
   return session;
@@ -166,9 +166,9 @@ async function tavilySearch(query) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TAVILY_API_KEY}` },
       body: JSON.stringify({ query, max_results: SEARCH_MAX_RESULTS, search_depth: 'basic', include_answer: true }),
     });
-    if (!res.ok) { console.error(`Tavily search error (${res.status}):`, await res.text()); return null; }
+    if (!res.ok) { log.error({ status: res.status, body: await res.text() }, 'tavily search error'); return null; }
     return await res.json();
-  } catch (err) { console.error('Tavily search failed:', err.message); return null; }
+  } catch (err) { log.error({ err: err.message }, 'tavily search failed'); return null; }
 }
 
 function extractSearchQueries(text) {
@@ -233,6 +233,7 @@ async function runAgentTurn(session, agentId, phase) {
   const sessionAgents = getAgentsForSession(session);
   const agent = sessionAgents.find(a => a.id === agentId);
   const isResearchScout = agentId === 'research-scout';
+  const sLog = withSession(session.id);
   session.agentStates[agentId] = 'thinking';
   broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
 
@@ -246,7 +247,7 @@ async function runAgentTurn(session, agentId, phase) {
         session.agentStates[agentId] = 'searching';
         broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
         broadcast(session.id, { type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
-        console.log(`🔍 Research Scout searching: ${searchQueries.join(' | ')}`);
+        sLog.info({ queries: searchQueries }, 'research scout searching');
         const searchResults = await executeSearches(searchQueries);
         const resultsText = formatSearchResults(searchResults);
         broadcast(session.id, { type: 'search-complete', agentId, resultCount: searchResults.reduce((n, r) => n + r.sources.length, 0), sessionId: session.id });
@@ -281,7 +282,7 @@ async function runAgentTurn(session, agentId, phase) {
     broadcast(session.id, { type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
     await new Promise(r => setTimeout(r, 500));
   } catch (err) {
-    console.error(`Agent ${agentId} error:`, err.message);
+    sLog.error({ agentId, err: err.message }, 'agent turn error');
     session.agentStates[agentId] = 'idle';
     broadcast(session.id, { type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
     broadcast(session.id, { type: 'error', agentId, message: `${agent.name} encountered an error: ${err.message}`, sessionId: session.id });
@@ -290,14 +291,19 @@ async function runAgentTurn(session, agentId, phase) {
 
 // ─── Deliberation Loop ─────────────────────────────────────
 async function runDeliberation(session, resumeFromPhase = 0) {
+  const sLog = withSession(session.id);
   // Fingerprint classification + specialist spawning (before Phase 0)
   if (resumeFromPhase > 0) {
-    console.log(`▶️  Resuming session ${session.id} from phase ${resumeFromPhase}/${PHASES.length}`);
+    sLog.info({ resumeFromPhase, totalPhases: PHASES.length }, 'resuming deliberation');
   }
   try {
     const classification = await fingerprint.classify(session.problem);
     if (classification.archetype && classification.confidence >= fingerprint.MIN_CONFIDENCE) {
-      console.log(`🔍 Fingerprint: archetype="${classification.archetype}" confidence=${classification.confidence.toFixed(2)} specialists=[${classification.recommendedSpecialists.join(',')}]`);
+      sLog.info({
+        archetype: classification.archetype,
+        confidence: classification.confidence,
+        specialists: classification.recommendedSpecialists,
+      }, 'fingerprint classified');
       stmts.updateSessionArchetype.run(classification.archetype, Date.now(), session.id);
 
       // Store archetype
@@ -319,10 +325,10 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         }
       }
     } else {
-      console.log(`🔍 Fingerprint: no confident archetype (confidence=${classification.confidence.toFixed(2)}), proceeding with core 8`);
+      sLog.info({ confidence: classification.confidence }, 'fingerprint: no confident archetype, proceeding with core 8');
     }
   } catch (err) {
-    console.warn(`[fingerprint] Classification error (proceeding with core 8): ${err.message}`);
+    sLog.warn({ err: err.message }, 'fingerprint classification error (proceeding with core 8)');
   }
 
   // Retrieve relevant prior sessions for memory injection
@@ -335,11 +341,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       // extracted to avoid).
       session._memoryText = memory.injectMemory(memories);
       stmts.updateSessionMemoryInjected.run(Date.now(), session.id);
-      console.log(`🧠 Memory: ${memories.length} prior sessions injected for ${session.id}`);
+      sLog.info({ count: memories.length }, 'memory injected from prior sessions');
       broadcast(session.id, { type: 'memory-injected', sessionId: session.id, count: memories.length });
     }
   } catch (err) {
-    console.warn(`⚠️  Memory retrieval failed (proceeding without): ${err.message}`);
+    sLog.warn({ err: err.message }, 'memory retrieval failed (proceeding without)');
   }
 
   // Create PhaseRouter
@@ -373,12 +379,18 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       const pending = session.escalations.filter(e => !e.answered);
       if (pending.length > 0) {
         broadcast(session.id, { type: 'waiting-for-human', pendingCount: pending.length, sessionId: session.id });
-        let waited = 0;
-        while (session.escalations.some(e => !e.answered) && waited < 300000 && session.active) {
-          await new Promise(r => setTimeout(r, 2000));
-          waited += 2000;
-        }
-        if (waited >= 300000) {
+        // F13 — event-driven wait. Each pending escalation gets its own
+        // promise resolved by the WS escalation-response handler. Wakeup is
+        // immediate (sub-100ms) instead of the prior 2 s polling tick.
+        const waits = pending.map(e =>
+          waitForEscalation(session.id, e.id, { timeoutMs: 300_000 })
+            .then(() => ({ id: e.id, status: 'answered' }))
+            .catch((err) => ({ id: e.id, status: 'timeout', err }))
+        );
+        const results = await Promise.all(waits);
+        const timedOut = results.filter(r => r.status === 'timeout');
+        if (timedOut.length > 0) {
+          sLog.warn({ count: timedOut.length }, 'escalation wait timed out, proceeding without input');
           broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
         }
       }
@@ -439,7 +451,7 @@ async function runFollowUp(sessionId, session, question) {
     broadcast(sessionId, { type: 'message', ...msg, sessionId });
     broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
   } catch (err) {
-    console.error('Follow-up error:', err.message);
+    log.error({ sessionId, err: err.message }, 'follow-up error');
     broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
     broadcast(sessionId, { type: 'error', agentId: responderId, message: `Follow-up failed: ${err.message}`, sessionId });
   }
@@ -472,10 +484,11 @@ let shuttingDown = false;
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log('Shutting down...');
+  log.info('shutting down');
   activeSessions.forEach((session) => {
     session.active = false;
     try { stmts.updateSessionActive.run(0, Date.now(), session.id); } catch (_) {}
+    try { abortSessionWaits(session.id, 'server shutting down'); } catch (_) {}
   });
 
   // Wait up to 10 s for in-flight LLM calls so an agent turn can finish
@@ -485,7 +498,7 @@ async function shutdown() {
     await new Promise(r => setTimeout(r, 100));
   }
   if (anyLLMInFlight()) {
-    console.warn(`[shutdown] ${inFlightLLMCount()} LLM call(s) still in flight after 10s — closing anyway`);
+    log.warn({ inFlight: inFlightLLMCount() }, 'LLM calls still in flight after 10s — closing anyway');
   }
 
   try { await jobs.stopWorker(jobWorkerHandle); } catch (_) {}
@@ -497,6 +510,8 @@ process.on('SIGINT', shutdown);
 
 // ─── Start ──────────────────────────────────────────────────
 server.listen(PORT, () => {
+  // Boot banner stays as console.log: it is the one human-readable startup
+  // signature an operator skims for, and it should not be JSON.
   console.log(`\n🏛️  AI Research War Room`);
   console.log(`   Server running on http://localhost:${PORT}`);
   console.log(`   Database: ${dbPath}`);
@@ -511,13 +526,13 @@ server.listen(PORT, () => {
     const ts = Date.now();
     for (const row of orphaned) {
       stmts.markCrashRecovered.run(ts, ts, row.id);
-      console.warn(`[boot] crash-recovered orphaned session ${row.id}`);
+      log.warn({ sessionId: row.id }, 'crash-recovered orphaned session');
     }
     if (orphaned.length > 0) {
       broadcastGlobal({ type: 'crash-recovered', sessionIds: orphaned.map(r => r.id) });
     }
   } catch (err) {
-    console.error(`[boot] reconciliation failed: ${err && err.message || err}`);
+    log.error({ err: err && err.message || err }, 'boot reconciliation failed');
   }
 
   // Start the durable job worker.
@@ -525,6 +540,6 @@ server.listen(PORT, () => {
 
   // Retroactive quality scoring on first boot (async, non-blocking)
   quality.retroactiveScore().catch(err =>
-    console.warn(`[quality] Retroactive scoring error: ${err.message}`)
+    log.warn({ err: err.message }, 'retroactive quality scoring error')
   );
 });
