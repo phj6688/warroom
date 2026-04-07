@@ -15,7 +15,7 @@ const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('
 process.env.MCP_API_KEY = MCP_API_KEY;
 
 function setupMCPServer(app, deps) {
-  const { db, callLLM, createSession, activeSessions, AGENTS, PHASES } = deps;
+  const { db, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES } = deps;
 
   // Active MCP sessions: sessionId -> { transport, server, lastActivityAt }
   const mcpSessions = new Map();
@@ -110,10 +110,24 @@ function setupMCPServer(app, deps) {
     server.tool(
       'warroom_create_session',
       'Start a new multi-agent research deliberation. 8 agents analyze through 5 phases: Framing -> Divergence -> Convergence -> Red Team -> Synthesis. Runs async — poll with warroom_get_session.',
-      { problem: z.string().describe('Problem, question, or research challenge') },
-      async ({ problem }) => {
+      {
+        problem: z.string().describe('Problem, question, or research challenge'),
+        files: z.array(z.object({
+          name: z.string().describe('File name (e.g. "audit.md")'),
+          content: z.string().describe('File text content'),
+        })).optional().describe('Optional context files to attach to the session'),
+      },
+      async ({ problem, files }) => {
         try {
-          const session = createSession(problem, []);
+          const fileObjs = (files || []).map((f, i) => ({
+            id: `file-${Date.now()}-${i}`,
+            name: f.name,
+            size: f.content.length,
+            type: 'text/plain',
+            content: f.content,
+          }));
+          const session = createSession(problem, fileObjs);
+          runDeliberation(session).catch(e => console.error('MCP deliberation error:', e.message));
           return ok(`Session created: ${session.id}\nProblem: ${session.problem}\n\nDeliberation running. Use warroom_get_session to check progress.`);
         } catch (e) { return err(e.message); }
       }
@@ -178,6 +192,15 @@ function setupMCPServer(app, deps) {
       async ({ escalationId, answer }) => {
         try {
           db.answerEscalation.run(answer, Date.now(), escalationId);
+          // Update in-memory state so the deliberation loop unblocks
+          for (const [, session] of activeSessions) {
+            const esc = session.escalations?.find(e => e.id === escalationId);
+            if (esc) {
+              esc.answered = true;
+              esc.answer = answer;
+              break;
+            }
+          }
           return ok(`Escalation ${escalationId} answered.`);
         } catch (e) { return err(e.message); }
       }
@@ -329,6 +352,15 @@ function setupMCPServer(app, deps) {
 
     try {
       if (sessionId && mcpSessions.has(sessionId)) {
+        // Handle DELETE for existing sessions — clean up properly
+        if (req.method === 'DELETE') {
+          const session = mcpSessions.get(sessionId);
+          mcpSessions.delete(sessionId);
+          try { await session.transport.handleRequest(req, res, req.body); } catch (_) {}
+          console.log(`MCP session deleted by client: ${sessionId}`);
+          if (!res.headersSent) res.status(200).end();
+          return;
+        }
         // Existing session — reuse transport
         const session = mcpSessions.get(sessionId);
         session.lastActivityAt = Date.now();

@@ -183,10 +183,23 @@ server.tool(
 server.tool(
   'warroom_create_session',
   'Start a new deliberation. 8 agents analyze through 5 phases: Framing → Divergence → Convergence → Red Team → Synthesis. Returns session ID; runs async.',
-  { problem: z.string().describe('Problem, question, or challenge to deliberate on') },
-  async ({ problem }) => {
+  {
+    problem: z.string().describe('Problem, question, or challenge to deliberate on'),
+    files: z.array(z.object({
+      name: z.string().describe('File name (e.g. "audit.md")'),
+      content: z.string().describe('File text content'),
+    })).optional().describe('Optional context files to attach to the session'),
+  },
+  async ({ problem, files }) => {
     try {
-      const result = await wsCmd({ type: 'new-session', problem, files: [] });
+      const fileObjs = (files || []).map((f, i) => ({
+        id: `file-${Date.now()}-${i}`,
+        name: f.name,
+        size: f.content.length,
+        type: 'text/plain',
+        content: f.content,
+      }));
+      const result = await wsCmd({ type: 'new-session', problem, files: fileObjs });
       if (result.type === 'session-created') {
         return ok(`✅ Session created: ${result.session.id}\n\nProblem: ${result.session.problem}\n\nDeliberation running. Use warroom_get_session to check progress.`);
       }
@@ -289,7 +302,7 @@ server.tool(
 server.resource(
   'sessions-list',
   'warroom://sessions',
-  'List of all War Room sessions',
+  { description: 'List of all War Room sessions' },
   async (uri) => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await api('/api/sessions'), null, 2) }],
   })
@@ -298,7 +311,7 @@ server.resource(
 server.resource(
   'agents-list',
   'warroom://agents',
-  'War Room agent definitions',
+  { description: 'War Room agent definitions' },
   async (uri) => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await api('/api/agents'), null, 2) }],
   })

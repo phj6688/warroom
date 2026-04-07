@@ -66,8 +66,15 @@ echo "▸ WebSocket Tests"
 # Install wscat if not available
 which wscat >/dev/null 2>&1 || npm install -g wscat >/dev/null 2>&1
 
-# Test WS connection and initial messages
-WS_OUT=$(timeout 5 wscat -c "$WS_HOST" -x '{"type":"ping"}' --wait 3 2>/dev/null || true)
+# Test WS connection and initial messages (wscat -x disconnects too fast; use node instead)
+WS_OUT=$(timeout 5 node -e "
+const WebSocket = require('ws');
+const ws = new WebSocket('$WS_HOST');
+const msgs = [];
+ws.on('message', d => msgs.push(d.toString()));
+ws.on('error', e => { console.error(e.message); process.exit(1); });
+setTimeout(() => { msgs.forEach(m => console.log(m)); ws.close(); }, 3000);
+" 2>/dev/null || true)
 echo "$WS_OUT" | grep -q '"type":"agents"' && pass "WS: received agents" || fail "WS: no agents message"
 echo "$WS_OUT" | grep -q '"type":"phases"' && pass "WS: received phases" || fail "WS: no phases message"
 echo "$WS_OUT" | grep -q '"type":"sessions"' && pass "WS: received sessions" || fail "WS: no sessions message"
@@ -79,7 +86,15 @@ echo "▸ LLM Integration Test (live API call)"
 
 # Create a session via WS and check if the first agent responds
 # We'll use a small test problem to minimize token usage
-WS_FULL=$(timeout 60 wscat -c "$WS_HOST" -x '{"type":"new-session","problem":"In one sentence, what is 2+2? This is a test.","files":[]}' --wait 55 2>/dev/null || true)
+WS_FULL=$(timeout 60 node -e "
+const WebSocket = require('ws');
+const ws = new WebSocket('$WS_HOST');
+const msgs = [];
+ws.on('open', () => ws.send(JSON.stringify({type:'new-session',problem:'In one sentence, what is 2+2? This is a test.',files:[]})));
+ws.on('message', d => msgs.push(d.toString()));
+ws.on('error', e => { console.error(e.message); process.exit(1); });
+setTimeout(() => { msgs.forEach(m => console.log(m)); ws.close(); }, 55000);
+" 2>/dev/null || true)
 
 echo "$WS_FULL" | grep -q '"type":"session-created"' && pass "WS: session created" || fail "WS: session not created"
 echo "$WS_FULL" | grep -q '"type":"phase-change"' && pass "WS: phase change received" || fail "WS: no phase change"

@@ -86,6 +86,8 @@ const stmts = {
   getAllPendingEscalations: db.prepare("SELECT * FROM escalations WHERE status = 'pending' ORDER BY created_at DESC"),
   searchSessions: db.prepare("SELECT DISTINCT s.id, s.problem, s.phase, s.active, s.created_at, s.updated_at FROM sessions s LEFT JOIN messages m ON m.session_id = s.id WHERE LOWER(s.problem) LIKE ? OR LOWER(m.content) LIKE ? ORDER BY s.updated_at DESC LIMIT 20"),
   countSessionMessages: db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ?'),
+  countSessionEscalations: db.prepare('SELECT COUNT(*) as count FROM escalations WHERE session_id = ?'),
+  toggleSessionPin: db.prepare('UPDATE sessions SET pinned = ?, updated_at = ? WHERE id = ?'),
   updateSessionMemoryInjected: db.prepare('UPDATE sessions SET memory_injected = 1, updated_at = ? WHERE id = ?'),
   updateSessionQualityScore: db.prepare('UPDATE sessions SET quality_score = ?, updated_at = ? WHERE id = ?'),
   updateSessionShadowAnswer: db.prepare('UPDATE sessions SET shadow_answer = ?, updated_at = ? WHERE id = ?'),

@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
-<title>War Room</title>
+<title>War Room v2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -135,6 +135,25 @@ html, body {
   min-width: 0;
 }
 
+.session-id-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dimmer);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: all;
+  -webkit-user-select: all;
+  transition: background 0.15s, color 0.15s;
+}
+.session-id-badge:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text-dim);
+}
+
 .status-badge {
   font-family: var(--font-mono);
   padding: 4px 10px;
@@ -177,28 +196,57 @@ html, body {
   padding: 24px 16px;
   padding-bottom: calc(16px + var(--safe-bottom));
   overflow-y: auto;
-  justify-content: center;
-  align-items: center;
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
+.welcome-header {
+  text-align: center;
+  margin-bottom: 24px;
 }
 
 .welcome-view h1 {
   font-size: 24px;
   font-weight: 600;
   letter-spacing: 1px;
-  text-align: center;
   margin-bottom: 8px;
 }
 
 .welcome-view .subtitle {
   font-size: 12px;
   color: var(--text-dim);
-  text-align: center;
   max-width: 500px;
-  margin-bottom: 28px;
+  margin: 0 auto 0;
   line-height: 1.6;
 }
 
-.welcome-input-area { width: 100%; max-width: 600px; }
+.welcome-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (min-width: 768px) {
+  .welcome-body {
+    flex-direction: row;
+    gap: 32px;
+  }
+  .welcome-input-area {
+    flex: 1;
+    min-width: 0;
+  }
+  .welcome-right {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+.welcome-input-area { width: 100%; }
 
 .welcome-textarea {
   width: 100%;
@@ -459,7 +507,6 @@ html, body {
 .example-prompts {
   margin-top: 20px;
   width: 100%;
-  max-width: 600px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -494,63 +541,182 @@ html, body {
 .example-chip:active { transform: scale(0.97); }
 
 /* ─── Session History ─────────────────────────────────── */
-.session-list {
-  margin-top: 28px;
-  width: 100%;
-  max-width: 600px;
-}
+.session-list { margin-top: 0; width: 100%; }
 .session-list-title {
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  color: var(--text-dim);
-  margin-bottom: 10px;
+  font-size: 11px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 0;
 }
-.session-item {
-  padding: 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: all 0.2s var(--transition);
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.session-item:active { transform: scale(0.97); background: rgba(255,255,255,0.05); }
-.session-item.active-session { background: rgba(255,255,255,0.06); border-left: 3px solid var(--accent); }
-.session-item .si-status {
-  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-}
-.session-item .si-status.active { background: var(--success); }
-.session-item .si-status.done { background: var(--text-dimmer); }
-.session-item .si-info { flex: 1; min-width: 0; }
-.session-item .si-problem { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-item .si-meta { font-size: 10px; color: var(--text-dimmer); margin-top: 2px; }
-.session-item .si-delete {
-  width: 36px; height: 36px;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,65,65,0.2); border-radius: 8px;
-  background: none; color: var(--danger); font-size: 14px;
-  cursor: pointer; flex-shrink: 0; opacity: 0.5;
-  transition: all 0.2s;
-}
-.session-item .si-delete:hover { opacity: 1; background: rgba(255,65,65,0.1); }
-.session-item .si-delete:active { transform: scale(0.9); }
 .session-list-header {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;
 }
+.sh-controls { display: flex; align-items: center; gap: 6px; }
+.sh-controls button {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-dim); cursor: pointer; font-size: 12px; padding: 4px 8px;
+  font-family: var(--font); transition: all 0.2s;
+}
+.sh-controls button:hover { background: rgba(255,255,255,0.05); color: var(--text); border-color: var(--border-bright); }
 .session-list-header .clear-all {
-  font-size: 11px; color: var(--danger); opacity: 0.6;
-  cursor: pointer; background: none; border: none;
-  font-family: var(--font); padding: 6px 10px;
-  border-radius: 6px; transition: all 0.2s;
+  font-size: 10px; color: var(--danger); opacity: 0.5; cursor: pointer;
+  background: none; border: 1px solid rgba(255,65,65,0.15); font-family: var(--font);
+  padding: 4px 8px; border-radius: 6px; transition: all 0.2s;
 }
 .session-list-header .clear-all:hover { opacity: 1; background: rgba(255,65,65,0.1); }
+
+/* Search bar */
+.sh-search-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin-bottom: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); transition: border-color 0.2s;
+}
+.sh-search-bar:focus-within { border-color: var(--border-bright); }
+.sh-search-icon { font-size: 13px; color: var(--text-dimmer); flex-shrink: 0; }
+.sh-search-input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--text); font-family: var(--font); font-size: 12px; min-width: 0;
+}
+.sh-search-input::placeholder { color: var(--text-dimmer); }
+.sh-semantic-toggle {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 2px 7px; cursor: pointer; font-size: 12px; color: var(--text-dimmer);
+  transition: all 0.2s; flex-shrink: 0; line-height: 1;
+}
+.sh-semantic-toggle:hover { border-color: var(--border-bright); color: var(--text-dim); }
+.sh-semantic-toggle.active { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
+.sh-search-clear {
+  background: none; border: none; color: var(--text-dimmer); cursor: pointer;
+  font-size: 14px; padding: 0 2px; line-height: 1; transition: color 0.2s;
+}
+.sh-search-clear:hover { color: var(--text); }
+
+/* Filter chips */
+.sh-filters { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; align-items: center; }
+.sh-chip {
+  font-family: var(--font); font-size: 10px; font-weight: 500;
+  padding: 3px 9px; border-radius: 20px;
+  background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+  color: var(--text-dimmer); cursor: pointer; transition: all 0.2s;
+  white-space: nowrap; line-height: 1.4;
+}
+.sh-chip:hover { background: rgba(255,255,255,0.06); color: var(--text-dim); }
+.sh-chip.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
+.sh-chip-divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; flex-shrink: 0; }
+
+/* Sort dropdown */
+.sh-sort-dropdown {
+  background: var(--bg-panel); border: 1px solid var(--border-bright);
+  border-radius: 8px; padding: 4px 0; margin-bottom: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.sh-sort-opt {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 14px; font-family: var(--font); font-size: 11px;
+  background: none; border: none; color: var(--text-dim); cursor: pointer; transition: background 0.1s;
+}
+.sh-sort-opt:hover { background: rgba(255,255,255,0.05); }
+.sh-sort-opt.active { color: var(--accent); }
+
+/* Results bar */
+.sh-results-bar { font-size: 10px; color: var(--text-dimmer); margin-bottom: 6px; min-height: 16px; }
+.sh-search-loading {
+  display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-dimmer);
+}
+.sh-search-loading::before {
+  content: ''; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.sh-cards { max-height: 60vh; overflow-y: auto; }
+
+/* Session card */
+.session-card {
+  padding: 12px; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 6px; cursor: pointer; transition: all 0.15s var(--transition);
+  position: relative;
+}
+.session-card:hover { background: var(--bg-card-hover); border-color: var(--border-bright); }
+.session-card:active { transform: scale(0.98); }
+.session-card.sc-active { border-left: 3px solid var(--success); }
+.session-card.sc-pinned { border-top: 2px solid var(--accent-orange); }
+
+.sc-top { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.sc-pin {
+  background: none; border: none; font-size: 11px; cursor: pointer;
+  opacity: 0.2; transition: opacity 0.2s; padding: 0; line-height: 1;
+}
+.sc-pin.pinned, .session-card:hover .sc-pin { opacity: 0.8; }
+.sc-pin.pinned { opacity: 1; filter: drop-shadow(0 0 3px rgba(255,140,0,0.5)); }
+.sc-archetype-tag {
+  font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 2px 7px; border-radius: 4px;
+  background: rgba(255,255,255,0.05); color: var(--text-dim);
+  white-space: nowrap;
+}
+.sc-archetype-tag[data-arch="technical-architecture"] { color: #4FC3F7; background: rgba(79,195,247,0.1); }
+.sc-archetype-tag[data-arch="strategic-decision"]     { color: #FF5252; background: rgba(255,82,82,0.1); }
+.sc-archetype-tag[data-arch="research-synthesis"]     { color: #4ADE80; background: rgba(74,222,128,0.1); }
+.sc-archetype-tag[data-arch="risk-assessment"]        { color: #FFB74D; background: rgba(255,183,77,0.1); }
+.sc-archetype-tag[data-arch="policy-analysis"]        { color: #CE93D8; background: rgba(206,147,216,0.1); }
+.sc-archetype-tag[data-arch="financial-planning"]     { color: #4ECDC4; background: rgba(78,205,196,0.1); }
+.sc-archetype-tag[data-arch="product-design"]         { color: #FFD93D; background: rgba(255,217,61,0.1); }
+.sc-archetype-tag[data-arch="operational-improvement"]{ color: #81C784; background: rgba(129,199,132,0.1); }
+.sc-archetype-tag[data-arch="crisis-response"]        { color: #FF3E3E; background: rgba(255,62,62,0.1); }
+.sc-archetype-tag[data-arch="innovation-exploration"] { color: #B39DDB; background: rgba(179,157,219,0.1); }
+
+.sc-quality-bar {
+  flex: 1; height: 3px; background: rgba(255,255,255,0.05);
+  border-radius: 2px; overflow: hidden; min-width: 30px;
+}
+.sc-quality-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+.sc-quality-label { font-family: var(--font-mono); font-size: 9px; color: var(--text-dimmer); min-width: 20px; text-align: right; }
+
+.sc-problem {
+  font-size: 12px; line-height: 1.5; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; margin-bottom: 6px;
+}
+
+.sc-phase-dots { display: flex; gap: 4px; margin-bottom: 6px; }
+.sc-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255,255,255,0.08); transition: background 0.3s;
+}
+.sc-dot.completed { background: var(--success); }
+.sc-dot.active { background: var(--accent); box-shadow: 0 0 6px rgba(255,62,62,0.4); }
+
+.sc-specialists { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }
+.sc-specialist {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+  background: rgba(255,255,255,0.04); color: var(--text-dimmer);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+@media (max-width: 767px) { .sc-specialists { display: none; } }
+
+.sc-meta {
+  display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-dimmer);
+}
+.sc-status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.sc-status.active { background: var(--success); }
+.sc-status.done { background: var(--text-dimmer); }
+.sc-similarity {
+  font-family: var(--font-mono); font-size: 9px; color: var(--accent);
+  background: var(--accent-dim); padding: 1px 5px; border-radius: 3px; margin-left: auto;
+}
+
+.sc-delete {
+  position: absolute; top: 8px; right: 8px;
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,65,65,0.12); border-radius: 5px;
+  background: none; color: var(--danger); font-size: 11px;
+  cursor: pointer; opacity: 0; transition: opacity 0.15s;
+}
+.session-card:hover .sc-delete { opacity: 0.4; }
+.sc-delete:hover { opacity: 1 !important; background: rgba(255,65,65,0.1); }
+
+.sh-empty { text-align: center; padding: 30px 16px; color: var(--text-dimmer); font-size: 12px; }
 
 /* ─── Deliberation View ───────────────────────────────── */
 .deliberation-view {
@@ -684,7 +850,7 @@ html, body {
 }
 
 /* Copy button */
-.message-body { position: relative; }
+.message-body, .init-message-body, .escalation-card { position: relative; }
 .copy-btn {
   position: absolute; top: 6px; right: 6px;
   background: var(--bg-elevated); border: 1px solid var(--border);
@@ -693,7 +859,7 @@ html, body {
   opacity: 0; transition: opacity 0.2s, color 0.2s, border-color 0.2s;
   z-index: 2; line-height: 1;
 }
-.message-body:hover .copy-btn, .copy-btn:focus { opacity: 1; }
+.message-body:hover .copy-btn, .init-message-body:hover .copy-btn, .escalation-card:hover .copy-btn, .copy-btn:focus { opacity: 1; }
 .copy-btn:active { transform: scale(0.93); }
 .copy-btn.copied { color: var(--success); border-color: var(--success); }
 @media (hover: none) { .copy-btn { opacity: 0.7; } }
@@ -848,21 +1014,43 @@ html, body {
   transform: rotate(90deg);
 }
 .init-message-body {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.35s var(--transition), padding 0.35s var(--transition);
-  padding: 0 14px;
+  display: none;
+  padding: 12px 14px;
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-wrap: break-word;
-  border-top: 0 solid var(--border);
+  border-top: 1px solid var(--border);
   color: var(--text);
 }
 .init-message.expanded .init-message-body {
-  max-height: 600px;
-  padding: 12px 14px;
-  border-top-width: 1px;
+  display: block;
+}
+.init-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.init-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.init-file-chip .file-icon {
+  font-size: 13px;
+}
+.init-file-chip .file-size {
+  color: var(--text-dimmer);
+  font-size: 10px;
 }
 
 /* Complete banner */
@@ -1000,6 +1188,34 @@ html, body {
 }
 .jump-latest:hover { border-color: var(--accent); color: var(--text); }
 .jump-latest:active { transform: translateX(-50%) scale(0.95); }
+
+.jump-top {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-10px);
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s var(--transition);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+.jump-top.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+.jump-top:hover { border-color: var(--accent); color: var(--text); }
+.jump-top:active { transform: translateX(-50%) scale(0.95); }
 
 /* ─── Chat Input Bar ──────────────────────────────────── */
 .chat-bar {
@@ -1299,11 +1515,63 @@ html, body {
   border-radius: 3px; font-size: 10px;
 }
 
+/* ─── Phase Bar (horizontal, top of feed) ──────────────── */
+.phase-bar {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+.phase-bar .pb-item {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; color: var(--text-dimmer);
+  white-space: nowrap;
+}
+.phase-bar .pb-item.active { color: var(--text); font-weight: 600; }
+.phase-bar .pb-item.completed { color: var(--text-dim); }
+.phase-bar .pb-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--text-dimmer);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px; line-height: 1;
+}
+.phase-bar .pb-item.active .pb-dot { border-color: var(--accent); background: var(--accent); }
+.phase-bar .pb-item.completed .pb-dot { border-color: var(--success); background: var(--success); }
+.phase-bar .pb-item.completed .pb-dot::after { content: '\2713'; color: #000; font-size: 7px; font-weight: 700; }
+.phase-bar .pb-arrow { color: var(--text-dimmer); font-size: 10px; margin: 0 2px; }
+.phase-bar .pb-stats {
+  margin-left: auto;
+  display: flex; gap: 12px;
+  font-size: 10px; color: var(--text-dimmer);
+}
+.phase-bar .pb-stats span { white-space: nowrap; }
+
+/* ─── Desktop Right Panel (toggleable) ──────────────────── */
+.desktop-right {
+  display: none; flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+.desktop-right .dr-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.desktop-right .dr-section.dr-escalations { flex: 1; overflow-y: auto; }
+.desktop-right .dr-title {
+  font-size: 11px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 1.5px; color: var(--text-secondary); margin-bottom: 10px;
+}
+.desktop-right.open {
+  display: flex;
+  width: 280px; flex-shrink: 0;
+}
+
 /* ─── Desktop Enhancements ────────────────────────────── */
 @media (min-width: 768px) {
   .deliberation-view { flex-direction: row; }
   .desktop-sidebar {
-    width: 260px; flex-shrink: 0;
+    width: 240px; flex-shrink: 0;
     background: var(--bg-panel);
     border-right: 1px solid var(--border);
     overflow-y: auto;
@@ -1315,24 +1583,7 @@ html, body {
     letter-spacing: 1.5px; color: var(--text-secondary);
   }
   .desktop-sidebar .ds-agents { padding: 8px; flex: 1; }
-  .desktop-right {
-    width: 280px; flex-shrink: 0;
-    background: var(--bg-panel);
-    border-left: 1px solid var(--border);
-    overflow-y: auto;
-    display: flex; flex-direction: column;
-  }
-  .desktop-right .dr-section.dr-escalations {
-    flex: 1;
-    overflow-y: auto;
-  }
-  .desktop-right .dr-section {
-    padding: 16px; border-bottom: 1px solid var(--border);
-  }
-  .desktop-right .dr-title {
-    font-size: 11px; font-weight: 500; text-transform: uppercase;
-    letter-spacing: 1.5px; color: var(--text-secondary); margin-bottom: 10px;
-  }
+  .phase-bar { display: flex; }
   .feed { padding: 20px; }
   .top-btn.mobile-only { display: none; }
 }
@@ -1350,9 +1601,11 @@ html, body {
     <button class="top-btn mobile-only" id="btn-agents" title="Agents">👥</button>
     <div class="logo">⚡ War Room</div>
     <div class="problem-display" id="problem-display"></div>
+    <div class="session-id-badge" id="session-id-badge" title="Click to copy session ID" style="display:none"></div>
     <div class="status-badge idle" id="status-badge" title="No active session" style="cursor:default">Idle</div>
     <div class="quality-badge" id="quality-badge" title="Quality Score"></div>
     <button class="top-btn mobile-only" id="btn-phases" title="Phases">📊</button>
+    <button class="top-btn" id="btn-panel" title="Toggle details panel" style="display:none">📋</button>
     <button class="top-btn" id="btn-export" title="Export Results" style="display:none">📤</button>
     <button class="top-btn mobile-only has-badge" id="btn-escalations" title="Escalations">
       🔴
@@ -1363,49 +1616,78 @@ html, body {
   <!-- Welcome View -->
   <div class="view active" id="view-welcome">
     <div class="welcome-view">
-      <h1>War Room</h1>
-      <div class="subtitle">8 cognitive agents deliberate through 5 phases to solve complex problems.</div>
-      <div class="welcome-input-area">
-        <textarea class="welcome-textarea" id="welcome-input" placeholder="Describe a complex problem, strategic question, or research challenge..."></textarea>
-        <div class="file-drop-zone" id="file-drop-zone">
-          📎 Drop files or tap to attach (max 10MB each)
-          <input type="file" id="file-input" multiple>
-        </div>
-        <div class="file-list" id="file-list"></div>
-        <div class="improver-panel" id="improver-panel">
-          <div class="improver-inner">
-            <div class="improver-card">
-              <div class="improver-label">IMPROVED PROBLEM STATEMENT</div>
-              <textarea class="improver-textarea" id="improver-output"></textarea>
-              <div class="improver-actions">
-                <button class="deploy-improved-btn" id="btn-deploy-improved">⚡ Deploy with This</button>
-                <button class="edit-further-btn" id="btn-edit-further">✏️ Edit Further</button>
+      <div class="welcome-header">
+        <h1>War Room</h1>
+        <div class="subtitle">8 cognitive agents deliberate through 5 phases to solve complex problems.</div>
+      </div>
+      <div class="welcome-body">
+        <div class="welcome-input-area">
+          <textarea class="welcome-textarea" id="welcome-input" placeholder="Describe a complex problem, strategic question, or research challenge..."></textarea>
+          <div class="file-drop-zone" id="file-drop-zone">
+            📎 Drop files or tap to attach (max 10MB each)
+            <input type="file" id="file-input" multiple>
+          </div>
+          <div class="file-list" id="file-list"></div>
+          <div class="improver-panel" id="improver-panel">
+            <div class="improver-inner">
+              <div class="improver-card">
+                <div class="improver-label">IMPROVED PROBLEM STATEMENT</div>
+                <textarea class="improver-textarea" id="improver-output"></textarea>
+                <div class="improver-actions">
+                  <button class="deploy-improved-btn" id="btn-deploy-improved">⚡ Deploy with This</button>
+                  <button class="edit-further-btn" id="btn-edit-further">✏️ Edit Further</button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-        <div class="improver-error" id="improver-error">
-          <div class="improver-error-inner">
-            <div class="improver-error-content" id="improver-error-text"></div>
+          <div class="improver-error" id="improver-error">
+            <div class="improver-error-inner">
+              <div class="improver-error-content" id="improver-error-text"></div>
+            </div>
+          </div>
+          <div class="welcome-actions">
+            <button class="improve-btn" id="btn-improve">✨ Improve</button>
+            <button class="welcome-submit" id="welcome-submit">⚡ Deploy War Room</button>
+          </div>
+          <div class="example-prompts" id="example-prompts">
+            <div class="example-prompts-title">Try an example</div>
+            <button class="example-chip" data-prompt="Compare the trade-offs between microservices and monolithic architecture for a 10-person startup.">Compare microservices vs monolith for a startup</button>
+            <button class="example-chip" data-prompt="Design a system for real-time collaborative document editing that handles offline mode and conflict resolution.">Design real-time collaborative editing system</button>
+            <button class="example-chip" data-prompt="Evaluate whether we should build or buy an authentication system, considering security, cost, and maintenance.">Build vs buy: authentication system</button>
           </div>
         </div>
-        <div class="welcome-actions">
-          <button class="improve-btn" id="btn-improve">✨ Improve</button>
-          <button class="welcome-submit" id="welcome-submit">⚡ Deploy War Room</button>
+        <div class="welcome-right">
+          <div class="session-list" id="session-list-container" style="display:none">
+            <div class="session-list-header">
+              <div class="session-list-title">Session History</div>
+              <div class="sh-controls">
+                <button id="sh-sort-btn" title="Sort sessions">↕</button>
+                <button class="clear-all" id="clear-all-sessions">Clear</button>
+              </div>
+            </div>
+            <div class="sh-search-bar">
+              <span class="sh-search-icon">🔍</span>
+              <input type="text" class="sh-search-input" id="sh-search-input" placeholder="Search sessions..." autocomplete="off" spellcheck="false">
+              <button class="sh-semantic-toggle" id="sh-semantic-toggle" title="Semantic search">🧠</button>
+              <span class="sh-search-clear" id="sh-search-clear" style="display:none">✕</span>
+            </div>
+            <div class="sh-filters" id="sh-filters">
+              <button class="sh-chip active" data-filter="all">All</button>
+              <button class="sh-chip" data-filter="active">Active</button>
+              <button class="sh-chip" data-filter="done">Done</button>
+              <span class="sh-chip-divider"></span>
+              <span id="sh-archetype-chips"></span>
+            </div>
+            <div class="sh-sort-dropdown" id="sh-sort-dropdown" style="display:none">
+              <button class="sh-sort-opt active" data-sort="date-desc">Newest first</button>
+              <button class="sh-sort-opt" data-sort="date-asc">Oldest first</button>
+              <button class="sh-sort-opt" data-sort="quality-desc">Highest quality</button>
+              <button class="sh-sort-opt" data-sort="messages-desc">Most messages</button>
+            </div>
+            <div class="sh-results-bar" id="sh-results-bar"></div>
+            <div id="session-list" class="sh-cards"></div>
+          </div>
         </div>
-      </div>
-      <div class="example-prompts" id="example-prompts">
-        <div class="example-prompts-title">Try an example</div>
-        <button class="example-chip" data-prompt="Compare the trade-offs between microservices and monolithic architecture for a 10-person startup.">Compare microservices vs monolith for a startup</button>
-        <button class="example-chip" data-prompt="Design a system for real-time collaborative document editing that handles offline mode and conflict resolution.">Design real-time collaborative editing system</button>
-        <button class="example-chip" data-prompt="Evaluate whether we should build or buy an authentication system, considering security, cost, and maintenance.">Build vs buy: authentication system</button>
-      </div>
-      <div class="session-list" id="session-list-container" style="display:none">
-        <div class="session-list-header">
-          <div class="session-list-title" style="margin-bottom:0">Session History</div>
-          <button class="clear-all" id="clear-all-sessions">Clear All</button>
-        </div>
-        <div id="session-list"></div>
       </div>
     </div>
   </div>
@@ -1421,7 +1703,9 @@ html, body {
 
       <!-- Feed -->
       <div class="feed-column">
+        <div class="phase-bar" id="phase-bar"></div>
         <div class="feed" id="feed"></div>
+        <button class="jump-top" id="jump-top">&#8593; Back to top</button>
         <button class="jump-latest" id="jump-latest">&#8595; Jump to latest</button>
         <div class="chat-bar" id="chat-bar">
           <input type="text" id="chat-input" placeholder="Send a message, ask a follow-up, or answer an escalation..." autocomplete="off">
@@ -1530,6 +1814,48 @@ let durationInterval = null;
 let pendingFiles = [];
 let activeSheet = null;
 
+// ─── Session History State ──────────────────────────────
+let shSearchMode = 'text';
+let shSortMode = 'date-desc';
+let shFilterStatus = 'all';
+let shFilterArchetype = null;
+let shSearchQuery = '';
+let shSearchTimeout = null;
+let shSemanticResults = null;
+
+const ARCHETYPE_CONFIG = {
+  'technical-architecture':   { emoji: '🏗️', label: 'Technical' },
+  'strategic-decision':       { emoji: '♟️', label: 'Strategic' },
+  'research-synthesis':       { emoji: '🔬', label: 'Research' },
+  'risk-assessment':          { emoji: '⚠️', label: 'Risk' },
+  'policy-analysis':          { emoji: '🏛️', label: 'Policy' },
+  'financial-planning':       { emoji: '💰', label: 'Finance' },
+  'product-design':           { emoji: '🎨', label: 'Product' },
+  'operational-improvement':  { emoji: '⚙️', label: 'Ops' },
+  'crisis-response':          { emoji: '🚨', label: 'Crisis' },
+  'innovation-exploration':   { emoji: '💡', label: 'Innovation' },
+};
+
+function qualityColor(score) {
+  if (score == null) return 'var(--text-dimmer)';
+  if (score >= 0.7) return '#4ADE80';
+  if (score >= 0.5) return '#FFD93D';
+  if (score >= 0.3) return '#FFB74D';
+  return '#FF5252';
+}
+
+function relativeDate(ts) {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours + 'h ago';
+  const days = Math.floor(hours / 24);
+  if (days < 7) return days + 'd ago';
+  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 const BASE_PATH = (() => { const m = location.pathname.match(/^(\/proxy\/[^/]+)/); return m ? m[1] : ''; })();
 function apiUrl(p) { return BASE_PATH + p; }
 
@@ -1537,7 +1863,9 @@ function apiUrl(p) { return BASE_PATH + p; }
 function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-  document.getElementById('btn-back').style.display = id === 'view-deliberation' ? 'flex' : 'none';
+  const isDelib = id === 'view-deliberation';
+  document.getElementById('btn-back').style.display = isDelib ? 'flex' : 'none';
+  document.getElementById('btn-panel').style.display = isDelib ? 'flex' : 'none';
 }
 
 // ─── Sheets ──────────────────────────────────────────────
@@ -1618,11 +1946,12 @@ function handleMessage(data) {
       showView('view-deliberation');
       document.getElementById('problem-display').textContent = data.session.problem;
       document.getElementById('problem-display').title = data.session.problem;
+      showSessionId(data.session.id);
       document.getElementById('status-badge').textContent = 'Active';
       document.getElementById('status-badge').className = 'status-badge active';
       document.getElementById('status-badge').title = 'Agents are processing';
       clearFeed();
-      addInitMessage(data.session.problem, true);
+      addInitMessage(data.session.problem, false, data.session.files);
       startDurationTimer();
       break;
 
@@ -1642,6 +1971,7 @@ function handleMessage(data) {
       addMessage(data);
       messageCount++;
       document.getElementById('info-messages').textContent = messageCount;
+      updateBarStats();
       break;
 
     case 'escalation':
@@ -1651,6 +1981,7 @@ function handleMessage(data) {
       pendingEscalations++;
       document.getElementById('info-escalations').textContent = escalationCount;
       document.getElementById('esc-badge').style.display = 'block';
+      updateBarStats();
       showToast(`🔴 ${data.agentName} needs input!`);
       break;
 
@@ -1718,6 +2049,7 @@ function handleMessage(data) {
       showView('view-deliberation');
       document.getElementById('problem-display').textContent = data.session.problem;
       document.getElementById('problem-display').title = data.session.problem;
+      showSessionId(data.session.id);
       document.getElementById('status-badge').textContent = data.session.active ? 'Active' : 'Complete';
       document.getElementById('status-badge').className = `status-badge ${data.session.active ? 'active' : 'idle'}`;
       document.getElementById('status-badge').title = data.session.active ? 'Agents are processing' : 'Deliberation finished — export results or ask follow-ups';
@@ -1730,7 +2062,7 @@ function handleMessage(data) {
         document.getElementById('btn-stop').style.display = '';
       }
       clearFeed();
-      addInitMessage(data.session.problem, true);
+      addInitMessage(data.session.problem, false, data.session.files);
       // Merge messages + human messages, sort by timestamp, interleave
       const allItems = [];
       (data.session.messages || []).forEach(m => allItems.push({ ...m, _type: 'agent' }));
@@ -1755,6 +2087,7 @@ function handleMessage(data) {
       escalationCount = (data.session.escalations || []).length;
       document.getElementById('info-messages').textContent = messageCount;
       document.getElementById('info-escalations').textContent = escalationCount;
+      updateBarStats();
       // Restore phase progress visual state
       if (data.session.phase != null) {
         const phaseIdx = data.session.active ? data.session.phase : phases.length;
@@ -1855,6 +2188,17 @@ function renderPhases() {
   `).join('');
   document.getElementById('sheet-phase-list').innerHTML = html;
   document.getElementById('desktop-phases').innerHTML = html.replace(/id="phase-/g, 'id="dphase-');
+  renderPhaseBar();
+}
+
+function renderPhaseBar() {
+  const bar = document.getElementById('phase-bar');
+  if (!bar || !phases.length) return;
+  bar.innerHTML = phases.map((p, i) => {
+    return (i > 0 ? '<span class="pb-arrow">›</span>' : '') +
+      `<div class="pb-item" id="pbar-${i}"><div class="pb-dot"></div><span>${p.name}</span></div>`;
+  }).join('') +
+    '<div class="pb-stats"><span id="bar-msgs">0 msgs</span><span id="bar-esc">0 escalations</span><span id="bar-dur">—</span></div>';
 }
 
 function updatePhases(activeIdx) {
@@ -1874,37 +2218,114 @@ function updatePhases(activeIdx) {
         if (stateEl) stateEl.textContent = 'Pending';
       }
     });
+    // Update phase bar too
+    const barEl = document.getElementById(`pbar-${i}`);
+    if (barEl) {
+      barEl.className = i < activeIdx ? 'pb-item completed' : i === activeIdx ? 'pb-item active' : 'pb-item';
+    }
   });
 }
 
 // ─── Session List ────────────────────────────────────────
+function getFilteredSessions() {
+  let list = shSemanticResults || [...sessionsList];
+  if (shFilterStatus === 'active') list = list.filter(s => s.active);
+  else if (shFilterStatus === 'done') list = list.filter(s => !s.active);
+  if (shFilterArchetype) list = list.filter(s => s.archetypeId === shFilterArchetype);
+  if (shSearchQuery && shSearchMode === 'text') {
+    const q = shSearchQuery.toLowerCase();
+    list = list.filter(s => (s.problem || '').toLowerCase().includes(q));
+  }
+  if (!shSemanticResults) {
+    const [field, dir] = shSortMode.split('-');
+    list.sort((a, b) => {
+      let va, vb;
+      if (field === 'date') { va = a.createdAt; vb = b.createdAt; }
+      else if (field === 'quality') { va = a.qualityScore || 0; vb = b.qualityScore || 0; }
+      else if (field === 'messages') { va = a.messageCount || 0; vb = b.messageCount || 0; }
+      return dir === 'desc' ? vb - va : va - vb;
+    });
+  }
+  list.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  return list;
+}
+
 function renderSessionList() {
   const container = document.getElementById('session-list-container');
   const list = document.getElementById('session-list');
   if (!sessionsList.length) { container.style.display = 'none'; return; }
   container.style.display = 'block';
-  list.innerHTML = sessionsList.map(s => {
-    const date = new Date(s.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const status = s.active ? '🟢' : '✅';
-    const isActive = currentSession && currentSession.id === s.id;
-    return `<div class="session-item${isActive ? ' active-session' : ''}" data-sid="${s.id}">
-      <div class="si-status ${s.active ? 'active' : 'done'}"></div>
-      <div class="si-info">
-        <div class="si-problem">${status} ${escHtml(s.problem)}</div>
-        <div class="si-meta">${s.active ? 'Active' : 'Done'} · ${date} · ${s.messageCount || 0} msgs · Phase ${s.phase || 0}/4</div>
+
+  // Dynamic archetype chips
+  const archetypes = [...new Set(sessionsList.map(s => s.archetypeId).filter(Boolean))];
+  const chipContainer = document.getElementById('sh-archetype-chips');
+  chipContainer.innerHTML = archetypes.map(a => {
+    const cfg = ARCHETYPE_CONFIG[a] || { emoji: '❓', label: a };
+    return `<button class="sh-chip${shFilterArchetype === a ? ' active' : ''}" data-archetype="${a}">${cfg.emoji} ${escHtml(cfg.label)}</button>`;
+  }).join('');
+
+  const filtered = getFilteredSessions();
+  const bar = document.getElementById('sh-results-bar');
+  if (shSemanticResults) bar.textContent = `${filtered.length} semantic match${filtered.length !== 1 ? 'es' : ''}`;
+  else if (shSearchQuery || shFilterStatus !== 'all' || shFilterArchetype) bar.textContent = `Showing ${filtered.length} of ${sessionsList.length}`;
+  else bar.textContent = `${sessionsList.length} session${sessionsList.length !== 1 ? 's' : ''}`;
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="sh-empty">No sessions match your filters.</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(s => {
+    const archCfg = ARCHETYPE_CONFIG[s.archetypeId] || null;
+    const archLabel = archCfg ? `${archCfg.emoji} ${escHtml(archCfg.label)}` : '— Unclassified';
+    const archAttr = s.archetypeId ? ` data-arch="${s.archetypeId}"` : '';
+    const qScore = s.qualityScore;
+    const qPct = qScore != null ? Math.round(qScore * 100) : null;
+    const qBar = qPct != null ? `<div class="sc-quality-bar"><div class="sc-quality-fill" style="width:${qPct}%;background:${qualityColor(qScore)}"></div></div><span class="sc-quality-label">${qPct}%</span>` : '';
+    const dots = Array.from({length: 5}, (_, i) => {
+      const cls = i < (s.phase || 0) ? 'sc-dot completed' : i === (s.phase || 0) && s.active ? 'sc-dot active' : 'sc-dot';
+      return `<span class="${cls}"></span>`;
+    }).join('');
+    const specs = (s.specialistAgents || []).map(id => {
+      const name = id.replace('specialist-', '');
+      return `<span class="sc-specialist">${escHtml(name)}</span>`;
+    }).join('');
+    const simBadge = s.similarity != null ? `<span class="sc-similarity">${Math.round(s.similarity * 100)}%</span>` : '';
+    const pinCls = s.pinned ? ' pinned' : '';
+    const cardCls = `session-card${s.active ? ' sc-active' : ''}${s.pinned ? ' sc-pinned' : ''}`;
+
+    return `<div class="${cardCls}" data-sid="${s.id}">
+      <div class="sc-top">
+        <button class="sc-pin${pinCls}" data-sid="${s.id}" title="Pin">📌</button>
+        <span class="sc-archetype-tag"${archAttr}>${archLabel}</span>
+        ${qBar}
       </div>
-      <button class="si-delete" data-sid="${s.id}" title="Delete session">✕</button>
+      <div class="sc-problem">${escHtml(s.problem)}</div>
+      <div class="sc-phase-dots">${dots}</div>
+      ${specs ? `<div class="sc-specialists">${specs}</div>` : ''}
+      <div class="sc-meta">
+        <span class="sc-status ${s.active ? 'active' : 'done'}"></span>
+        <span>${relativeDate(s.createdAt)}</span>
+        <span>·</span>
+        <span>${s.messageCount || 0} msgs</span>
+        <span>·</span>
+        <span>${s.escalationCount || 0} esc</span>
+        ${simBadge}
+      </div>
+      <button class="sc-delete" data-sid="${s.id}" title="Delete">✕</button>
     </div>`;
   }).join('');
-  // Open session on click
-  list.querySelectorAll('.si-info').forEach(el => {
-    el.addEventListener('click', () => {
-      const sid = el.closest('.session-item').dataset.sid;
+
+  // Click to open
+  list.querySelectorAll('.session-card').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.sc-delete') || e.target.closest('.sc-pin')) return;
+      const sid = el.dataset.sid;
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'join-session', sessionId: sid }));
     });
   });
-  // Delete session on button click
-  list.querySelectorAll('.si-delete').forEach(btn => {
+  // Delete
+  list.querySelectorAll('.sc-delete').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const sid = btn.dataset.sid;
@@ -1915,6 +2336,42 @@ function renderSessionList() {
       }
     });
   });
+  // Pin toggle
+  list.querySelectorAll('.sc-pin').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePin(btn.dataset.sid);
+    });
+  });
+}
+
+async function togglePin(sessionId) {
+  const s = sessionsList.find(s => s.id === sessionId);
+  if (!s) return;
+  const newPinned = !s.pinned;
+  try {
+    await fetch(apiUrl(`/api/sessions/${sessionId}/pin`), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pinned: newPinned }) });
+    s.pinned = newPinned;
+    renderSessionList();
+  } catch { showToast('Failed to pin session'); }
+}
+
+async function semanticSearch(query) {
+  if (!query || query.length < 2) { shSemanticResults = null; renderSessionList(); return; }
+  document.getElementById('sh-results-bar').innerHTML = '<div class="sh-search-loading">Searching semantically...</div>';
+  try {
+    const res = await fetch(apiUrl(`/api/sessions/search/semantic?q=${encodeURIComponent(query)}&limit=15`));
+    if (!res.ok) throw new Error();
+    shSemanticResults = await res.json();
+    renderSessionList();
+  } catch { shSemanticResults = null; showToast('Semantic search unavailable'); renderSessionList(); }
+}
+
+function showSessionId(id) {
+  const el = document.getElementById('session-id-badge');
+  el.textContent = id;
+  el.title = 'Click to copy session ID: ' + id;
+  el.style.display = '';
 }
 
 function escHtml(s) {
@@ -1927,40 +2384,68 @@ function escHtml(s) {
 function clearFeed() { document.getElementById('feed').innerHTML = ''; }
 function scrollFeed() { const f = document.getElementById('feed'); requestAnimationFrame(() => f.scrollTop = f.scrollHeight); }
 
-// Jump to latest FAB
+// Jump to latest / Back to top FABs
 const jumpBtn = document.getElementById('jump-latest');
+const topBtn = document.getElementById('jump-top');
 document.getElementById('feed').addEventListener('scroll', () => {
   const f = document.getElementById('feed');
   const atBottom = f.scrollHeight - f.scrollTop - f.clientHeight < 80;
+  const atTop = f.scrollTop < 80;
   jumpBtn.classList.toggle('visible', !atBottom);
+  topBtn.classList.toggle('visible', !atTop);
 });
 jumpBtn.addEventListener('click', scrollFeed);
+topBtn.addEventListener('click', () => { document.getElementById('feed').scrollTo({ top: 0, behavior: 'smooth' }); });
 
-function addInitMessage(problem, collapsed) {
+function addInitMessage(problem, collapsed, files) {
   const existing = document.getElementById('init-message');
   if (existing) existing.remove();
   const preview = problem.length > 80 ? problem.slice(0, 80) + '…' : problem;
+  // Build file chips HTML
+  let filesHtml = '';
+  if (files && files.length) {
+    const chips = files.map(f => {
+      const icon = fileIcon(f.type || f.name);
+      const size = f.size ? formatFileSize(f.size) : '';
+      return `<span class="init-file-chip"><span class="file-icon">${icon}</span>${escHtml(f.name)}${size ? `<span class="file-size">${size}</span>` : ''}</span>`;
+    }).join('');
+    filesHtml = `<div class="init-files">${chips}</div>`;
+  }
   const d = document.createElement('div');
-  d.className = 'init-message' + (collapsed ? '' : ' expanded');
+  d.className = 'init-message expanded';
   d.id = 'init-message';
   d.innerHTML = `
     <div class="init-message-header">
       <span class="init-icon">📋</span>
       <span class="init-label">Problem Statement</span>
-      <span class="init-preview">${escHtml(preview)}</span>
+      <span class="init-preview" style="display:none">${escHtml(preview)}</span>
       <span class="init-chevron">▸</span>
     </div>
-    <div class="init-message-body">${escHtml(problem)}</div>
+    <div class="init-message-body">${escHtml(problem)}${filesHtml}</div>
   `;
   d.querySelector('.init-message-header').addEventListener('click', () => {
     d.classList.toggle('expanded');
-    // Hide preview when expanded, show when collapsed
     const prev = d.querySelector('.init-preview');
     prev.style.display = d.classList.contains('expanded') ? 'none' : '';
   });
-  // Set initial preview visibility
-  if (!collapsed) d.querySelector('.init-preview').style.display = 'none';
   document.getElementById('feed').prepend(d);
+}
+
+function fileIcon(typeOrName) {
+  const t = (typeOrName || '').toLowerCase();
+  if (t.includes('image') || /\.(png|jpg|jpeg|gif|svg|webp)$/i.test(t)) return '🖼️';
+  if (t.includes('pdf') || t.endsWith('.pdf')) return '📄';
+  if (t.includes('json') || t.endsWith('.json')) return '🔧';
+  if (t.includes('csv') || t.endsWith('.csv')) return '📊';
+  if (t.includes('text') || /\.(txt|md|log)$/i.test(t)) return '📝';
+  if (t.includes('javascript') || t.includes('typescript') || /\.(js|ts|jsx|tsx|py|rb|go|rs)$/i.test(t)) return '💻';
+  return '📎';
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function addPhaseSeparator(name) {
@@ -2224,12 +2709,21 @@ function showToast(msg) {
   t._timeout = setTimeout(() => t.classList.remove('visible'), 3500);
 }
 
+function updateBarStats() {
+  const bm = document.getElementById('bar-msgs');
+  const be = document.getElementById('bar-esc');
+  if (bm) bm.textContent = `${messageCount} msgs`;
+  if (be) be.textContent = `${escalationCount} esc`;
+}
 function startDurationTimer() {
   stopDurationTimer();
   durationInterval = setInterval(() => {
     if (!sessionStart) return;
     const s = Math.floor((Date.now() - sessionStart) / 1000);
-    document.getElementById('info-duration').textContent = `${Math.floor(s/60)}m ${s%60}s`;
+    const dur = `${Math.floor(s/60)}m ${s%60}s`;
+    document.getElementById('info-duration').textContent = dur;
+    const bd = document.getElementById('bar-dur');
+    if (bd) bd.textContent = dur;
   }, 1000);
 }
 function stopDurationTimer() { if (durationInterval) clearInterval(durationInterval); }
@@ -2308,6 +2802,11 @@ btnEditFurther.addEventListener('click', () => {
 });
 
 document.getElementById('btn-back').addEventListener('click', goHome);
+document.getElementById('session-id-badge').addEventListener('click', () => {
+  if (currentSession && currentSession.id) {
+    navigator.clipboard.writeText(currentSession.id).then(() => showToast('Copied session ID'));
+  }
+});
 document.querySelectorAll('.example-chip').forEach(chip => {
   chip.addEventListener('click', () => {
     document.getElementById('welcome-input').value = chip.dataset.prompt;
@@ -2320,6 +2819,11 @@ document.getElementById('btn-send').addEventListener('click', sendMessage);
 document.getElementById('btn-stop').addEventListener('click', stopSession);
 document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendMessage(); } });
 
+// Panel toggle
+document.getElementById('btn-panel').addEventListener('click', () => {
+  document.getElementById('desktop-right').classList.toggle('open');
+});
+
 // Back to welcome on logo tap
 document.querySelector('.logo').addEventListener('click', goHome);
 document.getElementById('btn-export').addEventListener('click', () => openExportModal());
@@ -2328,6 +2832,7 @@ function goHome() {
   currentSession = null;
   showView('view-welcome');
   document.getElementById('problem-display').textContent = '';
+  document.getElementById('session-id-badge').style.display = 'none';
   document.getElementById('btn-export').style.display = 'none';
   document.getElementById('status-badge').textContent = 'Idle';
   document.getElementById('status-badge').className = 'status-badge idle';
@@ -2337,6 +2842,59 @@ function goHome() {
 }
 
 // Clear all sessions
+// ─── Session History Controls ────────────────────────────
+document.getElementById('sh-search-input').addEventListener('input', (e) => {
+  shSearchQuery = e.target.value.trim();
+  clearTimeout(shSearchTimeout);
+  document.getElementById('sh-search-clear').style.display = shSearchQuery ? '' : 'none';
+  if (shSearchMode === 'semantic') {
+    shSearchTimeout = setTimeout(() => semanticSearch(shSearchQuery), 400);
+  } else {
+    shSearchTimeout = setTimeout(() => { shSemanticResults = null; renderSessionList(); }, 150);
+  }
+});
+document.getElementById('sh-semantic-toggle').addEventListener('click', () => {
+  shSearchMode = shSearchMode === 'text' ? 'semantic' : 'text';
+  document.getElementById('sh-semantic-toggle').classList.toggle('active', shSearchMode === 'semantic');
+  document.getElementById('sh-search-input').placeholder = shSearchMode === 'semantic' ? 'Describe what you\'re looking for...' : 'Search sessions...';
+  if (shSearchQuery) {
+    if (shSearchMode === 'semantic') semanticSearch(shSearchQuery);
+    else { shSemanticResults = null; renderSessionList(); }
+  }
+});
+document.getElementById('sh-search-clear').addEventListener('click', () => {
+  document.getElementById('sh-search-input').value = '';
+  shSearchQuery = '';
+  shSemanticResults = null;
+  document.getElementById('sh-search-clear').style.display = 'none';
+  renderSessionList();
+});
+document.getElementById('sh-filters').addEventListener('click', (e) => {
+  const chip = e.target.closest('.sh-chip');
+  if (!chip) return;
+  const archetype = chip.dataset.archetype;
+  const filter = chip.dataset.filter;
+  if (archetype) {
+    shFilterArchetype = shFilterArchetype === archetype ? null : archetype;
+  } else if (filter) {
+    shFilterStatus = filter;
+    document.querySelectorAll('.sh-chip[data-filter]').forEach(c => c.classList.toggle('active', c.dataset.filter === shFilterStatus));
+  }
+  renderSessionList();
+});
+document.getElementById('sh-sort-btn').addEventListener('click', () => {
+  const dd = document.getElementById('sh-sort-dropdown');
+  dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('sh-sort-dropdown').addEventListener('click', (e) => {
+  const opt = e.target.closest('.sh-sort-opt');
+  if (!opt) return;
+  shSortMode = opt.dataset.sort;
+  document.querySelectorAll('.sh-sort-opt').forEach(o => o.classList.toggle('active', o.dataset.sort === shSortMode));
+  document.getElementById('sh-sort-dropdown').style.display = 'none';
+  renderSessionList();
+});
+
 document.getElementById('clear-all-sessions').addEventListener('click', () => {
   if (!sessionsList.length) return;
   if (!confirm(`Delete all ${sessionsList.length} sessions permanently?`)) return;
@@ -2364,11 +2922,12 @@ function injectCopyBtn(body) {
 }
 // Observe feed for new messages
 const feedEl = document.getElementById('feed');
+const copyableSelectors = '.message-body, .init-message-body, .escalation-card';
 new MutationObserver(() => {
-  feedEl.querySelectorAll('.message-body').forEach(injectCopyBtn);
+  feedEl.querySelectorAll(copyableSelectors).forEach(injectCopyBtn);
 }).observe(feedEl, { childList: true, subtree: true });
 // Inject on any already rendered
-feedEl.querySelectorAll('.message-body').forEach(injectCopyBtn);
+feedEl.querySelectorAll(copyableSelectors).forEach(injectCopyBtn);
 
 // ─── Command Palette ─────────────────────────────────────
 const cmdOverlay = document.getElementById('cmd-overlay');
@@ -2438,16 +2997,25 @@ function highlightCmd() {
 
 async function searchSessions(query) {
   if (!query) { renderCmdDefaults(); return; }
-  // Filter commands
   const matchedActions = CMD_ACTIONS.filter(a => a.title.toLowerCase().includes(query.toLowerCase()));
   try {
-    const res = await fetch(apiUrl(`/api/search?q=${encodeURIComponent(query)}`));
-    const sessions = await res.json();
+    const [textRes, semanticRes] = await Promise.allSettled([
+      fetch(apiUrl(`/api/search?q=${encodeURIComponent(query)}`)).then(r => r.json()),
+      fetch(apiUrl(`/api/sessions/search/semantic?q=${encodeURIComponent(query)}&limit=5`)).then(r => r.json()),
+    ]);
+    const textSessions = textRes.status === 'fulfilled' ? textRes.value : [];
+    const semanticSessions = semanticRes.status === 'fulfilled' ? semanticRes.value : [];
+    const seen = new Set(textSessions.map(s => s.id));
+    const merged = [...textSessions];
+    for (const s of semanticSessions) {
+      if (!seen.has(s.id)) { merged.push({ ...s, _semantic: true }); seen.add(s.id); }
+    }
     cmdItems = [...matchedActions];
-    sessions.forEach(s => {
+    merged.forEach(s => {
+      const semBadge = s._semantic && s.similarity != null ? ` · 🧠 ${Math.round(s.similarity * 100)}%` : '';
       cmdItems.push({
         id: 'session-' + s.id, icon: s.active ? '🟢' : '✅',
-        title: s.problem, meta: `${s.messageCount || 0} msgs · Phase ${s.phase || 0}/4`,
+        title: s.problem, meta: `${s.messageCount || 0} msgs · Phase ${s.phase || 0}/4${semBadge}`,
         badge: s.active ? 'ACTIVE' : null,
         action: () => { closeCmdPalette(); if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'join-session', sessionId: s.id })); }
       });

@@ -312,8 +312,11 @@ async function runAgentTurn(session, agentId, phase) {
 }
 
 // ─── Deliberation Loop ─────────────────────────────────────
-async function runDeliberation(session) {
+async function runDeliberation(session, resumeFromPhase = 0) {
   // Fingerprint classification + specialist spawning (before Phase 0)
+  if (resumeFromPhase > 0) {
+    console.log(`▶️  Resuming session ${session.id} from phase ${resumeFromPhase}/${PHASES.length}`);
+  }
   try {
     const classification = await fingerprint.classify(session.problem);
     if (classification.archetype && classification.confidence >= fingerprint.MIN_CONFIDENCE) {
@@ -375,7 +378,7 @@ async function runDeliberation(session) {
     return baseAgents;
   }
 
-  for (let phaseIdx = 0; phaseIdx < PHASES.length; phaseIdx++) {
+  for (let phaseIdx = resumeFromPhase; phaseIdx < PHASES.length; phaseIdx++) {
     if (!session.active) break;
     router.setIndex(phaseIdx);
     const phase = router.current();

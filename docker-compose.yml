@@ -11,6 +11,8 @@ services:
       - OPENCLAW_GATEWAY_URL=http://100.79.164.120:18789
       - OPENCLAW_GATEWAY_TOKEN=6406bfa9823514424d00e68157b01ab138d949f55d8c5367
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
+      - EMBEDDING_URL=http://localhost:11434/api/embed
+      - EMBEDDING_MODEL=nomic-embed-text
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
