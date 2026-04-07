@@ -1,6 +1,6 @@
 const express = require('express');
 const http = require('http');
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
 const path = require('path');
 const crypto = require('crypto');
 
@@ -69,9 +69,25 @@ const specialist = createSpecialistSpawner({ db, stmts });
 
 function genId() { return crypto.randomUUID(); }
 
-function broadcast(data) {
+// F2 — per-session subscription. broadcast(sessionId, data) only delivers to
+// clients that have subscribed to that session via {type:'subscribe',sessionId}
+// or auto-subscribed via join-session / new-session. broadcastGlobal is the
+// explicit opt-in for messages every client should see (e.g. agent-list refresh).
+function broadcast(sessionId, data) {
   const msg = JSON.stringify(data);
-  wss.clients.forEach(client => { if (client.readyState === 1) client.send(msg); });
+  wss.clients.forEach(client => {
+    if (client.readyState !== WebSocket.OPEN) return;
+    if (client.subscribedSessions && client.subscribedSessions.has(sessionId)) {
+      client.send(msg);
+    }
+  });
+}
+
+function broadcastGlobal(data) {
+  const msg = JSON.stringify(data);
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) client.send(msg);
+  });
 }
 
 // ─── Session Management ─────────────────────────────────────
@@ -270,7 +286,7 @@ async function runAgentTurn(session, agentId, phase) {
   const agent = sessionAgents.find(a => a.id === agentId);
   const isResearchScout = agentId === 'research-scout';
   session.agentStates[agentId] = 'thinking';
-  broadcast({ type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
+  broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
 
   try {
     const messages = buildContext(session, agentId, phase);
@@ -280,14 +296,14 @@ async function runAgentTurn(session, agentId, phase) {
       const searchQueries = extractSearchQueries(response);
       if (searchQueries.length > 0) {
         session.agentStates[agentId] = 'searching';
-        broadcast({ type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
-        broadcast({ type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
+        broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
+        broadcast(session.id, { type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
         console.log(`🔍 Research Scout searching: ${searchQueries.join(' | ')}`);
         const searchResults = await executeSearches(searchQueries);
         const resultsText = formatSearchResults(searchResults);
-        broadcast({ type: 'search-complete', agentId, resultCount: searchResults.reduce((n, r) => n + r.sources.length, 0), sessionId: session.id });
+        broadcast(session.id, { type: 'search-complete', agentId, resultCount: searchResults.reduce((n, r) => n + r.sources.length, 0), sessionId: session.id });
         session.agentStates[agentId] = 'thinking';
-        broadcast({ type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
+        broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
         const synthesisMessages = [
           ...messages,
           { role: 'assistant', content: response },
@@ -298,29 +314,29 @@ async function runAgentTurn(session, agentId, phase) {
     }
 
     session.agentStates[agentId] = 'speaking';
-    broadcast({ type: 'agent-state', agentId, state: 'speaking', sessionId: session.id });
+    broadcast(session.id, { type: 'agent-state', agentId, state: 'speaking', sessionId: session.id });
     const now = Date.now();
     const msgId = genId();
     const msg = { id: msgId, agentId, agentName: agent.name, agentEmoji: agent.emoji, agentColor: agent.color, content: response, phase: PHASES[phase].name, timestamp: now };
     session.messages.push(msg);
     stmts.insertMessage.run(msgId, session.id, agentId, agent.name, agent.emoji, agent.color, response, PHASES[phase].name, now);
-    broadcast({ type: 'message', ...msg, sessionId: session.id });
+    broadcast(session.id, { type: 'message', ...msg, sessionId: session.id });
 
     const escalations = extractEscalations(response, agentId, session.id);
     escalations.forEach(esc => {
       session.escalations.push(esc);
       stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.createdAt);
-      broadcast({ type: 'escalation', ...esc, agentName: agent.name, agentEmoji: agent.emoji });
+      broadcast(session.id, { type: 'escalation', ...esc, agentName: agent.name, agentEmoji: agent.emoji });
     });
 
     session.agentStates[agentId] = 'idle';
-    broadcast({ type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
+    broadcast(session.id, { type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
     await new Promise(r => setTimeout(r, 500));
   } catch (err) {
     console.error(`Agent ${agentId} error:`, err.message);
     session.agentStates[agentId] = 'idle';
-    broadcast({ type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
-    broadcast({ type: 'error', agentId, message: `${agent.name} encountered an error: ${err.message}`, sessionId: session.id });
+    broadcast(session.id, { type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
+    broadcast(session.id, { type: 'error', agentId, message: `${agent.name} encountered an error: ${err.message}`, sessionId: session.id });
   }
 }
 
@@ -349,9 +365,9 @@ async function runDeliberation(session, resumeFromPhase = 0) {
           stmts.updateSessionSpecialists.run(JSON.stringify(specialists.map(s => s.id)), Date.now(), session.id);
           // Initialize specialist agent states
           specialists.forEach(s => { session.agentStates[s.id] = 'idle'; });
-          // Broadcast updated agent list
+          // Broadcast updated agent list — global so dashboards refresh.
           const allAgents = getAgentsForSession(session);
-          broadcast({ type: 'agents', agents: allAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat, isSpecialist: !!a.isSpecialist })) });
+          broadcastGlobal({ type: 'agents', agents: allAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat, isSpecialist: !!a.isSpecialist })) });
         }
       }
     } else {
@@ -368,7 +384,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       session._memories = memories;
       stmts.updateSessionMemoryInjected.run(Date.now(), session.id);
       console.log(`🧠 Memory: ${memories.length} prior sessions injected for ${session.id}`);
-      broadcast({ type: 'memory-injected', sessionId: session.id, count: memories.length });
+      broadcast(session.id, { type: 'memory-injected', sessionId: session.id, count: memories.length });
     }
   } catch (err) {
     console.warn(`⚠️  Memory retrieval failed (proceeding without): ${err.message}`);
@@ -398,20 +414,20 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     session.phase = phaseIdx;
     stmts.updateSessionPhase.run(phaseIdx, Date.now(), session.id);
     const phaseAgents = getPhaseAgents(phase);
-    broadcast({ type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents, sessionId: session.id });
+    broadcast(session.id, { type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents, sessionId: session.id });
 
     for (const agentId of phaseAgents) {
       if (!session.active) break;
       const pending = session.escalations.filter(e => !e.answered);
       if (pending.length > 0) {
-        broadcast({ type: 'waiting-for-human', pendingCount: pending.length, sessionId: session.id });
+        broadcast(session.id, { type: 'waiting-for-human', pendingCount: pending.length, sessionId: session.id });
         let waited = 0;
         while (session.escalations.some(e => !e.answered) && waited < 300000 && session.active) {
           await new Promise(r => setTimeout(r, 2000));
           waited += 2000;
         }
         if (waited >= 300000) {
-          broadcast({ type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
+          broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
         }
       }
       await runAgentTurn(session, agentId, phaseIdx);
@@ -436,7 +452,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   quality.evaluateSession(session.id).then(result => {
     if (result) {
       console.log(`📊 Quality score for ${session.id}: ${result.score.toFixed(3)}`);
-      broadcast({ type: 'quality-scored', sessionId: session.id, score: result.score, breakdown: result.breakdown });
+      broadcast(session.id, { type: 'quality-scored', sessionId: session.id, score: result.score, breakdown: result.breakdown });
     }
   }).catch(err =>
     console.warn(`[quality] Evaluation failed for ${session.id}: ${err.message}`)
@@ -445,7 +461,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   const synthCount = db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'").get(session.id).c;
   const qaCount = db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?').get(session.id).c;
   const totalMsgs = session.messages.length;
-  broadcast({
+  broadcast(session.id, {
     type: 'deliberation-complete', sessionId: session.id,
     export: {
       available: true,
@@ -464,7 +480,7 @@ async function runFollowUp(sessionId, session, question) {
   const responderId = 'process-architect';
   const sessionAgents = getAgentsForSession(session);
   const agent = sessionAgents.find(a => a.id === responderId);
-  broadcast({ type: 'agent-state', agentId: responderId, state: 'thinking', sessionId });
+  broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'thinking', sessionId });
 
   try {
     const priorMessages = (session.messages || []).map(m => {
@@ -476,22 +492,22 @@ async function runFollowUp(sessionId, session, question) {
     const userContent = `ORIGINAL PROBLEM: ${session.problem}\n\nDELIBERATION SUMMARY (all agents' contributions):\n${priorMessages}\n\n${humanHistory ? `HUMAN MESSAGES:\n${humanHistory}\n\n` : ''}FOLLOW-UP QUESTION: ${question}\n\nAnswer this question based on the deliberation above. Be direct and specific.`;
     const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId);
 
-    broadcast({ type: 'agent-state', agentId: responderId, state: 'speaking', sessionId });
+    broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'speaking', sessionId });
     const now = Date.now();
     const msgId = genId();
     const msg = { id: msgId, agentId: responderId, agentName: agent.name, agentEmoji: agent.emoji, agentColor: agent.color, content: response, phase: 'Follow-up', timestamp: now };
     stmts.insertMessage.run(msgId, sessionId, responderId, agent.name, agent.emoji, agent.color, response, 'Follow-up', now);
-    broadcast({ type: 'message', ...msg, sessionId });
-    broadcast({ type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
+    broadcast(sessionId, { type: 'message', ...msg, sessionId });
+    broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
   } catch (err) {
     console.error('Follow-up error:', err.message);
-    broadcast({ type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
-    broadcast({ type: 'error', agentId: responderId, message: `Follow-up failed: ${err.message}`, sessionId });
+    broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'idle', sessionId });
+    broadcast(sessionId, { type: 'error', agentId: responderId, message: `Follow-up failed: ${err.message}`, sessionId });
   }
 }
 
 // ─── Wire Modules ───────────────────────────────────────────
-const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, memory, quality, fingerprint, specialist, getAgentsForSession };
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession };
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
