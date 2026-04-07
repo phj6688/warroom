@@ -46,19 +46,29 @@ export function getFreePort() {
  *   - baseUrl: http://127.0.0.1:<port>
  *   - wsUrl:   ws://127.0.0.1:<port>
  *   - logs:    array of stderr/stdout chunks for diagnostics
+ *   - tempDbDir: path to the auto-created temp DB dir (cleaned up on dispose)
  *   - dispose: kill the process and wait for exit
  *
  * `env` is merged on top of process.env. The tests pass things like
- * WAR_ROOM_TOKEN, WAR_ROOM_DB_PATH, etc.
+ * WAR_ROOM_TOKEN, etc.
  *
- * NOTE: Many tests will set WAR_ROOM_DB_PATH expecting db.js to honor it.
- * In red phase, db.js does NOT honor it — the server boots against the
- * production DB. Each test that depends on DB isolation MUST verify the
- * isolation worked (e.g. by reading back its own seeded data) so that a
- * silent fall-through is detected, not silently accepted.
+ * DB isolation: every spawn gets its own temp WAR_ROOM_DB_PATH unless the
+ * caller passes one explicitly. Without this default, tests that hit
+ * /api/sessions or `new-session` would write fixture rows into the
+ * canonical ./data/warroom.db, contaminating dev state and silently
+ * breaking the session-history view (real classified sessions get pushed
+ * past the LIMIT 50 window by fixture noise).
  */
 export async function spawnServer({ env = {}, readyTimeoutMs = 8000 } = {}) {
   const port = await getFreePort();
+
+  let tempDbDir = null;
+  let dbPath = env.WAR_ROOM_DB_PATH;
+  if (!dbPath) {
+    tempDbDir = mkdtempSync(path.join(os.tmpdir(), 'warroom-test-db-'));
+    dbPath = path.join(tempDbDir, 'warroom.db');
+  }
+
   const proc = spawn(process.execPath, [SERVER_ENTRY], {
     cwd: REPO_ROOT,
     env: {
@@ -66,6 +76,7 @@ export async function spawnServer({ env = {}, readyTimeoutMs = 8000 } = {}) {
       PORT: String(port),
       // Disable LLM noise during boot — tests don't make LLM calls.
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'test-key-no-real-calls',
+      WAR_ROOM_DB_PATH: dbPath,
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -110,6 +121,8 @@ export async function spawnServer({ env = {}, readyTimeoutMs = 8000 } = {}) {
     baseUrl,
     wsUrl,
     logs,
+    tempDbDir,
+    dbPath,
     async dispose() {
       if (proc.exitCode === null) {
         proc.kill('SIGTERM');
@@ -119,6 +132,9 @@ export async function spawnServer({ env = {}, readyTimeoutMs = 8000 } = {}) {
           delay(1000).then(() => false),
         ]);
         if (!killed) proc.kill('SIGKILL');
+      }
+      if (tempDbDir) {
+        try { rmSync(tempDbDir, { recursive: true, force: true }); } catch {}
       }
     },
   };

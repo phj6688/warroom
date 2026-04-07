@@ -2581,18 +2581,18 @@ function addEscalationInline(data) {
   if (data.answered) {
     d.innerHTML = `
       <div class="esc-header-row">
-        <div class="esc-header">✅ Answered — ${agent ? agent.name : 'Agent'}</div>
+        <div class="esc-header">✅ Answered — ${escHtml(agent ? agent.name : 'Agent')}</div>
       </div>
-      <div class="esc-question">${data.question}</div>
-      <div class="esc-answer">✅ ${data.answer || ''}</div>
+      <div class="esc-question">${escHtml(data.question)}</div>
+      <div class="esc-answer">✅ ${escHtml(data.answer || '')}</div>
     `;
   } else {
     d.innerHTML = `
       <div class="esc-header-row">
-        <div class="esc-header">⚠️ Input Required — ${agent ? agent.name : 'Agent'}</div>
+        <div class="esc-header">⚠️ Input Required — ${escHtml(agent ? agent.name : 'Agent')}</div>
         <button class="esc-dismiss" data-id="${data.id}" title="Dismiss">✕</button>
       </div>
-      <div class="esc-question">${data.question}</div>
+      <div class="esc-question">${escHtml(data.question)}</div>
       <div class="esc-input-row">
         <input type="text" class="esc-input" id="esc-in-${data.id}" placeholder="Your response...">
         <button class="esc-submit" data-id="${data.id}">▸</button>
@@ -2613,7 +2613,7 @@ function addEscalationToQueue(data) {
     if (container.querySelector('span')) container.innerHTML = '';
     const d = document.createElement('div');
     d.className = `sheet-esc ${data.answered ? 'answered' : ''}`;
-    d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${agent ? agent.name : 'Agent'}</div><div class="se-question">${data.question}</div>`;
+    d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')}</div><div class="se-question">${escHtml(data.question)}</div>`;
     d.addEventListener('click', () => {
       closeSheet();
       const el = document.getElementById(`esc-${data.id}`);
@@ -2639,7 +2639,7 @@ function markEscalationAnswered(escId, answer) {
   if (el) {
     el.classList.add('answered');
     const row = el.querySelector('.esc-input-row');
-    if (row) row.innerHTML = `<div class="esc-answer">✅ ${answer}</div>`;
+    if (row) row.innerHTML = `<div class="esc-answer">✅ ${escHtml(answer || '')}</div>`;
     el.querySelector('.esc-header').textContent = '✅ Answered';
   }
 }
@@ -2653,7 +2653,7 @@ function addHumanMessage(data) {
       <div class="message-badge"><span class="emoji">👤</span><span style="color:var(--text)">You</span></div>
       <span class="message-time">${time}</span>
     </div>
-    <div class="message-body">${data.content}</div>
+    <div class="message-body">${escHtml(data.content || '')}</div>
     <div class="message-timestamp">${time}</div>
   `;
   document.getElementById('feed').appendChild(d);

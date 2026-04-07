@@ -81,7 +81,7 @@ server.on('upgrade', (req, socket, head) => {
 const activeSessions = new Map();
 const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES });
 const quality = createQualityManager({ db, stmts, callAnthropic, PHASES });
-const fingerprint = createFingerprintClassifier({ callAnthropic });
+const fingerprint = createFingerprintClassifier({ callAnthropic, db, stmts });
 const specialist = createSpecialistSpawner({ db, stmts });
 
 function genId() { return crypto.randomUUID(); }
@@ -150,10 +150,18 @@ function loadSession(id) {
   const files = stmts.getSessionFiles.all(id).map(f => ({
     id: f.id, name: f.name, size: f.size, type: f.type, content: f.content
   }));
+  let specialistAgents = [];
+  if (row.specialist_agents) {
+    try { specialistAgents = JSON.parse(row.specialist_agents) || []; } catch (_) {}
+  }
   return {
     id: row.id, problem: row.problem, phase: row.phase,
     active: !!row.active, messages, escalations, humanMessages,
-    files, agentStates: {}, createdAt: row.created_at, updatedAt: row.updated_at
+    files, agentStates: {}, createdAt: row.created_at, updatedAt: row.updated_at,
+    archetypeId: row.archetype_id || null,
+    qualityScore: row.quality_score ?? null,
+    pinned: !!row.pinned,
+    specialistAgents,
   };
 }
 
@@ -541,5 +549,12 @@ server.listen(PORT, () => {
   // Retroactive quality scoring on first boot (async, non-blocking)
   quality.retroactiveScore().catch(err =>
     log.warn({ err: err.message }, 'retroactive quality scoring error')
+  );
+
+  // Backfill archetypes for completed sessions that pre-date the fingerprint
+  // classifier or whose original classification call failed. Async, non-
+  // blocking; the LLM calls are throttled inside the helper.
+  fingerprint.backfillArchetypes().catch(err =>
+    log.warn({ err: err.message }, 'archetype backfill error')
   );
 });
