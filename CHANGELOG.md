@@ -9,6 +9,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Resume button in the deliberation top bar. Visible whenever an inactive session has no Synthesis message (i.e. the deliberation never reached the final phase). One click sends `resume-session` over WS with HTTP fallback when the socket is closed; `session-resumed` flips the status badge back to Active and restarts the duration timer.
+- `lib/phases.js` exports `computeResumePhase(session, phases)` — walks the phase list and returns the first phase whose required agents have not all produced a message. Both resume paths (`POST /api/sessions/:id/resume` and the WS `resume-session` case) now route through it, so a session stopped during Divergence with all 6 agents already done resumes from Convergence rather than re-running Divergence from scratch. Both paths reject (409 / WS error) when every phase is already covered.
+- `maestro/flows/06-resume-button.yaml` smoke test that the resume button is wired into the static HTML and hidden on the welcome view. Maestro harness (`maestro/run.sh`, `maestro/config.yaml`, flows 01-05) is now tracked in git so the mandated `./maestro/run.sh` baseline runs from a fresh checkout.
+
 ### Fixed
 - Archived sessions all rendering as "Unclassified" in the session-history view. Three independent bugs combined to produce the symptom:
   1. Tests spawned the server without setting `WAR_ROOM_DB_PATH`, so test fixtures landed in the canonical `./data/warroom.db` and pushed every previously classified session past the `LIMIT 50` window of `getRecentSessions`. `tests/_helpers.mjs` now mints a temp DB per spawn by default and cleans it up on `dispose()`.
