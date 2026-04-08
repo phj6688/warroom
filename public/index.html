@@ -212,6 +212,17 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 .top-btn:active { transform: scale(0.93); background: var(--bg-card); }
+.top-btn.btn-resume {
+  width: auto;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  background: rgba(74,158,92,0.15);
+  border-color: rgba(74,158,92,0.5);
+  color: var(--success);
+}
+.top-btn.btn-resume:hover { background: rgba(74,158,92,0.25); }
 .top-btn.has-badge { position: relative; }
 .top-btn .badge-dot {
   position: absolute; top: 8px; right: 8px;
@@ -313,6 +324,10 @@ html, body {
   border-color: var(--accent);
   box-shadow: 0 0 20px rgba(215,25,33,0.08);
 }
+.welcome-textarea.has-content {
+  border-color: var(--success);
+  box-shadow: 0 0 20px rgba(74,158,92,0.10);
+}
 .welcome-textarea::placeholder { color: var(--text-dimmer); }
 
 .file-drop-zone {
@@ -331,6 +346,11 @@ html, body {
 .file-drop-zone:hover, .file-drop-zone.dragover {
   border-color: var(--accent);
   background: rgba(215,25,33,0.05);
+}
+.file-drop-zone.has-files {
+  border-color: var(--success);
+  background: rgba(74,158,92,0.06);
+  color: var(--success);
 }
 .file-drop-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 
@@ -364,10 +384,19 @@ html, body {
   cursor: pointer;
   transition: all 0.2s var(--transition);
   min-height: 52px;
+  /* Default to "armed but waiting" — only fully lit when input is valid. */
+  opacity: 0.55;
 }
 .welcome-submit:hover { background: #b91219; }
 .welcome-submit:active { transform: scale(0.97); }
-.welcome-submit:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.welcome-submit.ready {
+  background: var(--success);
+  border-color: var(--success);
+  opacity: 1;
+  box-shadow: 0 0 24px rgba(74,158,92,0.25);
+}
+.welcome-submit.ready:hover { background: #3d8a4d; }
+.welcome-submit:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
 
 /* ─── Improver ───────────────────────────────────────── */
 .improve-btn {
@@ -745,8 +774,15 @@ html, body {
   display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text-dimmer);
 }
 .sc-status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.sc-status.active { background: var(--success); }
+.sc-status.active { background: var(--success); box-shadow: 0 0 6px rgba(74,158,92,0.6); }
 .sc-status.done { background: var(--text-dimmer); }
+.sc-status.interrupted { background: var(--accent-orange); box-shadow: 0 0 6px rgba(212,168,67,0.5); }
+.sc-interrupted-tag {
+  font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+  color: var(--accent-orange); background: rgba(212,168,67,0.12);
+  border: 1px solid rgba(212,168,67,0.35);
+  padding: 1px 6px; border-radius: 3px; text-transform: uppercase;
+}
 .sc-similarity {
   font-family: var(--font-mono); font-size: 9px; color: var(--accent);
   background: var(--accent-dim); padding: 1px 5px; border-radius: 3px; margin-left: auto;
@@ -1287,6 +1323,10 @@ html, body {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .chat-bar input:focus { border-color: var(--accent); box-shadow: 0 0 12px rgba(215,25,33,0.06); }
+.chat-bar input.has-content {
+  border-color: var(--success);
+  box-shadow: 0 0 12px rgba(74,158,92,0.12);
+}
 .chat-bar input::placeholder { color: var(--text-dimmer); }
 
 .chat-bar-btn {
@@ -1297,8 +1337,32 @@ html, body {
   flex-shrink: 0; border: none;
 }
 .chat-bar-btn:active { transform: scale(0.93); }
+.chat-bar-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
-.send-btn { background: var(--accent); border: 1px solid var(--accent); color: #000000; }
+.send-btn {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #000000;
+  opacity: 0.45;
+  transition: background 0.2s, opacity 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+.send-btn.ready {
+  background: var(--success);
+  border-color: var(--success);
+  opacity: 1;
+  box-shadow: 0 0 14px rgba(74,158,92,0.35);
+}
+.send-btn.sending {
+  background: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+  animation: send-pulse 0.6s ease;
+}
+@keyframes send-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
 .stop-btn { background: rgba(215,25,33,0.15); border: 1px solid rgba(215,25,33,0.4); color: var(--danger); }
 
 /* ─── Bottom Sheet (Agents / Phases / Escalations) ──── */
@@ -1652,6 +1716,7 @@ html, body {
     <div class="quality-badge" id="quality-badge" title="Quality Score"></div>
     <button class="top-btn mobile-only" id="btn-phases" title="Phases">📊</button>
     <button class="top-btn" id="btn-panel" title="Toggle details panel" style="display:none">📋</button>
+    <button class="top-btn btn-resume" id="btn-resume" title="Resume deliberation from where it stopped" style="display:none">▶ Resume</button>
     <button class="top-btn" id="btn-export" title="Export Results" style="display:none">📤</button>
     <button class="top-btn mobile-only has-badge" id="btn-escalations" title="Escalations">
       🔴
@@ -1950,8 +2015,18 @@ let httpPollTimer = null;
 function connect() {
   const url = getWsUrl();
   ws = new WebSocket(url);
-  ws.onopen = () => { console.log('WS connected'); wsFailCount = 0; if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; } };
-  ws.onclose = () => { wsFailCount++; if (wsFailCount >= 2 && !httpPollTimer) { loadViaHttp(); httpPollTimer = setInterval(loadViaHttp, 15000); } setTimeout(connect, 5000); };
+  ws.onopen = () => {
+    console.log('WS connected');
+    wsFailCount = 0;
+    if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; }
+    if (typeof updateChatReady === 'function') updateChatReady();
+  };
+  ws.onclose = () => {
+    wsFailCount++;
+    if (wsFailCount >= 2 && !httpPollTimer) { loadViaHttp(); httpPollTimer = setInterval(loadViaHttp, 15000); }
+    if (typeof updateChatReady === 'function') updateChatReady();
+    setTimeout(connect, 5000);
+  };
   ws.onerror = (e) => console.error('WS error:', e);
   ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
 }
@@ -1985,10 +2060,24 @@ function handleMessage(data) {
       renderSessionList();
       break;
 
+    case 'session-updated': {
+      // Upsert a single session row pushed by the server on every state
+      // transition (created, phase-change, completed, stopped, resumed).
+      // Without this the welcome list silently goes stale and Active/Done
+      // filters miss sessions that started or finished in the same tab.
+      if (!data.session) break;
+      const idx = sessionsList.findIndex(s => s.id === data.session.id);
+      if (idx >= 0) sessionsList[idx] = { ...sessionsList[idx], ...data.session };
+      else sessionsList.unshift(data.session);
+      renderSessionList();
+      break;
+    }
+
     case 'session-created':
       currentSession = data.session;
       sessionStart = Date.now();
       messageCount = 0; escalationCount = 0; pendingEscalations = 0;
+      if (typeof updateChatReady === 'function') updateChatReady();
       showView('view-deliberation');
       document.getElementById('problem-display').textContent = data.session.problem;
       document.getElementById('problem-display').title = data.session.problem;
@@ -2067,6 +2156,13 @@ function handleMessage(data) {
       document.getElementById('chat-input').placeholder = 'Send a message, ask a follow-up, or answer an escalation...';
       document.getElementById('btn-stop').style.display = 'none';
       document.getElementById('btn-export').style.display = 'flex';
+      // The session may end "complete" without ever reaching Synthesis (e.g.
+      // user pressed Stop mid-Divergence). Offer Resume in that case so the
+      // user can run the remaining phases without having to dig into the DB.
+      {
+        const hasSynth = currentSession && (currentSession.messages || []).some(m => m.phase === 'Synthesis');
+        document.getElementById('btn-resume').style.display = hasSynth ? 'none' : 'flex';
+      }
       stopDurationTimer();
       resetAgentStates();
       // Fetch quality score when available
@@ -2086,12 +2182,29 @@ function handleMessage(data) {
       document.getElementById('status-badge').textContent = 'Stopped';
       document.getElementById('status-badge').className = 'status-badge idle';
       document.getElementById('status-badge').title = 'Session was stopped';
+      document.getElementById('btn-stop').style.display = 'none';
+      document.getElementById('btn-resume').style.display = 'flex';
+      document.getElementById('btn-export').style.display = 'flex';
       stopDurationTimer();
       resetAgentStates();
       break;
 
+    case 'session-resumed':
+      document.getElementById('status-badge').textContent = 'Active';
+      document.getElementById('status-badge').className = 'status-badge active';
+      document.getElementById('status-badge').title = `Resumed from phase ${data.fromPhase ?? 0}`;
+      document.getElementById('btn-resume').style.display = 'none';
+      document.getElementById('btn-export').style.display = 'none';
+      document.getElementById('btn-stop').style.display = '';
+      if (currentSession) currentSession.active = true;
+      startDurationTimer();
+      resetAgentStates();
+      showToast(`▶ Resumed from phase ${(data.fromPhase ?? 0) + 1}`);
+      break;
+
     case 'session-state':
       currentSession = data.session;
+      if (typeof updateChatReady === 'function') updateChatReady();
       showView('view-deliberation');
       document.getElementById('problem-display').textContent = data.session.problem;
       document.getElementById('problem-display').title = data.session.problem;
@@ -2103,9 +2216,16 @@ function handleMessage(data) {
         document.getElementById('chat-input').placeholder = 'Send a message, ask a follow-up, or answer an escalation...';
         document.getElementById('btn-stop').style.display = 'none';
         document.getElementById('btn-export').style.display = 'flex';
+        // Resume is offered whenever an inactive session never produced a
+        // Synthesis message — that means the deliberation was halted before
+        // the final phase ran, so there is no real end result yet. The Stop
+        // button covered the path in; this covers the path back out.
+        const hasSynthesis = (data.session.messages || []).some(m => m.phase === 'Synthesis');
+        document.getElementById('btn-resume').style.display = hasSynthesis ? 'none' : 'flex';
       } else {
         document.getElementById('chat-input').placeholder = 'Send a message, ask a follow-up, or answer an escalation...';
         document.getElementById('btn-stop').style.display = '';
+        document.getElementById('btn-resume').style.display = 'none';
       }
       clearFeed();
       addInitMessage(data.session.problem, false, data.session.files);
@@ -2350,12 +2470,13 @@ function renderSessionList() {
       <div class="sc-phase-dots">${dots}</div>
       ${specs ? `<div class="sc-specialists">${specs}</div>` : ''}
       <div class="sc-meta">
-        <span class="sc-status ${s.active ? 'active' : 'done'}"></span>
+        <span class="sc-status ${s.active ? 'active' : (s.crashRecovered ? 'interrupted' : 'done')}"></span>
         <span>${relativeDate(s.createdAt)}</span>
         <span>·</span>
         <span>${s.messageCount || 0} msgs</span>
         <span>·</span>
         <span>${s.escalationCount || 0} esc</span>
+        ${s.crashRecovered && !s.active ? '<span class="sc-interrupted-tag" title="Stopped mid-deliberation by a server restart — resume from the deliberation view">Interrupted</span>' : ''}
         ${simBadge}
       </div>
       <button class="sc-delete" data-sid="${s.id}" title="Delete">✕</button>
@@ -2625,8 +2746,17 @@ function addEscalationToQueue(data) {
 
 function respondEscalation(escId) {
   const input = document.getElementById(`esc-in-${escId}`);
-  if (!input || !input.value.trim() || !currentSession) return;
-  ws.send(JSON.stringify({ type: 'escalation-response', sessionId: currentSession.id, escalationId: escId, answer: input.value.trim() }));
+  if (!input) return;
+  const answer = input.value.trim();
+  if (!answer) { showToast('⚠️ Type your answer first'); return; }
+  if (!currentSession) { showToast('⚠️ No active session'); return; }
+  if (!ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
+  ws.send(JSON.stringify({ type: 'escalation-response', sessionId: currentSession.id, escalationId: escId, answer }));
+  // Visual confirmation: dim the row immediately so the user knows the click
+  // registered. The escalation-answered broadcast will replace this with the
+  // final answered state when the server responds.
+  const row = input.closest('.esc-input-row');
+  if (row) row.style.opacity = '0.5';
 }
 
 function dismissEscalation(escId) {
@@ -2674,17 +2804,31 @@ function addCompleteBanner() {
 }
 
 // ─── Actions ─────────────────────────────────────────────
+// Toggle the welcome submit button between "armed" (red, dim) and "ready"
+// (green, lit). Called on every input/file change so the user gets immediate
+// visual confirmation that the deploy button will actually do something.
+function updateWelcomeReady() {
+  const ta = document.getElementById('welcome-input');
+  const btn = document.getElementById('welcome-submit');
+  if (!ta || !btn) return;
+  const hasText = ta.value.trim().length > 0;
+  const hasFiles = pendingFiles.length > 0;
+  const ready = hasText || hasFiles;
+  btn.classList.toggle('ready', ready);
+  ta.classList.toggle('has-content', hasText);
+}
+
 async function submitFromWelcome() {
   const textarea = document.getElementById('welcome-input');
   let problem = textarea.value.trim();
-  if (!problem && !pendingFiles.length) { showToast('⚠️ Describe a problem'); return; }
+  if (!problem && !pendingFiles.length) { showToast('⚠️ Describe a problem or attach a file'); return; }
   if (!problem) problem = 'Analyze the attached file(s).';
   const btn = document.getElementById('welcome-submit');
   if (!ws || ws.readyState !== 1) {
     btn.disabled = true; btn.textContent = '⚡ Deploying...';
     fetch(apiUrl('/api/sessions'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem, files: [] }) })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(data => { showToast('✅ Session created!'); textarea.value = ''; pendingFiles = []; renderFileList(); loadViaHttp(); })
+      .then(data => { showToast('✅ Session created!'); textarea.value = ''; pendingFiles = []; renderFileList(); updateWelcomeReady(); loadViaHttp(); })
       .catch(e => showToast('⚠️ Deploy failed: ' + e.message))
       .finally(() => { btn.disabled = false; btn.textContent = '⚡ Deploy War Room'; });
     return;
@@ -2693,21 +2837,48 @@ async function submitFromWelcome() {
   btn.disabled = true; btn.textContent = '⏳ Uploading...';
 
   const files = await uploadFiles();
+  // uploadFiles() returns null on error (vs [] for "no files"). Abort the
+  // deploy on error so the user can fix the file selection — otherwise we'd
+  // silently kick off a deliberation without the attachments they expected.
+  if (files === null) {
+    btn.disabled = false; btn.textContent = '⚡ Deploy War Room';
+    return;
+  }
   btn.textContent = '⚡ Deploying...';
   ws.send(JSON.stringify({ type: 'new-session', problem, files }));
   textarea.value = '';
   pendingFiles = [];
   renderFileList();
+  updateWelcomeReady();
   btn.disabled = false;
   btn.textContent = '⚡ Deploy War Room';
 }
 
+function updateChatReady() {
+  const input = document.getElementById('chat-input');
+  const btn = document.getElementById('btn-send');
+  if (!input || !btn) return;
+  const has = input.value.trim().length > 0;
+  input.classList.toggle('has-content', has);
+  btn.classList.toggle('ready', has && !!currentSession && !!ws && ws.readyState === 1);
+}
+
 function sendMessage() {
   const input = document.getElementById('chat-input');
+  const btn = document.getElementById('btn-send');
   const content = input.value.trim();
-  if (!content || !currentSession || !ws || ws.readyState !== 1) return;
+  if (!content) { showToast('⚠️ Type a message first'); return; }
+  if (!currentSession) { showToast('⚠️ No active session'); return; }
+  if (!ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
   ws.send(JSON.stringify({ type: 'human-message', sessionId: currentSession.id, content }));
   input.value = '';
+  // Visual confirmation that the click registered, even if the WS round-trip
+  // takes a moment to echo the message back into the feed.
+  if (btn) {
+    btn.classList.add('sending');
+    setTimeout(() => btn.classList.remove('sending'), 600);
+  }
+  updateChatReady();
 }
 
 function stopSession() {
@@ -2715,20 +2886,70 @@ function stopSession() {
   ws.send(JSON.stringify({ type: 'stop-session', sessionId: currentSession.id }));
 }
 
+function resumeSession() {
+  if (!currentSession) { showToast('⚠️ No session loaded'); return; }
+  // Prefer the WS path so the same client that issues resume also receives
+  // the session-resumed broadcast immediately. Fall back to the HTTP route
+  // if the socket is closed (e.g. server restart) — the HTTP handler does
+  // the same work and the next reconnect will replay the state.
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'resume-session', sessionId: currentSession.id }));
+    showToast('▶ Resuming...');
+  } else {
+    fetch(apiUrl(`/api/sessions/${currentSession.id}/resume`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+      .then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(j)))
+      .then(() => { showToast('▶ Resuming...'); loadViaHttp(); })
+      .catch(e => showToast('⚠️ Resume failed: ' + (e.error || e.message || 'unknown')));
+  }
+}
+
 // ─── Files ───────────────────────────────────────────────
+// Mirror of the server-side allowlist (lib/routes.js). Keep these in sync —
+// rejecting at addFile() time gives the user immediate feedback instead of a
+// silent upload failure right before the deliberation kicks off.
+const ALLOWED_FILE_EXTS = new Set([
+  '.txt','.md','.csv','.json','.xml','.yaml','.yml','.html','.css',
+  '.js','.ts','.tsx','.jsx','.mjs','.cjs',
+  '.py','.java','.c','.cpp','.h','.hpp','.rs','.go','.rb','.php',
+  '.sh','.bash','.zsh','.fish','.sql','.toml','.ini','.cfg','.conf',
+  '.log','.env','.tex','.rst','.org','.gitignore','.dockerfile',
+  '.pdf','.doc','.docx','.xls','.xlsx','.ppt','.pptx',
+  '.png','.jpg','.jpeg','.gif','.webp','.svg',
+]);
+function fileExt(name) {
+  const i = (name || '').lastIndexOf('.');
+  return i >= 0 ? name.slice(i).toLowerCase() : '';
+}
 function addFile(file) {
-  if (file.size > 10 * 1024 * 1024) { showToast(`⚠️ ${file.name} too large`); return; }
+  if (file.size > 10 * 1024 * 1024) { showToast(`⚠️ ${file.name} too large (max 10MB)`); return; }
+  const ext = fileExt(file.name);
+  if (!ALLOWED_FILE_EXTS.has(ext)) {
+    showToast(`⚠️ ${file.name}: ${ext || 'unknown'} not supported`);
+    return;
+  }
+  // Dedupe by name+size so the same drop doesn't queue twice.
+  if (pendingFiles.some(f => f.name === file.name && f.size === file.size)) return;
   pendingFiles.push(file);
   renderFileList();
 }
 function renderFileList() {
   const list = document.getElementById('file-list');
-  if (!pendingFiles.length) { list.innerHTML = ''; return; }
+  const dropZone = document.getElementById('file-drop-zone');
+  if (dropZone) dropZone.classList.toggle('has-files', pendingFiles.length > 0);
+  if (!pendingFiles.length) { list.innerHTML = ''; updateWelcomeReady(); return; }
   list.innerHTML = pendingFiles.map((f, i) => {
     const sz = f.size < 1024 ? f.size + 'B' : (f.size / 1024).toFixed(1) + 'KB';
-    return `<div class="file-chip">📄 ${f.name} (${sz}) <span class="remove-file" data-idx="${i}">×</span></div>`;
+    return `<div class="file-chip">📄 ${escHtml(f.name)} (${sz}) <span class="remove-file" data-idx="${i}">×</span></div>`;
   }).join('');
-  list.querySelectorAll('.remove-file').forEach(el => el.addEventListener('click', () => { pendingFiles.splice(+el.dataset.idx, 1); renderFileList(); }));
+  list.querySelectorAll('.remove-file').forEach(el => el.addEventListener('click', () => {
+    pendingFiles.splice(+el.dataset.idx, 1);
+    renderFileList();
+  }));
+  updateWelcomeReady();
 }
 async function uploadFiles() {
   if (!pendingFiles.length) return [];
@@ -2736,9 +2957,17 @@ async function uploadFiles() {
   pendingFiles.forEach(f => fd.append('files', f));
   try {
     const res = await fetch(apiUrl('/api/upload'), { method: 'POST', body: fd });
-    if (!res.ok) { showToast(`⚠️ Upload failed`); return []; }
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = j.error || j.detail || ''; } catch (_) {}
+      showToast(`⚠️ Upload failed: ${detail || res.status}`);
+      return null; // null = error, distinct from empty array
+    }
     return (await res.json()).files || [];
-  } catch (e) { showToast('⚠️ Upload failed'); return []; }
+  } catch (e) {
+    showToast('⚠️ Upload failed: ' + e.message);
+    return null;
+  }
 }
 
 const dropZone = document.getElementById('file-drop-zone');
@@ -2860,10 +3089,17 @@ document.querySelectorAll('.example-chip').forEach(chip => {
   });
 });
 document.getElementById('welcome-submit').addEventListener('click', submitFromWelcome);
+document.getElementById('welcome-input').addEventListener('input', updateWelcomeReady);
 document.getElementById('welcome-input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitFromWelcome(); });
 document.getElementById('btn-send').addEventListener('click', sendMessage);
 document.getElementById('btn-stop').addEventListener('click', stopSession);
+document.getElementById('btn-resume').addEventListener('click', resumeSession);
+document.getElementById('chat-input').addEventListener('input', updateChatReady);
 document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendMessage(); } });
+// Initialize the ready states once the DOM is wired so the deploy button
+// reflects whatever is already in the textarea (e.g., browser autofill).
+updateWelcomeReady();
+updateChatReady();
 
 // Panel toggle
 document.getElementById('btn-panel').addEventListener('click', () => {
@@ -2884,6 +3120,8 @@ function goHome() {
   document.getElementById('status-badge').className = 'status-badge idle';
   document.getElementById('status-badge').title = 'No active session';
   stopDurationTimer();
+  updateChatReady();
+  updateWelcomeReady();
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'get-sessions' }));
 }
 

@@ -1,0 +1,11 @@
+url: http://localhost:8090
+---
+# Test: War Room web UI loads correctly
+- launchApp
+- assertVisible: "WAR ROOM"
+- assertVisible:
+    id: "welcome-submit"
+- assertVisible:
+    id: "welcome-input"
+- assertVisible:
+    id: "session-list"

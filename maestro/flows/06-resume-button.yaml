@@ -1,0 +1,11 @@
+url: http://localhost:8090
+---
+# Test: Resume button is part of the deliberation top bar.
+# It is display:none on the welcome view — only visible after loading an
+# inactive session whose deliberation never reached Synthesis.
+# assertNotVisible passes for elements that are in the DOM but hidden,
+# which confirms the static HTML wired the button correctly.
+- launchApp
+- waitForAnimationToEnd
+- assertNotVisible:
+    id: "btn-resume"

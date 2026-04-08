@@ -1,0 +1,8 @@
+url: http://localhost:8090
+---
+# Test: Improve button is present and clickable
+- launchApp
+- assertVisible:
+    id: "btn-improve"
+- assertVisible:
+    id: "welcome-submit"

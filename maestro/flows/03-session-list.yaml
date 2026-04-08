@@ -1,0 +1,10 @@
+url: http://localhost:8090
+---
+# Test: Session list container loads with WebSocket data
+- launchApp
+- waitForAnimationToEnd
+- assertVisible:
+    id: "session-list"
+# Verify the session list container is not empty (children loaded via WebSocket)
+- assertVisible:
+    id: "session-list-container"

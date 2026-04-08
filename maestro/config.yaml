@@ -1,0 +1,18 @@
+# Maestro E2E config for War Room
+#
+# Run all:   ./maestro/run.sh
+# Run one:   ./maestro/run.sh maestro/flows/01-app-loads.yaml
+# Studio:    maestro -p web studio
+#
+# Requirements: Java 21+, Xvfb (headless), Maestro CLI
+# Install: curl -fsSL "https://get.maestro.mobile.dev" | bash
+
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - flows/01-app-loads.yaml
+    - flows/02-input-interaction.yaml
+    - flows/03-session-list.yaml
+    - flows/04-ui-elements.yaml
+    - flows/05-send-feedback.yaml
+    - flows/06-resume-button.yaml

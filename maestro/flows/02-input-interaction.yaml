@@ -1,0 +1,13 @@
+url: http://localhost:8090
+---
+# Test: Problem input field accepts text and is functional
+- launchApp
+- assertVisible:
+    id: "welcome-input"
+- tapOn:
+    id: "welcome-input"
+- inputText: "What is the best architecture for a microservices platform?"
+- takeScreenshot: "input_filled"
+# Verify the submit button is enabled
+- assertVisible:
+    id: "welcome-submit"

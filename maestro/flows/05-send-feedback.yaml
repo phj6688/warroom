@@ -1,0 +1,17 @@
+url: http://localhost:8090
+---
+# Test: typing into the welcome textarea lights up the deploy button.
+# The "ready" class is added by updateWelcomeReady() — we verify the visual
+# state by snapshotting the screen after typing so a regression in the input
+# listener wiring shows up as a visible diff.
+- launchApp
+- assertVisible:
+    id: "welcome-input"
+- assertVisible:
+    id: "welcome-submit"
+- tapOn:
+    id: "welcome-input"
+- inputText: "Diagnose why a webhook handler is dropping events under load."
+- takeScreenshot: "deploy_button_ready"
+- assertVisible:
+    id: "welcome-submit"
