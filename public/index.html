@@ -1217,9 +1217,9 @@ html, body {
 }
 .export-format-btn:hover { border-color: var(--border-bright); color: var(--text); }
 .export-format-btn.selected { background: rgba(215,25,33,0.1); border-color: var(--accent); color: var(--accent); }
-.export-submit-row { padding: 16px 20px; }
+.export-submit-row { padding: 16px 20px; display: flex; gap: 8px; }
 .export-submit {
-  width: 100%; padding: 14px;
+  flex: 1; padding: 14px;
   background: var(--accent); border: 1px solid var(--accent);
   border-radius: 12px; color: #000000;
   font-family: var(--font); font-size: 13px; font-weight: 600;
@@ -1229,6 +1229,20 @@ html, body {
 }
 .export-submit:hover { background: #b91219; }
 .export-submit:active { transform: scale(0.97); }
+.export-copy {
+  flex: 1; padding: 14px;
+  background: rgba(74,158,92,0.12); border: 1px solid rgba(74,158,92,0.5);
+  color: var(--success);
+  border-radius: 12px;
+  font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase;
+  cursor: pointer; transition: all 0.2s;
+  min-height: 52px;
+}
+.export-copy:hover { background: rgba(74,158,92,0.22); }
+.export-copy:active { transform: scale(0.97); }
+.export-copy.copied { background: var(--success); color: var(--bg); border-color: var(--success); }
+.export-copy:disabled { opacity: 0.5; cursor: not-allowed; }
 .export-btn {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 10px 20px; margin-top: 14px;
@@ -1902,6 +1916,7 @@ html, body {
       <div class="export-format-row" id="export-format-row"></div>
     </div>
     <div class="export-submit-row">
+      <button class="export-copy" id="export-copy" title="Copy export to clipboard">📋 Copy</button>
       <button class="export-submit" id="export-submit">⬇ Download</button>
     </div>
   </div>
@@ -2733,7 +2748,12 @@ function addEscalationToQueue(data) {
     const container = document.getElementById(containerId);
     if (container.querySelector('span')) container.innerHTML = '';
     const d = document.createElement('div');
-    d.className = `sheet-esc ${data.answered ? 'answered' : ''}`;
+    // Tag the row with an esc-queue-<id> class so markEscalationAnswered
+    // can find both copies (mobile sheet + desktop sidebar) without
+    // needing two unique IDs. The queue rows previously had no marker at
+    // all, which is why answering stuck them on the red border until the
+    // page reloaded and session-state replayed everything.
+    d.className = `sheet-esc esc-queue-${data.id}${data.answered ? ' answered' : ''}`;
     d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')}</div><div class="se-question">${escHtml(data.question)}</div>`;
     d.addEventListener('click', () => {
       closeSheet();
@@ -2770,7 +2790,24 @@ function markEscalationAnswered(escId, answer) {
     el.classList.add('answered');
     const row = el.querySelector('.esc-input-row');
     if (row) row.innerHTML = `<div class="esc-answer">✅ ${escHtml(answer || '')}</div>`;
-    el.querySelector('.esc-header').textContent = '✅ Answered';
+    const header = el.querySelector('.esc-header');
+    if (header) header.textContent = '✅ Answered';
+  }
+  // Flip the matching rows in the desktop sidebar and the mobile sheet to
+  // the answered (green-bordered, dimmed) state. Both copies share the
+  // esc-queue-<id> class added by addEscalationToQueue. Without this, the
+  // queues kept their red border until a full page reload.
+  document.querySelectorAll(`.esc-queue-${CSS.escape(escId)}`).forEach(q => q.classList.add('answered'));
+  // The pending counter and the red badge dot are tied to it. Decrement on
+  // each answer (clamped at 0 so a stale broadcast cannot drive it negative)
+  // and hide the badge once nothing is left pending. Previously the badge
+  // only cleared when the user manually opened the escalations sheet.
+  if (typeof pendingEscalations === 'number') {
+    pendingEscalations = Math.max(0, pendingEscalations - 1);
+    if (pendingEscalations === 0) {
+      const badge = document.getElementById('esc-badge');
+      if (badge) badge.style.display = 'none';
+    }
   }
 }
 
@@ -3412,9 +3449,62 @@ function doExport() {
   showToast('📤 Downloading export...');
 }
 
+// Same payload as doExport, but written to the clipboard instead of saved.
+// JSON exports are pretty-printed before copying so the clipboard contains
+// human-readable text rather than a single jammed line. Falls back to a
+// hidden textarea + execCommand on browsers/contexts that block the async
+// Clipboard API (notably http:// origins outside localhost).
+async function copyExportToClipboard() {
+  if (!currentSession) { showToast('⚠️ No session loaded'); return; }
+  const btn = document.getElementById('export-copy');
+  const url = apiUrl('/api/sessions/' + currentSession.id + '/export?mode=' + selectedExportMode + '&format=' + selectedExportFormat);
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = '⏳ Fetching...';
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    let text;
+    if (selectedExportFormat === 'json') {
+      const data = await res.json();
+      text = JSON.stringify(data, null, 2);
+    } else {
+      text = await res.text();
+    }
+    let copied = false;
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); copied = true; }
+      catch (_) { copied = false; }
+    }
+    if (!copied) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      try { copied = document.execCommand('copy'); } catch (_) { copied = false; }
+      document.body.removeChild(ta);
+    }
+    if (!copied) throw new Error('clipboard blocked');
+    btn.classList.add('copied');
+    btn.textContent = '✓ Copied';
+    showToast(`📋 Copied ${text.length.toLocaleString()} chars to clipboard`);
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.textContent = originalLabel;
+      btn.disabled = false;
+    }, 1500);
+  } catch (err) {
+    btn.textContent = originalLabel;
+    btn.disabled = false;
+    showToast('⚠️ Copy failed: ' + err.message);
+  }
+}
+
 document.getElementById('export-modal-close').addEventListener('click', closeExportModal);
 document.getElementById('export-modal-overlay').addEventListener('click', e => { if (e.target === document.getElementById('export-modal-overlay')) closeExportModal(); });
 document.getElementById('export-submit').addEventListener('click', doExport);
+document.getElementById('export-copy').addEventListener('click', copyExportToClipboard);
 
 
 connect();

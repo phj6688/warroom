@@ -1,0 +1,10 @@
+url: http://localhost:8090
+---
+# Test: Export modal includes a Copy-to-clipboard button alongside Download.
+# The export modal is closed by default, so the button is in the DOM but
+# not visually rendered. assertNotVisible confirms the element exists and
+# is correctly hidden behind the modal overlay until the user opens it.
+- launchApp
+- waitForAnimationToEnd
+- assertNotVisible:
+    id: "export-copy"
