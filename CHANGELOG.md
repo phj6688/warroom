@@ -9,6 +9,12 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Migrated LLM gateway naming from LLM gateway to OpenAI-compatibleAPI. The homelab gateway URL and bearer token are unchanged, but the env vars and log labels now reflect the new provider. `OPENCLAW_GATEWAY_URL` → `OPENAI_BASE_URL`, `OPENCLAW_GATEWAY_TOKEN` → `OPENAI_API_KEY`. **No backward-compat fallback** — stale configs reading the old names will fail loudly with `No LLM config` so they surface immediately. The hardcoded `OPENCLAW_GATEWAY_URL` line in `docker-compose.yml` was hoisted into `.env` (loaded via existing `env_file:`) so the rename is visible end-to-end and the gateway URL no longer lives in a tracked file. In-code default `MODEL` fallback bumped from `anthropic/claude-sonnet-4-5` (no longer offered by the gateway) to `anthropic/claude-sonnet-4-6`. Boot log line now reads `LLM proxy: OpenAI-compatible Gateway`. Deleted `server.js.backup` (688 lines of pre-refactor dead code that still referenced the old names).
+
+### Fixed
+- `MODEL=llm-gateway` in the live `.env` was being passed verbatim to the gateway as `model: "llm-gateway"`, which the new OpenAI-compatibleAPI rejects with `Gateway error (502): unknown provider for model llm-gateway`. Every non-haiku agent on the council was affected; Systems Synthesizer was the first to surface the symptom. `MODEL` is now `anthropic/claude-sonnet-4-6` (matches the documented default in `.env.example`).
+
 ### Added
 - Copy-to-clipboard button in the export modal next to Download. Hits the same `/api/sessions/:id/export` endpoint, pretty-prints JSON before copying, and falls back to a hidden textarea + `execCommand('copy')` on contexts where the async Clipboard API is blocked (http:// origin outside localhost).
 - Resume button in the deliberation top bar. Visible whenever an inactive session has no Synthesis message (i.e. the deliberation never reached the final phase). One click sends `resume-session` over WS with HTTP fallback when the socket is closed; `session-resumed` flips the status badge back to Active and restarts the duration timer.

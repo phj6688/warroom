@@ -81,7 +81,7 @@ Problem Statement
 │  sessions · messages · escalations        │
 ├────────────────────────────────────────────┤
 │           LLM Backend                      │
-│  LLM gateway Gateway  OR  Anthropic API       │
+│  OpenAI-compatible Gateway  OR  Anthropic API       │
 ├────────────────────────────────────────────┤
 │           Search Backend (optional)        │
 │           Tavily API → Research Scout      │
@@ -145,14 +145,14 @@ Create `.env` from `.env.example`:
 ```env
 # LLM Backend — pick one:
 
-# Option A: LLM gateway Gateway (recommended for homelab)
-OPENCLAW_GATEWAY_URL=http://your-gateway:18789
-OPENCLAW_GATEWAY_TOKEN=your-token
+# Option A: OpenAI-compatibleAPI Gateway (recommended for homelab)
+OPENAI_BASE_URL=http://your-gateway:18789
+OPENAI_API_KEY=your-token
 MODEL=anthropic/claude-sonnet-4-6
 
 # Option B: Direct Anthropic API
 ANTHROPIC_API_KEY=sk-ant-...
-MODEL=claude-sonnet-4-5
+MODEL=claude-sonnet-4-6
 
 # Search (optional — enables Research Scout live web search)
 TAVILY_API_KEY=tvly-...
