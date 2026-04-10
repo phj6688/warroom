@@ -19,6 +19,9 @@ const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 const { buildContext } = require('./lib/context');
+const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
+const { createFilesServiceClient } = require('./lib/clients/files-service');
+const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
 const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
@@ -76,6 +79,26 @@ server.on('upgrade', (req, socket, head) => {
     wss.emit('connection', ws, req);
   });
 });
+
+// ─── Files-Service Client ───────────────────────────────────
+const FILES_SERVICE_URL = process.env.FILES_SERVICE_URL || null;
+const FILES_SERVICE_TOKEN = process.env.FILES_SERVICE_TOKEN || null;
+const FILE_TOKEN_BUDGET = parseInt(process.env.FILE_TOKEN_BUDGET || '150000', 10);
+
+let filesServiceClient = null;
+let contentBlockBuilder = null;
+
+if (FILES_SERVICE_URL && FILES_SERVICE_TOKEN) {
+  filesServiceClient = createFilesServiceClient({ url: FILES_SERVICE_URL, token: FILES_SERVICE_TOKEN });
+  contentBlockBuilder = createContentBlockBuilder({
+    db,
+    filesServiceClient,
+    config: { fileTokenBudget: FILE_TOKEN_BUDGET, filesServiceUrl: FILES_SERVICE_URL, filesServiceToken: FILES_SERVICE_TOKEN },
+  });
+  log.info({ url: FILES_SERVICE_URL }, 'files-service client configured');
+} else {
+  log.warn('No FILES_SERVICE_URL/TOKEN — file attachment features disabled');
+}
 
 // ─── Shared State ───────────────────────────────────────────
 const activeSessions = new Map();
@@ -246,7 +269,20 @@ async function runAgentTurn(session, agentId, phase) {
   broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
 
   try {
-    const messages = buildContext(session, agentId, phase);
+    let messages = buildContext(session, agentId, phase);
+
+    // If files are attached and content block builder is available,
+    // replace the plain text user content with content block array
+    // (file blocks + original context text as final block).
+    if (contentBlockBuilder && session._hasFiles) {
+      const contextText = messages[0].content;
+      const contentBlocks = await contentBlockBuilder.buildContentBlocks(session, {
+        query: `${agent.role || agent.name}\n${PHASES[phase].name}\n${session.problem}`,
+        contextText,
+      });
+      messages = [{ role: 'user', content: contentBlocks }];
+    }
+
     let response = await callAnthropic(agent.systemPrompt, messages, agentId);
 
     if (isResearchScout && TAVILY_API_KEY) {
