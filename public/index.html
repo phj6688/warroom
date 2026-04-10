@@ -365,7 +365,14 @@ html, body {
   padding: 6px 12px;
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; font-size: 11px; color: var(--text-dim);
+  transition: border-color 0.2s;
 }
+.file-chip.uploading { border-color: var(--accent); }
+.file-chip.ok { border-color: var(--success); }
+.file-chip.failed { border-color: var(--danger); }
+.file-chip .file-status { font-size: 12px; }
+.file-chip .file-tokens { color: var(--text-dimmer); font-size: 10px; }
+.file-chip .file-error { color: var(--danger); font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-chip .remove-file { cursor: pointer; color: var(--danger); font-size: 14px; min-width: 20px; min-height: 20px; display: flex; align-items: center; justify-content: center; }
 
 .welcome-submit {
@@ -1937,7 +1944,8 @@ let escalationCount = 0;
 let pendingEscalations = 0;
 let sessionStart = null;
 let durationInterval = null;
-let pendingFiles = [];
+let pendingFiles = [];  // [{ id, file, tokens, mime, name, status, error, extraction_error }]
+let fsConfig = null;
 let activeSheet = null;
 
 // ─── Session History State ──────────────────────────────
@@ -2850,7 +2858,8 @@ function updateWelcomeReady() {
   if (!ta || !btn) return;
   const hasText = ta.value.trim().length > 0;
   const hasFiles = pendingFiles.length > 0;
-  const ready = hasText || hasFiles;
+  const uploading = pendingFiles.some(function(p) { return p.status === 'pending' || p.status === 'uploading'; });
+  const ready = (hasText || hasFiles) && !uploading;
   btn.classList.toggle('ready', ready);
   ta.classList.toggle('has-content', hasText);
 }
@@ -2861,28 +2870,42 @@ async function submitFromWelcome() {
   if (!problem && !pendingFiles.length) { showToast('⚠️ Describe a problem or attach a file'); return; }
   if (!problem) problem = 'Analyze the attached file(s).';
   const btn = document.getElementById('welcome-submit');
-  if (!ws || ws.readyState !== 1) {
-    btn.disabled = true; btn.textContent = '⚡ Deploying...';
-    fetch(apiUrl('/api/sessions'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem, files: [] }) })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(data => { showToast('✅ Session created!'); textarea.value = ''; pendingFiles = []; renderFileList(); updateWelcomeReady(); loadViaHttp(); })
-      .catch(e => showToast('⚠️ Deploy failed: ' + e.message))
-      .finally(() => { btn.disabled = false; btn.textContent = '⚡ Deploy War Room'; });
-    return;
-  }
-
   btn.disabled = true; btn.textContent = '⏳ Uploading...';
 
-  const files = await uploadFiles();
-  // uploadFiles() returns null on error (vs [] for "no files"). Abort the
-  // deploy on error so the user can fix the file selection — otherwise we'd
-  // silently kick off a deliberation without the attachments they expected.
-  if (files === null) {
+  // Ensure all pending files are uploaded to files-service
+  const file_ids = await uploadFiles();
+  if (file_ids === null) {
     btn.disabled = false; btn.textContent = '⚡ Deploy War Room';
     return;
   }
+  const failed = pendingFiles.filter(function(p) { return p.status === 'failed'; });
+  if (failed.length) {
+    showToast('⚠️ ' + failed.length + ' file(s) failed to upload. Remove them or retry.');
+    btn.disabled = false; btn.textContent = '⚡ Deploy War Room';
+    return;
+  }
+
   btn.textContent = '⚡ Deploying...';
-  ws.send(JSON.stringify({ type: 'new-session', problem, files }));
+  const payload = { problem, file_ids: file_ids };
+
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'new-session', ...payload }));
+  } else {
+    try {
+      const res = await fetch(apiUrl('/api/sessions'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(res.status);
+      showToast('✅ Session created!');
+      loadViaHttp();
+    } catch (e) {
+      showToast('⚠️ Deploy failed: ' + e.message);
+      btn.disabled = false; btn.textContent = '⚡ Deploy War Room';
+      return;
+    }
+  }
   textarea.value = '';
   pendingFiles = [];
   renderFileList();
@@ -2945,9 +2968,8 @@ function resumeSession() {
 }
 
 // ─── Files ───────────────────────────────────────────────
-// Mirror of the server-side allowlist (lib/routes.js). Keep these in sync —
-// rejecting at addFile() time gives the user immediate feedback instead of a
-// silent upload failure right before the deliberation kicks off.
+// Client-side allowlist mirrors files-service. Reject early so the user
+// sees feedback before the upload round-trip.
 const ALLOWED_FILE_EXTS = new Set([
   '.txt','.md','.csv','.json','.xml','.yaml','.yml','.html','.css',
   '.js','.ts','.tsx','.jsx','.mjs','.cjs',
@@ -2961,57 +2983,117 @@ function fileExt(name) {
   const i = (name || '').lastIndexOf('.');
   return i >= 0 ? name.slice(i).toLowerCase() : '';
 }
-function addFile(file) {
-  if (file.size > 10 * 1024 * 1024) { showToast(`⚠️ ${file.name} too large (max 10MB)`); return; }
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+}
+
+async function loadFilesServiceConfig() {
+  if (fsConfig) return fsConfig;
+  const res = await fetch(apiUrl('/api/files-service-config'), { credentials: 'include' });
+  if (!res.ok) throw new Error('files-service config: ' + res.status);
+  fsConfig = await res.json();
+  // Use the proxy endpoint (browser can't reach files-service Tailscale IP directly)
+  fsConfig.proxyUrl = apiUrl('/api/files/upload');
+  return fsConfig;
+}
+
+function addPendingFile(file) {
+  if (file.size > 10 * 1024 * 1024) { showToast('⚠️ ' + file.name + ' too large (max 10MB)'); return; }
   const ext = fileExt(file.name);
   if (!ALLOWED_FILE_EXTS.has(ext)) {
-    showToast(`⚠️ ${file.name}: ${ext || 'unknown'} not supported`);
+    showToast('⚠️ ' + file.name + ': ' + (ext || 'unknown') + ' not supported');
     return;
   }
-  // Dedupe by name+size so the same drop doesn't queue twice.
-  if (pendingFiles.some(f => f.name === file.name && f.size === file.size)) return;
-  pendingFiles.push(file);
+  if (pendingFiles.some(p => p.file.name === file.name && p.file.size === file.size)) return;
+  pendingFiles.push({ id: null, file: file, tokens: null, mime: null, name: file.name, status: 'pending', error: null, extraction_error: null });
   renderFileList();
+  uploadFiles();
 }
+
 function renderFileList() {
   const list = document.getElementById('file-list');
-  const dropZone = document.getElementById('file-drop-zone');
-  if (dropZone) dropZone.classList.toggle('has-files', pendingFiles.length > 0);
+  const dz = document.getElementById('file-drop-zone');
+  if (dz) dz.classList.toggle('has-files', pendingFiles.length > 0);
   if (!pendingFiles.length) { list.innerHTML = ''; updateWelcomeReady(); return; }
-  list.innerHTML = pendingFiles.map((f, i) => {
-    const sz = f.size < 1024 ? f.size + 'B' : (f.size / 1024).toFixed(1) + 'KB';
-    return `<div class="file-chip">📄 ${escHtml(f.name)} (${sz}) <span class="remove-file" data-idx="${i}">×</span></div>`;
+  const STATUS_ICON = { pending: '\u23F3', uploading: '\u23F3', ok: '\u2705', failed: '\u274C' };
+  list.innerHTML = pendingFiles.map((p, i) => {
+    const sz = fmtSize(p.file.size);
+    const icon = STATUS_ICON[p.status] || '';
+    const tokens = p.tokens != null ? '<span class="file-tokens">' + p.tokens.toLocaleString() + ' tok</span>' : '';
+    const errTip = p.extraction_error ? '<span class="file-error" title="' + escHtml(p.extraction_error) + '">' + escHtml(p.extraction_error) + '</span>' : '';
+    return '<div class="file-chip ' + p.status + '"><span class="file-status">' + icon + '</span> ' + escHtml(p.name) + ' (' + sz + ') ' + tokens + errTip + ' <span class="remove-file" data-idx="' + i + '">\u00D7</span></div>';
   }).join('');
-  list.querySelectorAll('.remove-file').forEach(el => el.addEventListener('click', () => {
-    pendingFiles.splice(+el.dataset.idx, 1);
-    renderFileList();
-  }));
+  list.querySelectorAll('.remove-file').forEach(function(el) {
+    el.addEventListener('click', function() {
+      pendingFiles.splice(+el.dataset.idx, 1);
+      renderFileList();
+    });
+  });
   updateWelcomeReady();
 }
+
 async function uploadFiles() {
   if (!pendingFiles.length) return [];
-  const fd = new FormData();
-  pendingFiles.forEach(f => fd.append('files', f));
-  try {
-    const res = await fetch(apiUrl('/api/upload'), { method: 'POST', body: fd });
-    if (!res.ok) {
-      let detail = '';
-      try { const j = await res.json(); detail = j.error || j.detail || ''; } catch (_) {}
-      showToast(`⚠️ Upload failed: ${detail || res.status}`);
-      return null; // null = error, distinct from empty array
-    }
-    return (await res.json()).files || [];
-  } catch (e) {
-    showToast('⚠️ Upload failed: ' + e.message);
+  const toUpload = pendingFiles.filter(function(p) { return !p.id && p.status !== 'failed' && p.status !== 'uploading'; });
+  if (!toUpload.length) return pendingFiles.filter(function(p) { return p.id; }).map(function(p) { return p.id; });
+
+  let cfg;
+  try { cfg = await loadFilesServiceConfig(); } catch (e) {
+    showToast('⚠️ ' + e.message);
+    for (var k = 0; k < toUpload.length; k++) { toUpload[k].status = 'failed'; toUpload[k].error = e.message; }
+    renderFileList();
     return null;
   }
+
+  var form = new FormData();
+  for (var k = 0; k < toUpload.length; k++) {
+    toUpload[k].status = 'uploading';
+    form.append('files', toUpload[k].file, toUpload[k].file.name);
+  }
+  renderFileList();
+
+  try {
+    var res = await fetch(cfg.proxyUrl, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      var body = await res.text();
+      throw new Error('files-service ' + res.status + ': ' + body);
+    }
+    var data = await res.json();
+    var files = data.files;
+    for (var k = 0; k < toUpload.length; k++) {
+      var p = toUpload[k], f = files[k];
+      p.id = f.id;
+      p.tokens = f.tokens;
+      p.mime = f.mime;
+      p.name = f.name;
+      p.status = f.extraction_status === 'failed' ? 'failed' : 'ok';
+      p.extraction_error = f.extraction_error || null;
+    }
+  } catch (err) {
+    for (var k = 0; k < toUpload.length; k++) { toUpload[k].status = 'failed'; toUpload[k].error = err.message; }
+    showToast('⚠️ Upload failed: ' + err.message);
+  }
+  renderFileList();
+  return pendingFiles.filter(function(p) { return p.id; }).map(function(p) { return p.id; });
 }
 
 const dropZone = document.getElementById('file-drop-zone');
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); Array.from(e.dataTransfer.files).forEach(addFile); });
-document.getElementById('file-input').addEventListener('change', e => { Array.from(e.target.files).forEach(addFile); e.target.value = ''; });
+dropZone.addEventListener('dragover', function(e) { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', function() { dropZone.classList.remove('dragover'); });
+dropZone.addEventListener('drop', function(e) { e.preventDefault(); dropZone.classList.remove('dragover'); Array.from(e.dataTransfer.files).forEach(addPendingFile); });
+document.getElementById('file-input').addEventListener('change', function(e) { Array.from(e.target.files).forEach(addPendingFile); e.target.value = ''; });
+document.addEventListener('paste', function(e) {
+  var items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (var k = 0; k < items.length; k++) {
+    if (items[k].kind === 'file') { var f = items[k].getAsFile(); if (f) addPendingFile(f); }
+  }
+});
 
 // ─── Helpers ─────────────────────────────────────────────
 function showToast(msg) {

@@ -19,6 +19,9 @@ const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 const { buildContext } = require('./lib/context');
+const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
+const { createFilesServiceClient } = require('./lib/clients/files-service');
+const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
 const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
@@ -77,6 +80,26 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
+// ─── Files-Service Client ───────────────────────────────────
+const FILES_SERVICE_URL = process.env.FILES_SERVICE_URL || null;
+const FILES_SERVICE_TOKEN = process.env.FILES_SERVICE_TOKEN || null;
+const FILE_TOKEN_BUDGET = parseInt(process.env.FILE_TOKEN_BUDGET || '150000', 10);
+
+let filesServiceClient = null;
+let contentBlockBuilder = null;
+
+if (FILES_SERVICE_URL && FILES_SERVICE_TOKEN) {
+  filesServiceClient = createFilesServiceClient({ url: FILES_SERVICE_URL, token: FILES_SERVICE_TOKEN });
+  contentBlockBuilder = createContentBlockBuilder({
+    db,
+    filesServiceClient,
+    config: { fileTokenBudget: FILE_TOKEN_BUDGET, filesServiceUrl: FILES_SERVICE_URL, filesServiceToken: FILES_SERVICE_TOKEN },
+  });
+  log.info({ url: FILES_SERVICE_URL }, 'files-service client configured');
+} else {
+  log.warn('No FILES_SERVICE_URL/TOKEN — file attachment features disabled');
+}
+
 // ─── Shared State ───────────────────────────────────────────
 const activeSessions = new Map();
 const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES });
@@ -108,17 +131,40 @@ function broadcastGlobal(data) {
 }
 
 // ─── Session Management ─────────────────────────────────────
-function createSession(problem, files = []) {
+
+/**
+ * Denormalize file metadata from files-service into session_files.
+ * Returns array of denormalized file objects. Throws on any file_id not found.
+ */
+async function attachFiles(sessionId, fileIds) {
+  if (!fileIds || fileIds.length === 0) return [];
+  if (!filesServiceClient) throw new Error('files-service not configured');
+  const now = Date.now();
+  const attached = [];
+  for (const fileId of fileIds) {
+    const meta = await filesServiceClient.getFile(fileId);
+    if (!meta) throw Object.assign(new Error(`file_id ${fileId} not found`), { status: 400 });
+    stmts.insertFile.run(sessionId, meta.id, meta.sha256, meta.name, meta.tokens, meta.mime, now);
+    attached.push({ file_id: meta.id, file_sha256: meta.sha256, file_name: meta.name, file_tokens: meta.tokens, file_mime: meta.mime });
+  }
+  return attached;
+}
+
+async function createSession(problem, fileIds = []) {
   const id = genId();
   const now = Date.now();
   stmts.insertSession.run(id, problem, now, now);
-  files.forEach(f => {
-    stmts.insertFile.run(f.id || genId(), id, f.name, f.size || 0, f.type || '', f.content || null, now);
-  });
+
+  let files = [];
+  if (fileIds.length > 0) {
+    files = await attachFiles(id, fileIds);
+  }
+
   const session = {
-    id, problem, files, phase: 0,
+    id, problem, phase: 0,
     messages: [], humanMessages: [], escalations: [],
-    agentStates: {}, active: true, createdAt: now
+    agentStates: {}, active: true, createdAt: now,
+    _hasFiles: files.length > 0,
   };
   AGENTS.forEach(a => { session.agentStates[a.id] = 'idle'; });
   activeSessions.set(id, session);
@@ -148,7 +194,8 @@ function loadSession(id) {
     id: h.id, content: h.content, timestamp: h.created_at
   }));
   const files = stmts.getSessionFiles.all(id).map(f => ({
-    id: f.id, name: f.name, size: f.size, type: f.type, content: f.content
+    file_id: f.file_id, file_name: f.file_name, file_tokens: f.file_tokens,
+    file_mime: f.file_mime, file_sha256: f.file_sha256,
   }));
   let specialistAgents = [];
   if (row.specialist_agents) {
@@ -162,6 +209,7 @@ function loadSession(id) {
     qualityScore: row.quality_score ?? null,
     pinned: !!row.pinned,
     specialistAgents,
+    _hasFiles: files.length > 0,
   };
 }
 
@@ -246,7 +294,20 @@ async function runAgentTurn(session, agentId, phase) {
   broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
 
   try {
-    const messages = buildContext(session, agentId, phase);
+    let messages = buildContext(session, agentId, phase);
+
+    // If files are attached and content block builder is available,
+    // replace the plain text user content with content block array
+    // (file blocks + original context text as final block).
+    if (contentBlockBuilder && session._hasFiles) {
+      const contextText = messages[0].content;
+      const contentBlocks = await contentBlockBuilder.buildContentBlocks(session, {
+        query: `${agent.role || agent.name}\n${PHASES[phase].name}\n${session.problem}`,
+        contextText,
+      });
+      messages = [{ role: 'user', content: contentBlocks }];
+    }
+
     let response = await callAnthropic(agent.systemPrompt, messages, agentId);
 
     if (isResearchScout && TAVILY_API_KEY) {
@@ -466,7 +527,7 @@ async function runFollowUp(sessionId, session, question) {
 }
 
 // ─── Wire Modules ───────────────────────────────────────────
-const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession };
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession, attachFiles, filesServiceClient };
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
@@ -517,9 +578,28 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 // ─── Start ──────────────────────────────────────────────────
-server.listen(PORT, () => {
-  // Boot banner stays as console.log: it is the one human-readable startup
-  // signature an operator skims for, and it should not be JSON.
+(async () => {
+  // Files-service health check + legacy migration (BEFORE binding the listener)
+  if (filesServiceClient) {
+    try {
+      await filesServiceClient.health();
+      log.info('files-service reachable at startup');
+    } catch (err) {
+      log.error({ err: err.message }, 'files-service unreachable at startup — aborting');
+      process.exit(1);
+    }
+    try {
+      const migrationSummary = await runLegacyFileMigration(db, filesServiceClient);
+      if (migrationSummary.failed > 0) {
+        log.warn({ summary: migrationSummary }, 'legacy file migration completed with failures');
+      }
+    } catch (err) {
+      log.error({ err: err.message }, 'legacy file migration failed — aborting');
+      process.exit(1);
+    }
+  }
+
+  server.listen(PORT, () => {
   console.log(`\n🏛️  AI Research War Room`);
   console.log(`   Server running on http://localhost:${PORT}`);
   console.log(`   Database: ${dbPath}`);
@@ -557,4 +637,5 @@ server.listen(PORT, () => {
   fingerprint.backfillArchetypes().catch(err =>
     log.warn({ err: err.message }, 'archetype backfill error')
   );
-});
+  });
+})();

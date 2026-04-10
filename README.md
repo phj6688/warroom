@@ -98,13 +98,15 @@ Problem Statement
 |--------|----------|-------------|
 | `GET` | `/api/agents` | List all 8 agents with roles and metadata |
 | `GET` | `/api/sessions` | List all deliberation sessions |
-| `POST` | `/api/sessions` | Create new session (body: `{problem, files[]}`) |
+| `POST` | `/api/sessions` | Create new session (body: `{problem, file_ids[]}`) |
 | `GET` | `/api/sessions/:id` | Get session state, messages, escalations |
 | `POST` | `/api/sessions/:id/advance` | Advance to next phase |
 | `POST` | `/api/sessions/:id/escalate` | Submit escalation answer |
 | `GET` | `/api/sessions/:id/export` | Export full session transcript |
-| `POST` | `/api/upload` | Upload context files for a session |
+| `GET` | `/api/files-service-config` | Get files-service URL + token for direct upload |
 | `GET` | `/health` | Service health check |
+
+**File handling:** War Room does not process files locally. File upload, extraction, and tokenization are handled by [files-service](http://localhost:9100) — a standalone container on the homelab. The frontend uploads directly to files-service and passes `file_ids` when creating a session. War Room fetches file metadata and content blocks from files-service at deliberation time.
 
 **WebSocket** at `ws://<host>:8090` — real-time agent message streaming during deliberation.
 
@@ -187,7 +189,7 @@ war-room/
 ├── public/
 │   └── index.html      # Web UI — real-time deliberation interface
 ├── data/               # SQLite database (gitignored)
-├── uploads/            # Uploaded context files (gitignored)
+├── uploads/            # (legacy, unused — file handling delegated to files-service)
 ├── docker-compose.yml
 ├── Dockerfile
 └── tests/

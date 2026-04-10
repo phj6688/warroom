@@ -56,7 +56,7 @@ const stmts = {
   updateSessionActive: db.prepare('UPDATE sessions SET active = ?, updated_at = ? WHERE id = ?'),
   markCrashRecovered: db.prepare('UPDATE sessions SET active = 0, crash_recovered_at = ?, updated_at = ? WHERE id = ?'),
   getActiveSessions: db.prepare('SELECT id FROM sessions WHERE active = 1'),
-  insertFile: db.prepare('INSERT INTO session_files (id, session_id, name, size, type, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  insertFile: db.prepare('INSERT OR IGNORE INTO session_files (session_id, file_id, file_sha256, file_name, file_tokens, file_mime, attached_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   insertMessage: db.prepare('INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   insertEscalation: db.prepare('INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, NULL, \'pending\', ?, NULL)'),
   answerEscalation: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ? WHERE id = ?'),
@@ -66,7 +66,7 @@ const stmts = {
   getSessionMessages: db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC'),
   getSessionEscalations: db.prepare('SELECT * FROM escalations WHERE session_id = ? ORDER BY created_at ASC'),
   getSessionHumanMessages: db.prepare('SELECT * FROM human_messages WHERE session_id = ? ORDER BY created_at ASC'),
-  getSessionFiles: db.prepare('SELECT * FROM session_files WHERE session_id = ? ORDER BY created_at ASC'),
+  getSessionFiles: db.prepare('SELECT * FROM session_files WHERE session_id = ? ORDER BY attached_at ASC'),
   // F16 — single SELECT with LEFT JOIN sub-queries so /api/sessions does not
   // fan out into 1 + 50 + 50 round-trips through enrichSession. The derived
   // tables collapse counts before the join so we still get one row per
