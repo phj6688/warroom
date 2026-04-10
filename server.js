@@ -131,17 +131,40 @@ function broadcastGlobal(data) {
 }
 
 // ─── Session Management ─────────────────────────────────────
-function createSession(problem, files = []) {
+
+/**
+ * Denormalize file metadata from files-service into session_files.
+ * Returns array of denormalized file objects. Throws on any file_id not found.
+ */
+async function attachFiles(sessionId, fileIds) {
+  if (!fileIds || fileIds.length === 0) return [];
+  if (!filesServiceClient) throw new Error('files-service not configured');
+  const now = Date.now();
+  const attached = [];
+  for (const fileId of fileIds) {
+    const meta = await filesServiceClient.getFile(fileId);
+    if (!meta) throw Object.assign(new Error(`file_id ${fileId} not found`), { status: 400 });
+    stmts.insertFile.run(sessionId, meta.id, meta.sha256, meta.name, meta.tokens, meta.mime, now);
+    attached.push({ file_id: meta.id, file_sha256: meta.sha256, file_name: meta.name, file_tokens: meta.tokens, file_mime: meta.mime });
+  }
+  return attached;
+}
+
+async function createSession(problem, fileIds = []) {
   const id = genId();
   const now = Date.now();
   stmts.insertSession.run(id, problem, now, now);
-  files.forEach(f => {
-    stmts.insertFile.run(f.id || genId(), id, f.name, f.size || 0, f.type || '', f.content || null, now);
-  });
+
+  let files = [];
+  if (fileIds.length > 0) {
+    files = await attachFiles(id, fileIds);
+  }
+
   const session = {
-    id, problem, files, phase: 0,
+    id, problem, phase: 0,
     messages: [], humanMessages: [], escalations: [],
-    agentStates: {}, active: true, createdAt: now
+    agentStates: {}, active: true, createdAt: now,
+    _hasFiles: files.length > 0,
   };
   AGENTS.forEach(a => { session.agentStates[a.id] = 'idle'; });
   activeSessions.set(id, session);
@@ -171,7 +194,8 @@ function loadSession(id) {
     id: h.id, content: h.content, timestamp: h.created_at
   }));
   const files = stmts.getSessionFiles.all(id).map(f => ({
-    id: f.id, name: f.name, size: f.size, type: f.type, content: f.content
+    file_id: f.file_id, file_name: f.file_name, file_tokens: f.file_tokens,
+    file_mime: f.file_mime, file_sha256: f.file_sha256,
   }));
   let specialistAgents = [];
   if (row.specialist_agents) {
@@ -185,6 +209,7 @@ function loadSession(id) {
     qualityScore: row.quality_score ?? null,
     pinned: !!row.pinned,
     specialistAgents,
+    _hasFiles: files.length > 0,
   };
 }
 
@@ -502,7 +527,7 @@ async function runFollowUp(sessionId, session, question) {
 }
 
 // ─── Wire Modules ───────────────────────────────────────────
-const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession };
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession, attachFiles, filesServiceClient };
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
