@@ -2994,6 +2994,8 @@ async function loadFilesServiceConfig() {
   const res = await fetch(apiUrl('/api/files-service-config'), { credentials: 'include' });
   if (!res.ok) throw new Error('files-service config: ' + res.status);
   fsConfig = await res.json();
+  // Use the proxy endpoint (browser can't reach files-service Tailscale IP directly)
+  fsConfig.proxyUrl = apiUrl('/api/files/upload');
   return fsConfig;
 }
 
@@ -3053,9 +3055,8 @@ async function uploadFiles() {
   renderFileList();
 
   try {
-    var res = await fetch(cfg.url + '/v1/files', {
+    var res = await fetch(cfg.proxyUrl, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + cfg.token },
       body: form,
     });
     if (!res.ok) {
