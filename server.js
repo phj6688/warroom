@@ -578,9 +578,28 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 // ─── Start ──────────────────────────────────────────────────
-server.listen(PORT, () => {
-  // Boot banner stays as console.log: it is the one human-readable startup
-  // signature an operator skims for, and it should not be JSON.
+(async () => {
+  // Files-service health check + legacy migration (BEFORE binding the listener)
+  if (filesServiceClient) {
+    try {
+      await filesServiceClient.health();
+      log.info('files-service reachable at startup');
+    } catch (err) {
+      log.error({ err: err.message }, 'files-service unreachable at startup — aborting');
+      process.exit(1);
+    }
+    try {
+      const migrationSummary = await runLegacyFileMigration(db, filesServiceClient);
+      if (migrationSummary.failed > 0) {
+        log.warn({ summary: migrationSummary }, 'legacy file migration completed with failures');
+      }
+    } catch (err) {
+      log.error({ err: err.message }, 'legacy file migration failed — aborting');
+      process.exit(1);
+    }
+  }
+
+  server.listen(PORT, () => {
   console.log(`\n🏛️  AI Research War Room`);
   console.log(`   Server running on http://localhost:${PORT}`);
   console.log(`   Database: ${dbPath}`);
@@ -618,4 +637,5 @@ server.listen(PORT, () => {
   fingerprint.backfillArchetypes().catch(err =>
     log.warn({ err: err.message }, 'archetype backfill error')
   );
-});
+  });
+})();
