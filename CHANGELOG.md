@@ -10,6 +10,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Files-service integration: War Room no longer processes files locally. Upload, extraction, tokenization, and RAG are handled by a standalone files-service container at `:9100`. Frontend uploads directly to files-service via CORS and passes `file_ids` when creating sessions.
+- `lib/clients/files-service.js` — HTTP client for files-service health check, file metadata, and content retrieval.
+- `lib/prompt/content-blocks.js` — builds Anthropic-format content blocks from files-service metadata for multi-modal agent context.
+- `lib/migrate-files.js` — one-time legacy migration: converts inline `session_files` rows to files-service references.
+- Per-file upload status in the drop zone UI: name, size, token count, status icon, extraction errors.
+- Clipboard paste handler for file attachment.
+- `GET /api/files-service-config` endpoint exposes files-service URL + bearer token for browser-side direct upload.
+- `tests/e2e-integration.test.js` — real-services E2E test (runs with `E2E_REAL=1`).
+- Baseline token usage logging via `BASELINE_LOG` env var.
+
+### Removed
+- `POST /api/upload` endpoint (file upload is now direct to files-service).
+- `multer` dependency and all local file handling code.
+- `ATTACHED FILES:` string injection in agent context — replaced by content blocks.
+- `files: []` HTTP fallback in session creation — the original bug that silently dropped attachments.
+
+### Fixed
+- Cascade delete trigger (`trg_sessions_before_delete_cascade`) broken by SQLite auto-renaming references during `ALTER TABLE session_files RENAME`. Migration 014 recreates the trigger with correct table names.
+
+### Added
 - Copy-to-clipboard button in the export modal next to Download. Hits the same `/api/sessions/:id/export` endpoint, pretty-prints JSON before copying, and falls back to a hidden textarea + `execCommand('copy')` on contexts where the async Clipboard API is blocked (http:// origin outside localhost).
 - Resume button in the deliberation top bar. Visible whenever an inactive session has no Synthesis message (i.e. the deliberation never reached the final phase). One click sends `resume-session` over WS with HTTP fallback when the socket is closed; `session-resumed` flips the status badge back to Active and restarts the duration timer.
 - `lib/phases.js` exports `computeResumePhase(session, phases)` — walks the phase list and returns the first phase whose required agents have not all produced a message. Both resume paths (`POST /api/sessions/:id/resume` and the WS `resume-session` case) now route through it, so a session stopped during Divergence with all 6 agents already done resumes from Convergence rather than re-running Divergence from scratch. Both paths reject (409 / WS error) when every phase is already covered.

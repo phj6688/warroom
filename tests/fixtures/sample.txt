@@ -1,0 +1,13 @@
+War Room E2E Test Fixture
+
+This is a sample document used for integration testing.
+It contains enough text to produce a meaningful token count
+when processed by the files-service extraction pipeline.
+
+Key points for deliberation:
+1. Infrastructure resilience under load
+2. Cost optimization for LLM-heavy workloads
+3. Multi-agent coordination patterns
+4. Cross-session knowledge transfer
+
+This fixture validates the full upload → extract → tokenize → session-create pipeline.
