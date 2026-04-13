@@ -2862,6 +2862,10 @@ function updateWelcomeReady() {
   const ready = (hasText || hasFiles) && !uploading;
   btn.classList.toggle('ready', ready);
   ta.classList.toggle('has-content', hasText);
+  const improveBtn = document.getElementById('btn-improve');
+  if (improveBtn && !improveBtn.classList.contains('loading')) {
+    improveBtn.disabled = !hasText;
+  }
 }
 
 async function submitFromWelcome() {
@@ -3000,6 +3004,7 @@ async function loadFilesServiceConfig() {
 }
 
 function addPendingFile(file) {
+  if (!file.size) { showToast('⚠️ ' + file.name + ' is empty (0 bytes)'); return; }
   if (file.size > 10 * 1024 * 1024) { showToast('⚠️ ' + file.name + ' too large (max 10MB)'); return; }
   const ext = fileExt(file.name);
   if (!ALLOWED_FILE_EXTS.has(ext)) {
@@ -3088,11 +3093,27 @@ dropZone.addEventListener('dragleave', function() { dropZone.classList.remove('d
 dropZone.addEventListener('drop', function(e) { e.preventDefault(); dropZone.classList.remove('dragover'); Array.from(e.dataTransfer.files).forEach(addPendingFile); });
 document.getElementById('file-input').addEventListener('change', function(e) { Array.from(e.target.files).forEach(addPendingFile); e.target.value = ''; });
 document.addEventListener('paste', function(e) {
+  // Only capture file pastes on the welcome screen (not during active sessions)
+  if (currentSession) return;
   var items = e.clipboardData && e.clipboardData.items;
   if (!items) return;
+  var found = false;
   for (var k = 0; k < items.length; k++) {
-    if (items[k].kind === 'file') { var f = items[k].getAsFile(); if (f) addPendingFile(f); }
+    if (items[k].kind === 'file') {
+      var f = items[k].getAsFile();
+      if (!f) continue;
+      if (f.size === 0) { showToast('⚠️ Pasted file is empty (0 bytes) — try copying the image again'); continue; }
+      // Give clipboard images a unique name so multiple pastes don't dedup
+      if (f.name === 'image.png' || f.name === 'image.jpeg' || f.name === 'image.jpg') {
+        var ext = f.name.split('.').pop();
+        var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        f = new File([f], 'paste-' + ts + '.' + ext, { type: f.type });
+      }
+      addPendingFile(f);
+      found = true;
+    }
   }
+  if (found) e.preventDefault();
 });
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -3165,7 +3186,8 @@ btnImprove.addEventListener('click', async () => {
       showImproverError(data.error || 'Improve failed');
       return;
     }
-    improverOutput.value = data.improved;
+    var cleaned = (data.improved || '').replace(/^(here is|here's|sure|okay|rewritten version:?|improved version:?)[^\n]*\n+/i, '').trim();
+    improverOutput.value = cleaned;
     improverPanel.classList.add('open');
     requestAnimationFrame(autoResizeImprover);
     setTimeout(() => {
