@@ -272,10 +272,18 @@ function formatSearchResults(results) {
 
 function extractEscalations(text, agentId, sessionId) {
   const escalations = [];
-  const regex = /NEED_HUMAN_INPUT:\s*(.+?)(?:\n|$)/g;
+  const xmlRegex = /<need_human_input>\s*([\s\S]+?)\s*<\/need_human_input>/gi;
   let match;
-  while ((match = regex.exec(text)) !== null) {
-    escalations.push({ id: genId(), agentId, question: match[1].trim(), sessionId, answered: false, answer: null, createdAt: Date.now() });
+  while ((match = xmlRegex.exec(text)) !== null) {
+    const q = match[1].trim();
+    if (q) escalations.push({ id: genId(), agentId, question: q, sessionId, answered: false, answer: null, createdAt: Date.now() });
+  }
+  // Back-compat: still accept the legacy flat marker so in-flight sessions or
+  // older prompt bleedthrough don't silently drop questions.
+  const legacy = /NEED_HUMAN_INPUT:\s*(.+?)(?:\n|$)/g;
+  while ((match = legacy.exec(text)) !== null) {
+    const q = match[1].trim();
+    if (q) escalations.push({ id: genId(), agentId, question: q, sessionId, answered: false, answer: null, createdAt: Date.now() });
   }
   return escalations;
 }
