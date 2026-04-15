@@ -1276,7 +1276,7 @@ function addPhaseSeparator(name) {
 
 function addMessage(msg) {
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const content = msg.content.replace(/NEED_HUMAN_INPUT:\s*.+/g, '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').trim();
+  const content = msg.content.replace(/<need_human_input>[\s\S]*?<\/need_human_input>/gi, '').replace(/NEED_HUMAN_INPUT:\s*.+/g, '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').trim();
   const d = document.createElement('div');
   d.className = 'message';
   d.innerHTML = `

@@ -2647,7 +2647,7 @@ function addPhaseSeparator(name) {
 }
 
 function formatMessageContent(raw) {
-  let content = raw.replace(/NEED_HUMAN_INPUT:\s*.+/g, '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').trim();
+  let content = raw.replace(/<need_human_input>[\s\S]*?<\/need_human_input>/gi, '').replace(/NEED_HUMAN_INPUT:\s*.+/g, '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').trim();
   // Highlight verdict/recommendation/conclusion sections
   content = content.replace(/^((?:Recommendation|Verdict|Conclusion|Summary|Key Finding|Action Item|Risk|Warning)s?:)/gim,
     '<span class="msg-verdict">$1</span>');
