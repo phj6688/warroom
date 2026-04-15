@@ -55,10 +55,10 @@ function setupMCPServer(app, deps) {
       };
     },
     async createSession(problem, files) {
-      const fileObjs = files.map((f, i) => ({
-        id: `file-${Date.now()}-${i}`, name: f.name, size: f.content.length, type: 'text/plain', content: f.content,
-      }));
-      const session = createSession(problem, fileObjs);
+      if (files && files.length) {
+        throw new Error('Inline file attachment is not supported via MCP. Upload via the files-service first and reference by file_id.');
+      }
+      const session = await createSession(problem, []);
       runDeliberation(session).catch(e => console.error('MCP deliberation error:', e.message));
       return { id: session.id, problem: session.problem };
     },
