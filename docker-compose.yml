@@ -19,3 +19,17 @@ services:
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
+    networks:
+      - default
+      - platform-net
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=platform-net
+      - traefik.http.routers.war-room-mcp.entrypoints=web
+      - traefik.http.routers.war-room-mcp.rule=Host(`warroom.example.com`) && PathPrefix(`/mcp`)
+      - traefik.http.services.war-room-mcp.loadbalancer.server.port=8090
+
+networks:
+  default:
+  platform-net:
+    external: true
