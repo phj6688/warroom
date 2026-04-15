@@ -7,7 +7,22 @@ const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('
 process.env.MCP_API_KEY = MCP_API_KEY;
 
 function setupMCPServer(app, deps) {
-  const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES } = deps;
+  const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles } = deps;
+
+  function inferMime(name) {
+    const ext = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+    const map = { md: 'text/markdown', txt: 'text/plain', json: 'application/json', csv: 'text/csv', html: 'text/html', xml: 'application/xml', yml: 'text/yaml', yaml: 'text/yaml', js: 'text/javascript', ts: 'text/typescript', py: 'text/x-python', sql: 'text/x-sql', log: 'text/plain' };
+    return map[ext] || 'text/plain';
+  }
+
+  async function uploadInlineFiles(files) {
+    if (!filesServiceClient) throw new Error('files-service is not configured on this server — file attachment unavailable');
+    const buffers = files.map(f => ({ buffer: Buffer.from(f.content, 'utf8'), name: f.name, mime: inferMime(f.name) }));
+    const result = await filesServiceClient.uploadFiles(buffers);
+    const items = Array.isArray(result) ? result : (result?.files || result?.items || []);
+    if (!items.length) throw new Error('files-service upload returned no items');
+    return items.map(it => it.id || it.file_id);
+  }
 
   const mcpSessions = new Map();
   const SESSION_TTL = parseInt(process.env.MCP_SESSION_TTL || '1800000');
@@ -54,13 +69,25 @@ function setupMCPServer(app, deps) {
         humanMessages: humanMsgs.map(h => ({ content: h.content })),
       };
     },
-    async createSession(problem, files) {
+    async createSession(problem, files, fileIds) {
+      const ids = Array.isArray(fileIds) ? [...fileIds] : [];
       if (files && files.length) {
-        throw new Error('Inline file attachment is not supported via MCP. Upload via the files-service first and reference by file_id.');
+        const uploaded = await uploadInlineFiles(files);
+        ids.push(...uploaded);
       }
-      const session = await createSession(problem, []);
+      const session = await createSession(problem, ids);
       runDeliberation(session).catch(e => console.error('MCP deliberation error:', e.message));
-      return { id: session.id, problem: session.problem };
+      return { id: session.id, problem: session.problem, fileIds: ids };
+    },
+    async attachFiles(sessionId, files, fileIds) {
+      const ids = Array.isArray(fileIds) ? [...fileIds] : [];
+      if (files && files.length) {
+        const uploaded = await uploadInlineFiles(files);
+        ids.push(...uploaded);
+      }
+      if (!ids.length) throw new Error('No files or file_ids provided');
+      const attached = await attachFiles(sessionId, ids);
+      return { sessionId, fileIds: ids, attached };
     },
     async deleteSession(sessionId) {
       const s = stmts.getSession.get(sessionId);

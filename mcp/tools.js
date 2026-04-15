@@ -73,18 +73,40 @@ function registerTools(server, ops) {
   // 3. warroom_create_session
   server.tool(
     'warroom_create_session',
-    'Start a new multi-agent research deliberation. 8 agents analyze through 5 phases: Framing -> Divergence -> Convergence -> Red Team -> Synthesis. Runs async — poll with warroom_get_session.',
+    'Start a new multi-agent research deliberation. 8 agents analyze through 5 phases: Framing -> Divergence -> Convergence -> Red Team -> Synthesis. Runs async — poll with warroom_get_session. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
     {
       problem: z.string().describe('Problem, question, or research challenge'),
       files: z.array(z.object({
-        name: z.string().describe('File name (e.g. "audit.md")'),
-        content: z.string().describe('File text content'),
-      })).optional().describe('Optional context files to attach to the session'),
+        name: z.string().describe('File name with extension (e.g. "audit.md"); used to infer mime'),
+        content: z.string().describe('UTF-8 text content'),
+      })).optional().describe('Inline text files; uploaded to files-service automatically'),
+      fileIds: z.array(z.string()).optional().describe('Existing files-service file IDs to attach'),
     },
-    async ({ problem, files }) => {
+    async ({ problem, files, fileIds }) => {
       try {
-        const result = await ops.createSession(problem, files || []);
-        return ok(`Session created: ${result.id}\nProblem: ${result.problem}\n\nDeliberation running. Use warroom_get_session to check progress.`);
+        const result = await ops.createSession(problem, files || [], fileIds || []);
+        const fileLine = result.fileIds?.length ? `\nFiles: ${result.fileIds.length} attached (${result.fileIds.join(', ')})` : '';
+        return ok(`Session created: ${result.id}\nProblem: ${result.problem}${fileLine}\n\nDeliberation running. Use warroom_get_session to check progress.`);
+      } catch (e) { return err(e.message); }
+    }
+  );
+
+  // 3b. warroom_attach_files
+  server.tool(
+    'warroom_attach_files',
+    'Attach additional text files to an existing session. Uploads inline content to files-service and registers them on the session.',
+    {
+      sessionId: z.string().describe('Session ID to attach files to'),
+      files: z.array(z.object({
+        name: z.string().describe('File name with extension'),
+        content: z.string().describe('UTF-8 text content'),
+      })).optional().describe('Inline text files'),
+      fileIds: z.array(z.string()).optional().describe('Existing files-service file IDs'),
+    },
+    async ({ sessionId, files, fileIds }) => {
+      try {
+        const result = await ops.attachFiles(sessionId, files || [], fileIds || []);
+        return ok(`Attached ${result.fileIds.length} file(s) to session ${result.sessionId}: ${result.fileIds.join(', ')}`);
       } catch (e) { return err(e.message); }
     }
   );
