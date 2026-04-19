@@ -26,7 +26,11 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ATTACHED FILES:` string injection in agent context — replaced by content blocks.
 - `files: []` HTTP fallback in session creation — the original bug that silently dropped attachments.
 
+### Changed
+- Escalations now travel over a structured `escalate_to_human` tool call instead of a `<need_human_input>` XML tag in the response body. Agents invoke the tool 0-N times per turn; the tool's `question` argument is the single item the human must answer. Tool definition lives in `server.js` (`ESCALATE_TOOL`); tool-aware LLM path is `lib/llm.js` → `callAnthropicWithTools`. The XML-tag regex extractor stays as a belt-and-suspenders fallback so a prompt slip still surfaces. System-prompt footer (`lib/context.js`) now teaches rhetorical-vs-actionable with a concrete example, and all 8 per-agent prompts reference the tool by name.
+
 ### Fixed
+- Agents routinely emitted clarifying questions as prose bullets (not the XML escalation tag), so the human never saw them. Switching escalation to a tool call makes the channel structural rather than advisory — the tool contract is what Claude parses against, not a line of markdown it can skip.
 - Final Synthesis message truncated mid-table (e.g. "Autonomy Decision Matrix" cut off after the recommendations list). Root cause: `runAgentTurn` passed no `maxTokens` to `callAnthropic`, falling through to the 1500-token default — well under what the comprehensive Synthesis brief requires. The final-phase process-architect turn now uses 8000 tokens (override via `SYNTHESIS_MAX_TOKENS`).
 - Cascade delete trigger (`trg_sessions_before_delete_cascade`) broken by SQLite auto-renaming references during `ALTER TABLE session_files RENAME`. Migration 014 recreates the trigger with correct table names.
 
