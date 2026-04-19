@@ -147,10 +147,10 @@ Create `.env` from `.env.example`:
 ```env
 # LLM Backend — pick one:
 
-# Option A: LLM gateway Gateway (recommended for homelab)
-OPENCLAW_GATEWAY_URL=http://your-gateway:18789
-OPENCLAW_GATEWAY_TOKEN=your-token
-MODEL=anthropic/claude-sonnet-4-6
+# Option A: OpenAI-compatible Gateway (recommended for homelab)
+OPENAI_BASE_URL=http://your-gateway:18789
+OPENAI_API_KEY=your-token
+MODEL=claude-opus-4-7
 
 # Option B: Direct Anthropic API
 ANTHROPIC_API_KEY=sk-ant-...
