@@ -42,19 +42,19 @@ process.on('uncaughtException', (err) => {
 const PORT = process.env.PORT || 8090;
 
 // ─── LLM config logging ────────────────────────────────────
-const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || null;
-const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || null;
+const GATEWAY_URL = process.env.OPENAI_BASE_URL || null;
+const GATEWAY_TOKEN = process.env.OPENAI_API_KEY || null;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || null;
 const MODEL = process.env.MODEL || 'anthropic/claude-sonnet-4-5';
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || null;
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS || '5');
 
 if (GATEWAY_URL && GATEWAY_TOKEN) {
-  log.info({ gateway: GATEWAY_URL }, 'LLM proxy: LLM gateway Gateway');
+  log.info({ gateway: GATEWAY_URL }, 'LLM proxy: OpenAI-compatible Gateway');
 } else if (ANTHROPIC_API_KEY) {
   log.info({ keyPrefix: ANTHROPIC_API_KEY.slice(0, 12) }, 'LLM: Direct Anthropic API');
 } else {
-  log.warn('No LLM config — set OPENCLAW_GATEWAY_URL+TOKEN or ANTHROPIC_API_KEY');
+  log.warn('No LLM config — set OPENAI_BASE_URL+TOKEN or ANTHROPIC_API_KEY');
 }
 
 if (TAVILY_API_KEY) {
