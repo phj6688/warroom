@@ -25,20 +25,32 @@ function setupMCPServer(app, deps) {
   }
 
   const mcpSessions = new Map();
-  const SESSION_TTL = parseInt(process.env.MCP_SESSION_TTL || '1800000');
-  const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000;
 
-  const cleanupTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [sid, session] of mcpSessions) {
-      if (now - session.lastActivityAt > SESSION_TTL) {
-        mcpSessions.delete(sid);
-        try { session.transport.close?.(); } catch (_) {}
-        console.log(`MCP session expired (TTL): ${sid}`);
+  function isInitializeBody(body) {
+    if (!body) return false;
+    const msgs = Array.isArray(body) ? body : [body];
+    return msgs.some(m => m && m.method === 'initialize');
+  }
+
+  async function startNewTransport(req, res) {
+    const mcpServer = new McpServer({ name: 'war-room', version: '1.0.0' });
+    registerTools(mcpServer, ops);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+      onsessioninitialized: (sid) => {
+        mcpSessions.set(sid, { transport, server: mcpServer });
+        console.log(`MCP session created: ${sid}`);
+      },
+    });
+    transport.onclose = () => {
+      const sid = transport.sessionId;
+      if (sid && mcpSessions.has(sid)) {
+        console.log(`MCP transport onclose fired for: ${sid} (session preserved for reconnection)`);
       }
-    }
-  }, SESSION_CLEANUP_INTERVAL);
-  cleanupTimer.unref();
+    };
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  }
 
   // ─── Ops adapter: direct DB access ────────────────────────
   const ops = {
@@ -213,7 +225,6 @@ function setupMCPServer(app, deps) {
           return;
         }
         const session = mcpSessions.get(sessionId);
-        session.lastActivityAt = Date.now();
         await session.transport.handleRequest(req, res, req.body);
         if (req.method === 'GET' && !res.writableEnded) {
           const keepaliveInterval = setInterval(() => {
@@ -226,38 +237,21 @@ function setupMCPServer(app, deps) {
         return;
       }
 
-      if (req.method === 'POST' && !sessionId) {
-        const mcpServer = new McpServer({ name: 'war-room', version: '1.0.0' });
-        registerTools(mcpServer, ops);
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => crypto.randomUUID(),
-          onsessioninitialized: (sid) => {
-            mcpSessions.set(sid, { transport, server: mcpServer, lastActivityAt: Date.now() });
-            console.log(`MCP session created: ${sid}`);
-          },
-        });
-        transport.onclose = () => {
-          const sid = transport.sessionId;
-          if (sid && mcpSessions.has(sid)) {
-            console.log(`MCP transport onclose fired for: ${sid} (session preserved for reconnection)`);
-          }
-        };
-        await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
+      if (req.method === 'POST' && isInitializeBody(req.body)) {
+        if (sessionId) {
+          console.log(`MCP re-initialize with stale session id: ${sessionId} (starting fresh transport)`);
+        }
+        await startNewTransport(req, res);
         return;
       }
 
-      if (req.method === 'DELETE' && sessionId && mcpSessions.has(sessionId)) {
-        const session = mcpSessions.get(sessionId);
-        mcpSessions.delete(sessionId);
-        try { await session.transport.handleRequest(req, res, req.body); } catch (_) {}
-        console.log(`MCP session deleted by client: ${sessionId}`);
-        if (!res.headersSent) res.status(200).end();
+      if (req.method === 'POST' && !sessionId) {
+        await startNewTransport(req, res);
         return;
       }
 
       if (sessionId) {
-        res.status(404).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Session not found' }, id: null });
+        res.status(404).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Session not found' }, id: null });
       } else {
         res.status(400).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Missing session ID' }, id: null });
       }
