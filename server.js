@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { db, stmts, dbPath } = require('./db');
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
 const { setupRoutes } = require('./lib/routes');
 const { setupWebSocket } = require('./lib/ws-handler');
 const { requireAuthWS } = require('./lib/auth');
@@ -270,6 +270,10 @@ function formatSearchResults(results) {
   return text;
 }
 
+// Escalation is delivered as a structured tool call — see ESCALATE_TOOL below.
+// This regex path is kept as a belt-and-suspenders fallback so a prompt slip
+// (prose XML tag, legacy flat marker) still surfaces a question instead of
+// silently dropping it.
 function extractEscalations(text, agentId, sessionId) {
   const escalations = [];
   const xmlRegex = /<need_human_input>\s*([\s\S]+?)\s*<\/need_human_input>/gi;
@@ -278,14 +282,41 @@ function extractEscalations(text, agentId, sessionId) {
     const q = match[1].trim();
     if (q) escalations.push({ id: genId(), agentId, question: q, sessionId, answered: false, answer: null, createdAt: Date.now() });
   }
-  // Back-compat: still accept the legacy flat marker so in-flight sessions or
-  // older prompt bleedthrough don't silently drop questions.
   const legacy = /NEED_HUMAN_INPUT:\s*(.+?)(?:\n|$)/g;
   while ((match = legacy.exec(text)) !== null) {
     const q = match[1].trim();
     if (q) escalations.push({ id: genId(), agentId, question: q, sessionId, answered: false, answer: null, createdAt: Date.now() });
   }
   return escalations;
+}
+
+const ESCALATE_TOOL = {
+  name: 'escalate_to_human',
+  description: 'Send ONE specific question to the human facilitator. Use this tool only for ambiguities in the problem spec, missing stakeholder context, or constraints you cannot infer — questions ONLY the human can answer. Do NOT use this tool for rhetorical questions that belong inside your deliberation output. Call the tool multiple times to ask multiple questions.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      question: {
+        type: 'string',
+        description: 'One specific, directly-answerable question for the human. Not a topic, not a list — a single question.',
+      },
+    },
+    required: ['question'],
+  },
+};
+
+function escalationsFromToolCalls(toolCalls, agentId, sessionId) {
+  return (toolCalls || [])
+    .filter(tc => tc.name === 'escalate_to_human' && tc.input && typeof tc.input.question === 'string' && tc.input.question.trim())
+    .map(tc => ({
+      id: genId(),
+      agentId,
+      question: tc.input.question.trim(),
+      sessionId,
+      answered: false,
+      answer: null,
+      createdAt: Date.now(),
+    }));
 }
 
 // ─── Context Building ───────────────────────────────────────
@@ -318,7 +349,7 @@ async function runAgentTurn(session, agentId, phase) {
 
     const isFinalSynthesis = (phase === PHASES.length - 1) && (agentId === 'process-architect');
     const maxTokens = isFinalSynthesis ? parseInt(process.env.SYNTHESIS_MAX_TOKENS || '8000') : undefined;
-    let response = await callAnthropic(agent.systemPrompt, messages, agentId, maxTokens);
+    let { text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens);
 
     if (isResearchScout && TAVILY_API_KEY) {
       const searchQueries = extractSearchQueries(response);
@@ -337,7 +368,9 @@ async function runAgentTurn(session, agentId, phase) {
           { role: 'assistant', content: response },
           { role: 'user', content: `Your search queries have been executed. Here are the results:${resultsText}\n\nNow synthesize these findings into a comprehensive research brief for the team. Include:\n1. Key findings from the search results\n2. Source quality assessment\n3. How this information relates to the problem\n4. Remaining knowledge gaps\n\nDo NOT include any SEARCH: markers in this response.` },
         ];
-        response = await callAnthropic(agent.systemPrompt, synthesisMessages, agentId);
+        const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
+        response = follow.text;
+        toolCalls = [...toolCalls, ...follow.toolCalls];
       }
     }
 
@@ -350,7 +383,10 @@ async function runAgentTurn(session, agentId, phase) {
     stmts.insertMessage.run(msgId, session.id, agentId, agent.name, agent.emoji, agent.color, response, PHASES[phase].name, now);
     broadcast(session.id, { type: 'message', ...msg, sessionId: session.id });
 
-    const escalations = extractEscalations(response, agentId, session.id);
+    const toolEscalations = escalationsFromToolCalls(toolCalls, agentId, session.id);
+    const regexEscalations = extractEscalations(response, agentId, session.id);
+    const seen = new Set(toolEscalations.map(e => e.question));
+    const escalations = [...toolEscalations, ...regexEscalations.filter(e => !seen.has(e.question))];
     escalations.forEach(esc => {
       session.escalations.push(esc);
       stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.createdAt);
