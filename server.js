@@ -316,7 +316,9 @@ async function runAgentTurn(session, agentId, phase) {
       messages = [{ role: 'user', content: contentBlocks }];
     }
 
-    let response = await callAnthropic(agent.systemPrompt, messages, agentId);
+    const isFinalSynthesis = (phase === PHASES.length - 1) && (agentId === 'process-architect');
+    const maxTokens = isFinalSynthesis ? parseInt(process.env.SYNTHESIS_MAX_TOKENS || '8000') : undefined;
+    let response = await callAnthropic(agent.systemPrompt, messages, agentId, maxTokens);
 
     if (isResearchScout && TAVILY_API_KEY) {
       const searchQueries = extractSearchQueries(response);
