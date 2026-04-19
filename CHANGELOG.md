@@ -27,6 +27,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `files: []` HTTP fallback in session creation — the original bug that silently dropped attachments.
 
 ### Fixed
+- Final Synthesis message truncated mid-table (e.g. "Autonomy Decision Matrix" cut off after the recommendations list). Root cause: `runAgentTurn` passed no `maxTokens` to `callAnthropic`, falling through to the 1500-token default — well under what the comprehensive Synthesis brief requires. The final-phase process-architect turn now uses 8000 tokens (override via `SYNTHESIS_MAX_TOKENS`).
 - Cascade delete trigger (`trg_sessions_before_delete_cascade`) broken by SQLite auto-renaming references during `ALTER TABLE session_files RENAME`. Migration 014 recreates the trigger with correct table names.
 
 ### Added
