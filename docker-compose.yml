@@ -21,6 +21,9 @@ services:
       # war-room is not attached to — the simplest wire is host-gateway via
       # extra_hosts below. Override if you attach war-room to librechat-net.
       - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:9090}
+      # Scout search transport. false = legacy prose markers (default).
+      # true  = Anthropic tool_use via lib/agents/tool-loop.js.
+      - SCOUT_USE_TOOL=${SCOUT_USE_TOOL:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

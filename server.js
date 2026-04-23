@@ -8,7 +8,9 @@ const crypto = require('crypto');
 const { db, stmts, dbPath } = require('./db');
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, callAnthropicWithTools, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
+const { runWithTools } = require('./lib/agents/tool-loop');
+const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
 const { setupWebSocket } = require('./lib/ws-handler');
 const { requireAuthWS } = require('./lib/auth');
@@ -51,6 +53,7 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY || null;
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS || '5');
 const SEARCH_PROVIDER = (process.env.SEARCH_PROVIDER || 'tavily').toLowerCase();
 const SEARXNG_URL = process.env.SEARXNG_URL || 'http://host.docker.internal:9090';
+const SCOUT_USE_TOOL = String(process.env.SCOUT_USE_TOOL || '').toLowerCase() === 'true';
 
 if (GATEWAY_URL && GATEWAY_TOKEN) {
   log.info({ gateway: GATEWAY_URL }, 'LLM proxy: OpenAI-compatible Gateway');
@@ -60,7 +63,7 @@ if (GATEWAY_URL && GATEWAY_TOKEN) {
   log.warn('No LLM config — set OPENAI_BASE_URL+TOKEN or ANTHROPIC_API_KEY');
 }
 
-log.info({ provider: SEARCH_PROVIDER, searxngUrl: SEARXNG_URL, tavilyConfigured: !!TAVILY_API_KEY }, 'Search provider configured');
+log.info({ provider: SEARCH_PROVIDER, searxngUrl: SEARXNG_URL, tavilyConfigured: !!TAVILY_API_KEY, scoutUseTool: SCOUT_USE_TOOL }, 'Search provider configured');
 if (SEARCH_PROVIDER === 'tavily' && !TAVILY_API_KEY) {
   log.warn('SEARCH_PROVIDER=tavily but TAVILY_API_KEY unset — Research Scout will operate without live search');
 }
@@ -310,31 +313,81 @@ async function runAgentTurn(session, agentId, phase) {
 
     const isFinalSynthesis = (phase === PHASES.length - 1) && (agentId === 'process-architect');
     const maxTokens = isFinalSynthesis ? parseInt(process.env.SYNTHESIS_MAX_TOKENS || '8000') : undefined;
-    let { text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens);
 
     const searchAvailable = SEARCH_PROVIDER === 'smart'
       || SEARCH_PROVIDER === 'coexist'
       || !!TAVILY_API_KEY;
-    if (isResearchScout && searchAvailable) {
-      const searchQueries = searchProvider.extractQueriesFromText(response);
-      if (searchQueries.length > 0) {
+
+    let response;
+    let toolCalls;
+
+    if (isResearchScout && SCOUT_USE_TOOL) {
+      // Tool_use path: scout drives search via the web_search tool inside
+      // a bounded tool-loop. Escalations piggy-back on the same loop via
+      // escalate_to_human (handled post-turn from toolInvocations).
+      if (!session.searchCache) session.searchCache = new Map();
+      const webSearchHandler = async ({ queries }) => {
+        if (!searchAvailable) return 'Web search is not configured for this session.';
+        const qs = Array.isArray(queries) ? queries.filter(q => typeof q === 'string' && q.trim()).slice(0, 5) : [];
+        if (qs.length === 0) return 'No queries provided.';
         session.agentStates[agentId] = 'searching';
         broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
-        broadcast(session.id, { type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
-        sLog.info({ queries: searchQueries }, 'research scout searching');
-        if (!session.searchCache) session.searchCache = new Map();
-        const searchResults = await searchProvider.search(searchQueries, session.searchCache, { sessionId: session.id, agentId });
-        const resultsText = searchProvider.formatSearchResults(searchResults);
+        broadcast(session.id, { type: 'search-started', agentId, queries: qs, sessionId: session.id });
+        const results = await searchProvider.search(qs, session.searchCache, { sessionId: session.id, agentId });
         session.agentStates[agentId] = 'thinking';
         broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
-        const synthesisMessages = [
-          ...messages,
-          { role: 'assistant', content: response },
-          { role: 'user', content: `Your search queries have been executed. Here are the results:${resultsText}\n\nNow synthesize these findings into a comprehensive research brief for the team. Include:\n1. Key findings from the search results\n2. Source quality assessment\n3. How this information relates to the problem\n4. Remaining knowledge gaps\n\nDo NOT include any SEARCH: markers in this response.` },
-        ];
-        const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
-        response = follow.text;
-        toolCalls = [...toolCalls, ...follow.toolCalls];
+        return formatToolResult(results);
+      };
+      const escalateHandler = async (input) => {
+        const q = input && typeof input.question === 'string' ? input.question.trim() : '';
+        return q ? 'Escalation queued for the human facilitator.' : 'Escalation requires a question string.';
+      };
+
+      const loopOut = await runWithTools({
+        llmCall: callLLMRaw,
+        model: resolveModel(agentId),
+        system: agent.systemPrompt,
+        messages,
+        tools: [WEB_SEARCH_TOOL, ESCALATE_TOOL],
+        toolHandlers: { web_search: webSearchHandler, escalate_to_human: escalateHandler },
+        maxRounds: 3,
+        maxTokens,
+        broadcast,
+        sessionId: session.id,
+        agentId,
+        logger: sLog,
+      });
+
+      const finalBlocks = (loopOut.finalMessage && loopOut.finalMessage.content) || [];
+      response = finalBlocks.filter(b => b && b.type === 'text').map(b => b.text).join('');
+      toolCalls = loopOut.toolInvocations
+        .filter(inv => inv.toolName === 'escalate_to_human')
+        .map(inv => ({ name: 'escalate_to_human', input: inv.input || {} }));
+    } else {
+      // Prose-marker path (pre-Session-4 default; stays canonical until canary flips SCOUT_USE_TOOL).
+      ({ text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
+
+      if (isResearchScout && searchAvailable) {
+        const searchQueries = searchProvider.extractQueriesFromText(response);
+        if (searchQueries.length > 0) {
+          session.agentStates[agentId] = 'searching';
+          broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
+          broadcast(session.id, { type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
+          sLog.info({ queries: searchQueries }, 'research scout searching');
+          if (!session.searchCache) session.searchCache = new Map();
+          const searchResults = await searchProvider.search(searchQueries, session.searchCache, { sessionId: session.id, agentId });
+          const resultsText = searchProvider.formatSearchResults(searchResults);
+          session.agentStates[agentId] = 'thinking';
+          broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
+          const synthesisMessages = [
+            ...messages,
+            { role: 'assistant', content: response },
+            { role: 'user', content: `Your search queries have been executed. Here are the results:${resultsText}\n\nNow synthesize these findings into a comprehensive research brief for the team. Include:\n1. Key findings from the search results\n2. Source quality assessment\n3. How this information relates to the problem\n4. Remaining knowledge gaps\n\nDo NOT include any SEARCH: markers in this response.` },
+          ];
+          const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
+          response = follow.text;
+          toolCalls = [...toolCalls, ...follow.toolCalls];
+        }
       }
     }
 
