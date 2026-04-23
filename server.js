@@ -28,6 +28,7 @@ const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
 const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
 const { createSearchProvider } = require('./lib/search');
+const { getSearchConfigForAgent, makeSessionBudget, SESSION_QUERY_BUDGET, AGENT_SEARCH_EXPANSION } = require('./lib/agents/search-config');
 
 // F10 — process-level error handlers. Installed immediately after imports
 // and BEFORE any other setup so a throw during boot still gets logged.
@@ -63,7 +64,14 @@ if (GATEWAY_URL && GATEWAY_TOKEN) {
   log.warn('No LLM config — set OPENAI_BASE_URL+TOKEN or ANTHROPIC_API_KEY');
 }
 
-log.info({ provider: SEARCH_PROVIDER, searxngUrl: SEARXNG_URL, tavilyConfigured: !!TAVILY_API_KEY, scoutUseTool: SCOUT_USE_TOOL }, 'Search provider configured');
+log.info({
+  provider: SEARCH_PROVIDER,
+  searxngUrl: SEARXNG_URL,
+  tavilyConfigured: !!TAVILY_API_KEY,
+  scoutUseTool: SCOUT_USE_TOOL,
+  agentSearchExpansion: AGENT_SEARCH_EXPANSION,
+  sessionQueryBudget: SESSION_QUERY_BUDGET,
+}, 'Search provider configured');
 if (SEARCH_PROVIDER === 'tavily' && !TAVILY_API_KEY) {
   log.warn('SEARCH_PROVIDER=tavily but TAVILY_API_KEY unset — Research Scout will operate without live search');
 }
@@ -173,6 +181,8 @@ async function createSession(problem, fileIds = []) {
     messages: [], humanMessages: [], escalations: [],
     agentStates: {}, active: true, createdAt: now,
     _hasFiles: files.length > 0,
+    searchCache: new Map(),
+    searchBudget: makeSessionBudget(),
   };
   AGENTS.forEach(a => { session.agentStates[a.id] = 'idle'; });
   activeSessions.set(id, session);
@@ -318,17 +328,23 @@ async function runAgentTurn(session, agentId, phase) {
       || SEARCH_PROVIDER === 'coexist'
       || !!TAVILY_API_KEY;
 
+    const searchConfig = getSearchConfigForAgent(agentId);
+    const useToolLoop = !!searchConfig && searchAvailable;
+
     let response;
     let toolCalls;
 
-    if (isResearchScout && SCOUT_USE_TOOL) {
-      // Tool_use path: scout drives search via the web_search tool inside
-      // a bounded tool-loop. Escalations piggy-back on the same loop via
-      // escalate_to_human (handled post-turn from toolInvocations).
+    if (useToolLoop) {
+      // Unified tool_use path. Scout and any other tier-enabled agent drive
+      // search via the web_search tool inside a bounded tool-loop.
+      // Escalations piggy-back on the same loop via escalate_to_human
+      // (handled post-turn from toolInvocations).
       if (!session.searchCache) session.searchCache = new Map();
-      const webSearchHandler = async ({ queries }) => {
+      if (!session.searchBudget) session.searchBudget = makeSessionBudget();
+
+      const webSearchHandler = async (input) => {
         if (!searchAvailable) return 'Web search is not configured for this session.';
-        const qs = Array.isArray(queries) ? queries.filter(q => typeof q === 'string' && q.trim()).slice(0, 5) : [];
+        const qs = Array.isArray(input.queries) ? input.queries.filter(q => typeof q === 'string' && q.trim()) : [];
         if (qs.length === 0) return 'No queries provided.';
         session.agentStates[agentId] = 'searching';
         broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
@@ -350,7 +366,9 @@ async function runAgentTurn(session, agentId, phase) {
         messages,
         tools: [WEB_SEARCH_TOOL, ESCALATE_TOOL],
         toolHandlers: { web_search: webSearchHandler, escalate_to_human: escalateHandler },
-        maxRounds: 3,
+        maxRounds: searchConfig.maxRounds,
+        maxQueriesPerCall: searchConfig.maxQueries,
+        sessionBudget: session.searchBudget,
         maxTokens,
         broadcast,
         sessionId: session.id,

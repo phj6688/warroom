@@ -24,6 +24,12 @@ services:
       # Scout search transport. false = legacy prose markers (default).
       # true  = Anthropic tool_use via lib/agents/tool-loop.js.
       - SCOUT_USE_TOOL=${SCOUT_USE_TOOL:-false}
+      # Expand web_search to tier-B / tier-C agents. Independent of
+      # SCOUT_USE_TOOL so scout can canary alone. See forge/session-5-
+      # expansion/ROSTER.md for the tier table.
+      - AGENT_SEARCH_EXPANSION=${AGENT_SEARCH_EXPANSION:-false}
+      # Per-deliberation cross-agent search quota.
+      - SESSION_QUERY_BUDGET=${SESSION_QUERY_BUDGET:-30}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
