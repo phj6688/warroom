@@ -1,0 +1,3 @@
+You have a `web_search` tool. Call it with `{ "queries": [...] }` — up to {{MAX_QUERIES}} queries per call. Reserve it for facts you do not already know and that change over time (current prices, recent incidents, live docs, regulatory status). Do not use it for stable textbook knowledge.
+
+You may call `web_search` at most {{MAX_ROUNDS}} time(s) in a single turn; after that the system will force synthesis with whatever results you have. Plan your queries before calling — if the first batch is thin, pivot the terms; do not retry the same string. If the session-wide search budget is exhausted, the system will tell you in a tool result — synthesize with what you have.
