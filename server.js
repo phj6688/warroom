@@ -25,6 +25,7 @@ const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
 const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
+const { createSearchProvider } = require('./lib/search');
 
 // F10 — process-level error handlers. Installed immediately after imports
 // and BEFORE any other setup so a throw during boot still gets logged.
@@ -213,62 +214,16 @@ function loadSession(id) {
   };
 }
 
-// ─── Tavily Search ──────────────────────────────────────────
-async function tavilySearch(query) {
-  if (!TAVILY_API_KEY) return null;
-  try {
-    const res = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${TAVILY_API_KEY}` },
-      body: JSON.stringify({ query, max_results: SEARCH_MAX_RESULTS, search_depth: 'basic', include_answer: true }),
-    });
-    if (!res.ok) { log.error({ status: res.status, body: await res.text() }, 'tavily search error'); return null; }
-    return await res.json();
-  } catch (err) { log.error({ err: err.message }, 'tavily search failed'); return null; }
-}
-
-function extractSearchQueries(text) {
-  const queries = [];
-  const regex = /SEARCH:\s*(.+?)(?:\n|$)/g;
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const q = match[1].trim().replace(/^\[|\]$/g, '');
-    if (q.length > 2) queries.push(q);
-  }
-  return queries.slice(0, 5);
-}
-
-async function executeSearches(queries) {
-  const results = [];
-  for (const query of queries) {
-    const data = await tavilySearch(query);
-    if (data) {
-      results.push({
-        query, answer: data.answer || null,
-        sources: (data.results || []).map(r => ({ title: r.title, url: r.url, snippet: (r.content || '').slice(0, 500), score: r.score })),
-      });
-    } else {
-      results.push({ query, answer: null, sources: [], error: 'Search unavailable' });
-    }
-  }
-  return results;
-}
-
-function formatSearchResults(results) {
-  if (!results.length) return '';
-  let text = '\n\n=== SEARCH RESULTS ===\n';
-  results.forEach((r, i) => {
-    text += `\n--- Search ${i + 1}: "${r.query}" ---\n`;
-    if (r.error) { text += `[Search unavailable]\n`; return; }
-    if (r.answer) text += `Summary: ${r.answer}\n`;
-    if (r.sources.length) {
-      text += `Sources:\n`;
-      r.sources.forEach((s, j) => { text += `  ${j + 1}. ${s.title}\n     ${s.url}\n     ${s.snippet}\n`; });
-    }
-  });
-  text += '\n=== END SEARCH RESULTS ===\n';
-  return text;
-}
+// ─── Search Provider ────────────────────────────────────────
+// Instantiated once at startup. Per-session dedup cache is stored on the
+// session object (`session.searchCache`) and GC'd when the session object
+// is dropped from activeSessions.
+const searchProvider = createSearchProvider({
+  apiKey: TAVILY_API_KEY,
+  maxResults: SEARCH_MAX_RESULTS,
+  logger: log,
+  broadcast,
+});
 
 // Escalation is delivered as a structured tool call — see ESCALATE_TOOL below.
 // This regex path is kept as a belt-and-suspenders fallback so a prompt slip
@@ -352,15 +307,15 @@ async function runAgentTurn(session, agentId, phase) {
     let { text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens);
 
     if (isResearchScout && TAVILY_API_KEY) {
-      const searchQueries = extractSearchQueries(response);
+      const searchQueries = searchProvider.extractQueriesFromText(response);
       if (searchQueries.length > 0) {
         session.agentStates[agentId] = 'searching';
         broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
         broadcast(session.id, { type: 'search-started', agentId, queries: searchQueries, sessionId: session.id });
         sLog.info({ queries: searchQueries }, 'research scout searching');
-        const searchResults = await executeSearches(searchQueries);
-        const resultsText = formatSearchResults(searchResults);
-        broadcast(session.id, { type: 'search-complete', agentId, resultCount: searchResults.reduce((n, r) => n + r.sources.length, 0), sessionId: session.id });
+        if (!session.searchCache) session.searchCache = new Map();
+        const searchResults = await searchProvider.search(searchQueries, session.searchCache, { sessionId: session.id, agentId });
+        const resultsText = searchProvider.formatSearchResults(searchResults);
         session.agentStates[agentId] = 'thinking';
         broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
         const synthesisMessages = [
