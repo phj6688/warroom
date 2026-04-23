@@ -1,0 +1,24 @@
+
+
+=== SEARCH RESULTS ===
+
+--- Search 1: "alpha" ---
+Summary: first answer
+Sources:
+  1. TitleA
+     https://a.example
+     snippetA
+  2. TitleB
+     https://b.example
+     snippetB
+
+--- Search 2: "bravo" ---
+[Search unavailable]
+
+--- Search 3: "charlie" ---
+Sources:
+  1. TitleC
+     https://c.example
+     snippetC
+
+=== END SEARCH RESULTS ===
