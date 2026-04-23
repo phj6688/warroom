@@ -29,6 +29,7 @@ const { log, withSession } = require('./lib/logger');
 const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
 const { createSearchProvider } = require('./lib/search');
 const { getSearchConfigForAgent, makeSessionBudget, SESSION_QUERY_BUDGET, AGENT_SEARCH_EXPANSION } = require('./lib/agents/search-config');
+const { createMetricsSink, tierForAgent } = require('./lib/metrics/search-metrics');
 
 // F10 — process-level error handlers. Installed immediately after imports
 // and BEFORE any other setup so a throw during boot still gets logged.
@@ -244,6 +245,12 @@ const searchProvider = createSearchProvider({
   broadcast,
 });
 
+// ─── Metrics Sink (S6 canary) ───────────────────────────────
+// One sink per server process. Writes to search_metrics via synchronous
+// prepared statement. Sink errors are swallowed by the tool-loop wrapper
+// so a metrics write failure cannot fail a deliberation.
+const metricsSink = createMetricsSink(db);
+
 // Escalation is delivered as a structured tool call — see ESCALATE_TOOL below.
 // This regex path is kept as a belt-and-suspenders fallback so a prompt slip
 // (prose XML tag, legacy flat marker) still surfaces a question instead of
@@ -306,6 +313,17 @@ async function runAgentTurn(session, agentId, phase) {
   session.agentStates[agentId] = 'thinking';
   broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
 
+  const turnT0 = Date.now();
+  const agentTier = tierForAgent(agentId);
+  let turnPath = 'none';
+  let turnRoundsUsed = null;
+  let turnQueriesEmitted = null;
+  let turnQueriesExecuted = null;
+  let turnTruncated = null;
+  let turnBudgetExhausted = null;
+  let turnError = null;
+  let response = '';
+
   try {
     let messages = buildContext(session, agentId, phase);
 
@@ -331,10 +349,10 @@ async function runAgentTurn(session, agentId, phase) {
     const searchConfig = getSearchConfigForAgent(agentId);
     const useToolLoop = !!searchConfig && searchAvailable;
 
-    let response;
     let toolCalls;
 
     if (useToolLoop) {
+      turnPath = 'tool_use';
       // Unified tool_use path. Scout and any other tier-enabled agent drive
       // search via the web_search tool inside a bounded tool-loop.
       // Escalations piggy-back on the same loop via escalate_to_human
@@ -374,6 +392,9 @@ async function runAgentTurn(session, agentId, phase) {
         sessionId: session.id,
         agentId,
         logger: sLog,
+        metricsSink,
+        agentTier,
+        provider: SEARCH_PROVIDER,
       });
 
       const finalBlocks = (loopOut.finalMessage && loopOut.finalMessage.content) || [];
@@ -381,12 +402,32 @@ async function runAgentTurn(session, agentId, phase) {
       toolCalls = loopOut.toolInvocations
         .filter(inv => inv.toolName === 'escalate_to_human')
         .map(inv => ({ name: 'escalate_to_human', input: inv.input || {} }));
+
+      // Aggregate per-invocation search numbers for the turn-complete row.
+      // Truncation is a property of any individual invocation, so truncated
+      // at the turn level is "any call was truncated".
+      const searchInvs = loopOut.toolInvocations.filter(inv => inv.toolName === 'web_search');
+      if (searchInvs.length > 0) {
+        turnQueriesEmitted = searchInvs.reduce((n, inv) => {
+          const qs = inv && inv.input && Array.isArray(inv.input.queries) ? inv.input.queries.length : 0;
+          return n + qs;
+        }, 0);
+        turnQueriesExecuted = searchInvs.reduce((n, inv) => {
+          if (inv.skippedByBudget) return n;
+          const qs = inv && inv.input && Array.isArray(inv.input.queries) ? inv.input.queries.length : 0;
+          return n + qs;
+        }, 0);
+      }
+      turnRoundsUsed = loopOut.rounds;
+      turnBudgetExhausted = !!loopOut.budgetExhausted;
     } else {
       // Prose-marker path (pre-Session-4 default; stays canonical until canary flips SCOUT_USE_TOOL).
       ({ text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
 
       if (isResearchScout && searchAvailable) {
         const searchQueries = searchProvider.extractQueriesFromText(response);
+        turnPath = 'prose_marker';
+        turnQueriesEmitted = searchQueries.length;
         if (searchQueries.length > 0) {
           session.agentStates[agentId] = 'searching';
           broadcast(session.id, { type: 'agent-state', agentId, state: 'searching', sessionId: session.id });
@@ -395,6 +436,7 @@ async function runAgentTurn(session, agentId, phase) {
           if (!session.searchCache) session.searchCache = new Map();
           const searchResults = await searchProvider.search(searchQueries, session.searchCache, { sessionId: session.id, agentId });
           const resultsText = searchProvider.formatSearchResults(searchResults);
+          turnQueriesExecuted = searchResults.length;
           session.agentStates[agentId] = 'thinking';
           broadcast(session.id, { type: 'agent-state', agentId, state: 'thinking', sessionId: session.id });
           const synthesisMessages = [
@@ -405,6 +447,8 @@ async function runAgentTurn(session, agentId, phase) {
           const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
           response = follow.text;
           toolCalls = [...toolCalls, ...follow.toolCalls];
+        } else {
+          turnQueriesExecuted = 0;
         }
       }
     }
@@ -432,10 +476,35 @@ async function runAgentTurn(session, agentId, phase) {
     broadcast(session.id, { type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
     await new Promise(r => setTimeout(r, 500));
   } catch (err) {
-    sLog.error({ agentId, err: err.message }, 'agent turn error');
+    turnError = err && err.message ? err.message : String(err);
+    sLog.error({ agentId, err: turnError }, 'agent turn error');
     session.agentStates[agentId] = 'idle';
     broadcast(session.id, { type: 'agent-state', agentId, state: 'idle', sessionId: session.id });
-    broadcast(session.id, { type: 'error', agentId, message: `${agent.name} encountered an error: ${err.message}`, sessionId: session.id });
+    broadcast(session.id, { type: 'error', agentId, message: `${agent.name} encountered an error: ${turnError}`, sessionId: session.id });
+  } finally {
+    // Always emit an agent_turn_complete row — even for Tier D turns
+    // (path='none') and error turns. Denominator accuracy matters for the
+    // canary's tool_use_emission_rate.
+    try {
+      metricsSink.record({
+        sessionId: session.id,
+        agentId,
+        agentTier,
+        path: turnPath,
+        eventType: 'agent_turn_complete',
+        roundsUsed: turnRoundsUsed,
+        queriesEmitted: turnQueriesEmitted,
+        queriesExecuted: turnQueriesExecuted,
+        truncated: null,
+        budgetExhaustedTerminal: turnBudgetExhausted,
+        synthesisChars: response ? response.length : 0,
+        latencyMs: Date.now() - turnT0,
+        error: turnError,
+        provider: turnPath === 'none' ? null : SEARCH_PROVIDER,
+      });
+    } catch (err) {
+      sLog.error({ agentId, err: err && err.message }, 'metrics sink threw on agent_turn_complete');
+    }
   }
 }
 
