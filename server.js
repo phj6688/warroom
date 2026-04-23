@@ -49,6 +49,8 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || null;
 const MODEL = process.env.MODEL || 'anthropic/claude-sonnet-4-5';
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || null;
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS || '5');
+const SEARCH_PROVIDER = (process.env.SEARCH_PROVIDER || 'tavily').toLowerCase();
+const SEARXNG_URL = process.env.SEARXNG_URL || 'http://host.docker.internal:9090';
 
 if (GATEWAY_URL && GATEWAY_TOKEN) {
   log.info({ gateway: GATEWAY_URL }, 'LLM proxy: OpenAI-compatible Gateway');
@@ -58,10 +60,12 @@ if (GATEWAY_URL && GATEWAY_TOKEN) {
   log.warn('No LLM config — set OPENAI_BASE_URL+TOKEN or ANTHROPIC_API_KEY');
 }
 
-if (TAVILY_API_KEY) {
-  log.info('Search: Tavily API configured (Research Scout enabled)');
-} else {
-  log.warn('No TAVILY_API_KEY — Research Scout will operate without live search');
+log.info({ provider: SEARCH_PROVIDER, searxngUrl: SEARXNG_URL, tavilyConfigured: !!TAVILY_API_KEY }, 'Search provider configured');
+if (SEARCH_PROVIDER === 'tavily' && !TAVILY_API_KEY) {
+  log.warn('SEARCH_PROVIDER=tavily but TAVILY_API_KEY unset — Research Scout will operate without live search');
+}
+if (SEARCH_PROVIDER === 'coexist' && !TAVILY_API_KEY) {
+  log.warn('SEARCH_PROVIDER=coexist but TAVILY_API_KEY unset — fallback path will return errors');
 }
 
 // ─── Express + WebSocket ────────────────────────────────────
@@ -219,7 +223,9 @@ function loadSession(id) {
 // session object (`session.searchCache`) and GC'd when the session object
 // is dropped from activeSessions.
 const searchProvider = createSearchProvider({
-  apiKey: TAVILY_API_KEY,
+  provider: SEARCH_PROVIDER,
+  tavilyApiKey: TAVILY_API_KEY,
+  searxngUrl: SEARXNG_URL,
   maxResults: SEARCH_MAX_RESULTS,
   logger: log,
   broadcast,
@@ -306,7 +312,10 @@ async function runAgentTurn(session, agentId, phase) {
     const maxTokens = isFinalSynthesis ? parseInt(process.env.SYNTHESIS_MAX_TOKENS || '8000') : undefined;
     let { text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens);
 
-    if (isResearchScout && TAVILY_API_KEY) {
+    const searchAvailable = SEARCH_PROVIDER === 'smart'
+      || SEARCH_PROVIDER === 'coexist'
+      || !!TAVILY_API_KEY;
+    if (isResearchScout && searchAvailable) {
       const searchQueries = searchProvider.extractQueriesFromText(response);
       if (searchQueries.length > 0) {
         session.agentStates[agentId] = 'searching';
