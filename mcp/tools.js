@@ -73,13 +73,13 @@ function registerTools(server, ops) {
   // 3. warroom_create_session
   server.tool(
     'warroom_create_session',
-    'Start a new multi-agent research deliberation. 8 agents analyze through 5 phases: Framing -> Divergence -> Convergence -> Red Team -> Synthesis. Runs async — poll with warroom_get_session. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
+    'Start a new multi-agent deliberation. 8 agents work through 5 phases: Framing → Divergence → Convergence → Red Team → Synthesis. Runs async — poll warroom_get_session every 1-2 min and answer pending escalations with warroom_answer_escalation promptly (unanswered escalations block progress). Use for decisions worth real deliberation: weeks-of-work commitments, post-failure adversarial reads, genuine 2-3 option uncertainty. NOT for routine questions answerable in a single response. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
     {
-      problem: z.string().describe('Problem, question, or research challenge'),
+      problem: z.string().describe('Problem statement. Agents see this verbatim every turn — it is the largest single quality lever. Strong statements include: (1) context, (2) the core question or decision, (3) hard constraints, (4) success criteria for a good answer, (5) explicit intent — comparison, recommendation, design, analysis, or decision. Name the tradeoffs and stakeholder perspectives that matter. Keep short problems short; add structure only when it aids clarity. Do not invent requirements that were not stated.'),
       files: z.array(z.object({
         name: z.string().describe('File name with extension (e.g. "audit.md"); used to infer mime'),
         content: z.string().describe('UTF-8 text content'),
-      })).optional().describe('Inline text files; uploaded to files-service automatically'),
+      })).optional().describe('Inline text files; uploaded to files-service automatically. Inline budget ~150k tokens total — larger files are RAG-routed and only retrieved when a query is provided.'),
       fileIds: z.array(z.string()).optional().describe('Existing files-service file IDs to attach'),
     },
     async ({ problem, files, fileIds }) => {
