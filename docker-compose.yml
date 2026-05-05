@@ -8,9 +8,7 @@ services:
     env_file:
       - .env
     environment:
-      # OPENAI_BASE_URL / OPENAI_API_KEY are loaded from .env
-      # via env_file above. WAR_ROOM_TOKEN, MCP_API_KEY, etc. also come
-      # from .env. NEVER inline secrets here — docker-compose.yml is in git.
+      - BASELINE_LOG=data/baseline-usage.jsonl
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
       - EMBEDDING_URL=http://localhost:11434/api/embed
       - EMBEDDING_MODEL=nomic-embed-text
@@ -41,9 +39,10 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=platform-net
-      - traefik.http.routers.war-room-mcp.entrypoints=web
-      - traefik.http.routers.war-room-mcp.rule=Host(`warroom.example.com`) && PathPrefix(`/mcp`)
-      - traefik.http.services.war-room-mcp.loadbalancer.server.port=8090
+      - traefik.http.routers.war-room.entrypoints=web
+      - traefik.http.routers.war-room.rule=Host(`warroom.example.com`)
+      - traefik.http.routers.war-room.middlewares=forwardauth-zitadel@file
+      - traefik.http.services.war-room.loadbalancer.server.port=8090
 
 networks:
   default:
