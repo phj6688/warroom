@@ -10,8 +10,8 @@ services:
     environment:
       - BASELINE_LOG=data/baseline-usage.jsonl
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
-      - EMBEDDING_URL=http://localhost:11434/api/embed
-      - EMBEDDING_MODEL=nomic-embed-text
+      - EMBED_GATEWAY_URL=${EMBED_GATEWAY_URL:-http://embed-gateway:8200}
+      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
       # Search provider: tavily (default), smart (SearXNG + DDG, no API cost),
       # or coexist (smart first, tavily fallback on empty/error).
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-tavily}
