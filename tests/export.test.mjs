@@ -23,8 +23,12 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 
 // ─── Config ──────────────────────────────────────────────────
-const BASE = 'http://localhost:8090';
+// These are integration tests that hit a live homelab instance.
+// They are intentionally skipped in CI / by default — set
+// RUN_HOMELAB_TESTS=1 to opt in locally with the homelab reachable.
+const BASE = process.env.WARROOM_BASE_URL || 'http://localhost:8090';
 const API  = `${BASE}/api`;
+const RUN_HOMELAB_TESTS = process.env.RUN_HOMELAB_TESTS === '1';
 
 // ─── Helpers ─────────────────────────────────────────────────
 async function get(url) {
@@ -61,6 +65,7 @@ let allSessions        = [];
 
 // ─── Setup ───────────────────────────────────────────────────
 before(async () => {
+  if (!RUN_HOMELAB_TESTS) return;
   const { json } = await getJson(`${API}/sessions`);
   if (Array.isArray(json)) {
     allSessions = json;
@@ -75,7 +80,7 @@ before(async () => {
 // ═══════════════════════════════════════════════════════════════
 // 1. Export Options Endpoint — Contract Tests
 // ═══════════════════════════════════════════════════════════════
-describe('GET /api/sessions/:id/export/options — contract', () => {
+describe('GET /api/sessions/:id/export/options — contract', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   test('returns 404 for unknown session', async () => {
     const { status, json } = await getJson(`${API}/sessions/deadbeef00/export/options`);
@@ -181,7 +186,7 @@ describe('GET /api/sessions/:id/export/options — contract', () => {
 // ═══════════════════════════════════════════════════════════════
 // 2. Export Endpoint — Happy Path
 // ═══════════════════════════════════════════════════════════════
-describe('GET /api/sessions/:id/export — happy path', () => {
+describe('GET /api/sessions/:id/export — happy path', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   test('full_transcript + txt: returns 200 with text/plain content-type', async (t) => {
     if (!allSessions.length) return t.skip('No sessions in DB');
@@ -281,7 +286,7 @@ describe('GET /api/sessions/:id/export — happy path', () => {
 // ═══════════════════════════════════════════════════════════════
 // 3. Export Endpoint — Content Correctness
 // ═══════════════════════════════════════════════════════════════
-describe('GET /api/sessions/:id/export — content correctness', () => {
+describe('GET /api/sessions/:id/export — content correctness', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   test('full_transcript txt: body contains session problem text', async (t) => {
     if (!allSessions.length) return t.skip('No sessions in DB');
@@ -359,7 +364,7 @@ describe('GET /api/sessions/:id/export — content correctness', () => {
 // ═══════════════════════════════════════════════════════════════
 // 4. Export Endpoint — Edge Cases & Error Paths
 // ═══════════════════════════════════════════════════════════════
-describe('GET /api/sessions/:id/export — edge cases', () => {
+describe('GET /api/sessions/:id/export — edge cases', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   test('returns 404 for non-existent session', async () => {
     const { status, json } = await getJson(`${API}/sessions/deadbeef00/export`);
@@ -419,7 +424,7 @@ describe('GET /api/sessions/:id/export — edge cases', () => {
 // ═══════════════════════════════════════════════════════════════
 // 5. Export Filename Convention Tests
 // ═══════════════════════════════════════════════════════════════
-describe('Export — filename conventions', () => {
+describe('Export — filename conventions', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   const cases = [
     { mode: 'full_transcript',     slug: 'full-transcript',    fmt: 'txt' },
@@ -442,7 +447,7 @@ describe('Export — filename conventions', () => {
 // ═══════════════════════════════════════════════════════════════
 // 6. Export Options — Availability Logic
 // ═══════════════════════════════════════════════════════════════
-describe('Export options — availability logic', () => {
+describe('Export options — availability logic', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   test('full_transcript available=true when session has messages', async (t) => {
     if (!allSessions.length) return t.skip('No sessions in DB');
@@ -482,7 +487,7 @@ describe('Export options — availability logic', () => {
 // ═══════════════════════════════════════════════════════════════
 // 7. HTTP Semantics & Headers
 // ═══════════════════════════════════════════════════════════════
-describe('Export — HTTP semantics', () => {
+describe('Export — HTTP semantics', { skip: !RUN_HOMELAB_TESTS && 'requires live homelab — set RUN_HOMELAB_TESTS=1' }, () => {
 
   test('export responds to GET only (method contract)', async (t) => {
     if (!allSessions.length) return t.skip('No sessions in DB');

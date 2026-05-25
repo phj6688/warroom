@@ -30,20 +30,13 @@ sqliteVec.load(db);
 console.error('🗄️  Running database migrations...');
 runMigrations({ db, migrationsDir: path.join(__dirname, 'migrations'), log: console.error });
 
-// ─── sqlite-vec virtual table (created after migrations) ────
+// vec0 virtual table needs sqlite-vec loaded in this connection, so it
+// stays out of the migration runner. embedding_meta now lives in
+// migrations/002_embedding_meta.sql so the cascade trigger in 010 and
+// the RENAME in 013 can see it.
 db.exec(`
   CREATE VIRTUAL TABLE IF NOT EXISTS session_embeddings USING vec0(
     embedding FLOAT[768]
-  )
-`);
-
-// Metadata table for embedding entries (vec0 only stores rowid + vector)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS embedding_meta (
-    rowid INTEGER PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    content_type TEXT NOT NULL,
-    created_at INTEGER NOT NULL
   )
 `);
 
