@@ -1,0 +1,25 @@
+Vendored renderer libraries (HLB-96) — pinned versions + source URLs + SRI.
+Re-fetch with the exact URLs below; SRI is sha384, computed as
+  curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A
+
+markdown-it 14.1.0  (UMD, eager — loaded at page load)
+  https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js
+  integrity: sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani
+  -> markdown-it.min.js
+
+KaTeX 0.16.9  (lazy)
+  https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js
+  integrity: sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8
+  -> katex.min.js
+  https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js
+  integrity: sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05
+  -> katex-auto-render.min.js
+  https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css
+  -> katex.min.css   (woff2 fonts under fonts/, same release)
+
+highlight.js 11.11.1  (lazy)
+  https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js
+  integrity: sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU
+  -> highlight.min.js
+  https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css
+  -> highlight-atom-one-dark.min.css

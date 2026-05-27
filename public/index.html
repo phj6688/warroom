@@ -1840,6 +1840,17 @@ html, body {
   .desktop-sidebar, .desktop-right { display: none !important; }
 }
 </style>
+<!-- Renderer libs (HLB-96). markdown-it is eager (first-paint render path); KaTeX + hljs
+     are lazy-loaded on demand by ensureLib(). Versions/URLs/SRI: public/vendor/VERSIONS.txt
+     markdown-it 14.1.0 UMD — https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js -->
+<script
+  src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"
+  integrity="sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"
+  onload="window.hasMarkdownIt = typeof window.markdownit === 'function'"
+  onerror="this.onerror=null;var s=document.createElement('script');s.src='vendor/markdown-it.min.js';s.onload=function(){window.hasMarkdownIt=typeof window.markdownit==='function'};document.head.appendChild(s)"
+></script>
 </head>
 <body>
 <div class="app">
@@ -2706,6 +2717,110 @@ function escHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ─── Renderer libs (HLB-96) ──────────────────────────────
+// markdown-it is loaded eagerly via the <head> <script> (CDN + vendored onerror
+// fallback); it sets window.hasMarkdownIt true once the global exists. Renderers
+// MUST read this SYNCHRONOUS flag and never block on the async loader. KaTeX and
+// highlight.js are lazy: ensureLib() injects them only when loadKatex()/loadHljs()
+// is called. Each tries the CDN (with SRI) first and falls back to the vendored
+// copy under vendor/ on load error / SRI failure; if both are absent it rejects.
+if (typeof window.hasMarkdownIt === 'undefined') window.hasMarkdownIt = typeof window.markdownit === 'function';
+
+const VENDOR_LIBS = {
+  // name -> { cdn, sri, vendor, ready(): bool, css?: { cdn, vendor } }
+  'markdown-it': {
+    cdn: 'https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js',
+    sri: 'sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani',
+    vendor: 'vendor/markdown-it.min.js',
+    ready: () => typeof window.markdownit === 'function',
+  },
+  'katex': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js',
+    sri: 'sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8',
+    vendor: 'vendor/katex.min.js',
+    ready: () => typeof window.katex !== 'undefined',
+    css: {
+      cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css',
+      vendor: 'vendor/katex.min.css',
+    },
+  },
+  'katex-auto-render': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js',
+    sri: 'sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05',
+    vendor: 'vendor/katex-auto-render.min.js',
+    ready: () => typeof window.renderMathInElement === 'function',
+  },
+  'highlight': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js',
+    sri: 'sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU',
+    vendor: 'vendor/highlight.min.js',
+    ready: () => typeof window.hljs !== 'undefined',
+    css: {
+      cdn: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css',
+      vendor: 'vendor/highlight-atom-one-dark.min.css',
+    },
+  },
+};
+
+const _libPromises = {};   // name -> Promise (one load attempt per name)
+
+function _injectScript(src, sri) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    if (sri) { s.integrity = sri; s.crossOrigin = 'anonymous'; s.referrerPolicy = 'no-referrer'; }
+    s.onload = () => resolve();
+    s.onerror = () => { s.remove(); reject(new Error('load failed: ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+function _injectCssOnce(cfg) {
+  if (!cfg) return;
+  // Try CDN stylesheet; swap to vendored on error. CSS need not block the JS promise.
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = cfg.cdn;
+  link.crossOrigin = 'anonymous';
+  link.onerror = () => { link.onerror = null; link.href = cfg.vendor; };
+  document.head.appendChild(link);
+}
+
+// ensureLib(name): resolve once the lib global exists. CDN (SRI) first, vendored on
+// failure, reject cleanly if both are absent. Memoized per name; never throws sync.
+function ensureLib(name) {
+  const cfg = VENDOR_LIBS[name];
+  if (!cfg) return Promise.reject(new Error('unknown lib: ' + name));
+  if (cfg.ready()) return Promise.resolve();
+  if (_libPromises[name]) return _libPromises[name];
+
+  _libPromises[name] = (async () => {
+    _injectCssOnce(cfg.css);
+    try {
+      await _injectScript(cfg.cdn, cfg.sri);
+      if (cfg.ready()) return;
+    } catch (_) { /* fall through to vendored */ }
+    try {
+      await _injectScript(cfg.vendor, null);
+      if (cfg.ready()) return;
+    } catch (_) { /* both failed */ }
+    throw new Error(name + ' unavailable (CDN + vendored both failed)');
+  })();
+
+  // A failed attempt must not poison future calls — drop the memo on reject.
+  _libPromises[name].catch(() => { delete _libPromises[name]; });
+  return _libPromises[name];
+}
+
+// Lazy loaders: KaTeX (core + auto-render) and highlight.js. Called only when a
+// message actually contains math / a fenced code block (wired in HLB-97/98).
+function loadKatex() {
+  return ensureLib('katex').then(() => ensureLib('katex-auto-render'));
+}
+function loadHljs() {
+  return ensureLib('highlight');
 }
 
 // ─── Feed ────────────────────────────────────────────────
