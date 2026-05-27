@@ -49,6 +49,20 @@
   --accent-subtle: rgba(215,25,33,0.15);
   --accent-dim: rgba(215,25,33,0.15);
   --accent-orange: #D4A843;
+
+  /* Per-agent accent palette (HLB-99) — 8 distinct hues keyed by core agentId,
+     tuned for the dark (#0a0a0a) crimson-accented theme: muted, mid-luminance,
+     no neon. Crimson family is the lead (process-architect). Specialist/unknown
+     agents fall back to --agent-accent-neutral. */
+  --agent-accent-process-architect:    #D71921; /* crimson — theme lead */
+  --agent-accent-systems-synthesizer:  #E0843C; /* amber */
+  --agent-accent-divergent-generator:  #D9C04A; /* gold */
+  --agent-accent-convergent-evaluator: #5FB86A; /* green */
+  --agent-accent-red-teamer:           #C2425E; /* rose-red */
+  --agent-accent-quantitative-expert:  #4A9DE0; /* sky blue */
+  --agent-accent-qualitative-expert:   #9B6FD4; /* violet */
+  --agent-accent-research-scout:       #3FC4B8; /* teal */
+  --agent-accent-neutral:              #666666; /* specialist / unknown fallback */
   --success: #4A9E5C;
   --warning: #D4A843;
   --error: #D71921;
@@ -1002,11 +1016,78 @@ html, body {
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.7;
-  white-space: pre-wrap;
+  /* white-space:pre-wrap removed — markdown-it emits block structure for spacing;
+     pre-wrap would render every source newline as a visible blank line (HLB-97). */
   word-wrap: break-word;
+  overflow-wrap: anywhere;
   color: var(--text);
+  contain: layout style;
+  /* Per-agent left accent bar (HLB-99). --msg-accent is set per-message in
+     addMessage from the agentId-keyed palette; defaults to neutral. */
+  border-left: 3px solid var(--msg-accent, var(--agent-accent-neutral));
 }
 .message-body strong, .message-body b { color: var(--text); font-weight: 600; }
+
+/* ── Typography pass (HLB-97): rendered markdown block structure ── */
+.message-body > :first-child { margin-top: 0; }
+.message-body > :last-child { margin-bottom: 0; }
+.message-body p { margin: 0 0 8px; }
+.message-body h1, .message-body h2, .message-body h3, .message-body h4 {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 14px 0 6px;
+}
+.message-body h1 { font-size: 17px; border-bottom: 1px solid var(--border-bright); padding-bottom: 4px; }
+.message-body h2 { font-size: 15px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+.message-body h3 { font-size: 14px; color: var(--text-primary); }
+.message-body h4 { font-size: 13px; color: var(--text-primary); text-transform: uppercase; letter-spacing: 0.5px; }
+.message-body ul, .message-body ol { margin: 6px 0 10px; padding-left: 22px; }
+.message-body li { margin: 3px 0; }
+.message-body li > ul, .message-body li > ol { margin: 3px 0; }
+.message-body blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  background: rgba(255,255,255,0.02);
+  color: var(--text-dim);
+  border-radius: 0 8px 8px 0;
+}
+.message-body blockquote p { margin: 4px 0; }
+.message-body code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--accent-orange);
+}
+.message-body pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #0d0d0d;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.message-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.message-body a { color: var(--accent-orange); text-decoration: underline; text-underline-offset: 2px; }
+.message-body a:hover { color: var(--text); }
+.message-body hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.message-body .md-table-wrap { overflow-x: auto; margin: 8px 0; -webkit-overflow-scrolling: touch; }
+.message-body table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.message-body th, .message-body td { border: 1px solid var(--border-bright); padding: 5px 9px; text-align: left; }
+.message-body th { background: var(--bg-elevated); color: var(--text); font-weight: 700; }
+.message-body tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .message-body .msg-section-header {
   display: block;
   font-weight: 700;
@@ -1840,6 +1921,17 @@ html, body {
   .desktop-sidebar, .desktop-right { display: none !important; }
 }
 </style>
+<!-- Renderer libs (HLB-96). markdown-it is eager (first-paint render path); KaTeX + hljs
+     are lazy-loaded on demand by ensureLib(). Versions/URLs/SRI: public/vendor/VERSIONS.txt
+     markdown-it 14.1.0 UMD — https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js -->
+<script
+  src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"
+  integrity="sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"
+  onload="window.hasMarkdownIt = typeof window.markdownit === 'function'"
+  onerror="this.onerror=null;var s=document.createElement('script');s.src='vendor/markdown-it.min.js';s.onload=function(){window.hasMarkdownIt=typeof window.markdownit==='function'};document.head.appendChild(s)"
+></script>
 </head>
 <body>
 <div class="app">
@@ -2708,6 +2800,110 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+// ─── Renderer libs (HLB-96) ──────────────────────────────
+// markdown-it is loaded eagerly via the <head> <script> (CDN + vendored onerror
+// fallback); it sets window.hasMarkdownIt true once the global exists. Renderers
+// MUST read this SYNCHRONOUS flag and never block on the async loader. KaTeX and
+// highlight.js are lazy: ensureLib() injects them only when loadKatex()/loadHljs()
+// is called. Each tries the CDN (with SRI) first and falls back to the vendored
+// copy under vendor/ on load error / SRI failure; if both are absent it rejects.
+if (typeof window.hasMarkdownIt === 'undefined') window.hasMarkdownIt = typeof window.markdownit === 'function';
+
+const VENDOR_LIBS = {
+  // name -> { cdn, sri, vendor, ready(): bool, css?: { cdn, vendor } }
+  'markdown-it': {
+    cdn: 'https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js',
+    sri: 'sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani',
+    vendor: 'vendor/markdown-it.min.js',
+    ready: () => typeof window.markdownit === 'function',
+  },
+  'katex': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js',
+    sri: 'sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8',
+    vendor: 'vendor/katex.min.js',
+    ready: () => typeof window.katex !== 'undefined',
+    css: {
+      cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css',
+      vendor: 'vendor/katex.min.css',
+    },
+  },
+  'katex-auto-render': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js',
+    sri: 'sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05',
+    vendor: 'vendor/katex-auto-render.min.js',
+    ready: () => typeof window.renderMathInElement === 'function',
+  },
+  'highlight': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js',
+    sri: 'sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU',
+    vendor: 'vendor/highlight.min.js',
+    ready: () => typeof window.hljs !== 'undefined',
+    css: {
+      cdn: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css',
+      vendor: 'vendor/highlight-atom-one-dark.min.css',
+    },
+  },
+};
+
+const _libPromises = {};   // name -> Promise (one load attempt per name)
+
+function _injectScript(src, sri) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    if (sri) { s.integrity = sri; s.crossOrigin = 'anonymous'; s.referrerPolicy = 'no-referrer'; }
+    s.onload = () => resolve();
+    s.onerror = () => { s.remove(); reject(new Error('load failed: ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+function _injectCssOnce(cfg) {
+  if (!cfg) return;
+  // Try CDN stylesheet; swap to vendored on error. CSS need not block the JS promise.
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = cfg.cdn;
+  link.crossOrigin = 'anonymous';
+  link.onerror = () => { link.onerror = null; link.href = cfg.vendor; };
+  document.head.appendChild(link);
+}
+
+// ensureLib(name): resolve once the lib global exists. CDN (SRI) first, vendored on
+// failure, reject cleanly if both are absent. Memoized per name; never throws sync.
+function ensureLib(name) {
+  const cfg = VENDOR_LIBS[name];
+  if (!cfg) return Promise.reject(new Error('unknown lib: ' + name));
+  if (cfg.ready()) return Promise.resolve();
+  if (_libPromises[name]) return _libPromises[name];
+
+  _libPromises[name] = (async () => {
+    _injectCssOnce(cfg.css);
+    try {
+      await _injectScript(cfg.cdn, cfg.sri);
+      if (cfg.ready()) return;
+    } catch (_) { /* fall through to vendored */ }
+    try {
+      await _injectScript(cfg.vendor, null);
+      if (cfg.ready()) return;
+    } catch (_) { /* both failed */ }
+    throw new Error(name + ' unavailable (CDN + vendored both failed)');
+  })();
+
+  // A failed attempt must not poison future calls — drop the memo on reject.
+  _libPromises[name].catch(() => { delete _libPromises[name]; });
+  return _libPromises[name];
+}
+
+// Lazy loaders: KaTeX (core + auto-render) and highlight.js. Called only when a
+// message actually contains math / a fenced code block (wired in HLB-97/98).
+function loadKatex() {
+  return ensureLib('katex').then(() => ensureLib('katex-auto-render'));
+}
+function loadHljs() {
+  return ensureLib('highlight');
+}
+
 // ─── Feed ────────────────────────────────────────────────
 function clearFeed() {
   document.getElementById('feed').innerHTML = '';
@@ -2790,39 +2986,212 @@ function addPhaseSeparator(name) {
   scrollFeed();
 }
 
+// Module-singleton markdown-it. Built lazily once the global is available;
+// html:false makes its output inert (raw agent tags are NOT honored), which is
+// what makes `bodyEl.innerHTML = md.render(...)` a sanctioned sink (TASKSPEC AC1/AC5).
+let _md = null;
+function getMd() {
+  if (_md) return _md;
+  if (!window.hasMarkdownIt || typeof window.markdownit !== 'function') return null;
+  _md = window.markdownit({ html: false, linkify: true, breaks: false });
+  // Preserve KaTeX delimiters (HLB-98): markdown-it's default `escape` rule strips
+  // the backslash before ( ) [ ], turning `\(a^2\)` into bare `(a^2)` — destroying the
+  // inline-math delimiters before KaTeX can see them. Override `escape` so a backslash
+  // before ( ) [ ] is emitted LITERALLY (delimiter survives into the DOM); every other
+  // backslash escape keeps markdown-it's normal behavior.
+  const _escape = _md.inline.ruler.__rules__.find(r => r.name === 'escape');
+  if (_escape) {
+    const _origEscape = _escape.fn;
+    _md.inline.ruler.at('escape', function (state, silent) {
+      const ch = state.src.charCodeAt(state.pos + 1);
+      // 0x28 ( 0x29 ) 0x5B [ 0x5D ]
+      if (state.src.charCodeAt(state.pos) === 0x5C /* \ */ &&
+          (ch === 0x28 || ch === 0x29 || ch === 0x5B || ch === 0x5D)) {
+        if (!silent) state.pending += '\\' + String.fromCharCode(ch);
+        state.pos += 2;
+        return true;
+      }
+      return _origEscape(state, silent);
+    });
+  }
+  return _md;
+}
+
+const _VERDICT_RE = /^(?:Recommendation|Verdict|Conclusion|Summary|Key Finding|Action Item|Risk|Warning)s?:/i;
+
+// Strip human-input markers (preserve legacy behavior). Returns plain text.
+function stripMarkers(raw) {
+  return String(raw == null ? '' : raw)
+    .replace(/<need_human_input>[\s\S]*?<\/need_human_input>/gi, '')
+    .replace(/NEED_HUMAN_INPUT:\s*.+/g, '')
+    .trim();
+}
+
+// Synchronous. Returns an HTML STRING. With markdown-it available, that string is
+// inert sanitized markdown (html:false). Without it (loader unresolved / failed),
+// returns escaped plaintext — never raw agent text into innerHTML.
 function formatMessageContent(raw) {
-  let content = raw.replace(/<need_human_input>[\s\S]*?<\/need_human_input>/gi, '').replace(/NEED_HUMAN_INPUT:\s*.+/g, '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').trim();
-  // Highlight verdict/recommendation/conclusion sections
-  content = content.replace(/^((?:Recommendation|Verdict|Conclusion|Summary|Key Finding|Action Item|Risk|Warning)s?:)/gim,
-    '<span class="msg-verdict">$1</span>');
-  return content;
+  const stripped = stripMarkers(raw);
+  const md = getMd();
+  if (!md) return escHtml(stripped);
+  return md.render(stripped);
+}
+
+// Post-render verdict highlight: walk the rendered block children and tag any
+// top-level block whose leading text matches a verdict keyword. Operates on the
+// rendered DOM (not a raw-text regex) so it can never match inside a code block.
+function applyVerdictHighlight(bodyEl) {
+  for (const child of bodyEl.children) {
+    if (child.classList && child.classList.contains('copy-btn')) continue;
+    // Skip the table wrapper (HLB-98): a wrapped table whose leading cell text is
+    // e.g. "Summary:" must not pick up a spurious .msg-verdict on the DIV.
+    if (child.classList && child.classList.contains('md-table-wrap')) continue;
+    const tag = child.tagName;
+    if (tag === 'PRE' || tag === 'CODE' || tag === 'TABLE' || tag === 'UL' || tag === 'OL' || tag === 'DIV') continue;
+    const text = (child.textContent || '').trimStart();
+    if (_VERDICT_RE.test(text)) child.classList.add('msg-verdict');
+  }
+}
+
+// Wrap rendered <table> elements so they scroll horizontally on mobile.
+function wrapTables(bodyEl) {
+  bodyEl.querySelectorAll('table').forEach((t) => {
+    if (t.parentElement && t.parentElement.classList.contains('md-table-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'md-table-wrap';
+    t.replaceWith(wrap);
+    wrap.appendChild(t);
+  });
+}
+
+// Trigger detection (HLB-98). KaTeX is restricted to \(…\) and $$…$$ ONLY — single
+// `$` is never math (so "costs $50" stays literal). hljs runs only on fenced blocks.
+const _MATH_RE = /\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$/;
+
+// Lazy enhancement of an ALREADY-appended message body, in place. Only fetches a lib
+// when its trigger token is present in the source (a text-only message fetches none).
+// Mutates one body subtree — never re-renders the feed (WS-flicker rules). The #feed
+// MutationObserver re-fires on this mutation; injectCopyBtn is idempotent so the body
+// keeps exactly one Copy button.
+function enhanceMessageBody(bodyEl, source) {
+  const src = String(source == null ? '' : source);
+
+  // (a) Math: typeset only \(…\) (inline) and $$…$$ (display). ignoredTags keeps a
+  //     `$$`/`\(` inside a code fence (pre/code) literal. throwOnError:false so a bad
+  //     expression renders the source, never throws.
+  if (_MATH_RE.test(src)) {
+    loadKatex().then(() => {
+      if (typeof window.renderMathInElement !== 'function' || !bodyEl.isConnected) return;
+      try {
+        window.renderMathInElement(bodyEl, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\(', right: '\\)', display: false },
+          ],
+          throwOnError: false,
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        });
+      } catch (_) { /* degrade to literal delimiters */ }
+    }).catch(() => { /* KaTeX unavailable: leave delimiters literal */ });
+  }
+
+  // (b) Code: highlight each fenced block (pre > code) only. Never prose / inline code.
+  const fences = bodyEl.querySelectorAll('pre > code');
+  if (fences.length) {
+    loadHljs().then(() => {
+      if (typeof window.hljs === 'undefined' || !bodyEl.isConnected) return;
+      bodyEl.querySelectorAll('pre > code').forEach((block) => {
+        if (block.dataset.highlighted) return;
+        try { window.hljs.highlightElement(block); } catch (_) { /* leave plain */ }
+      });
+    }).catch(() => { /* hljs unavailable: plain <pre> */ });
+  }
+}
+
+// 8-hue per-agent accent (HLB-99). Keyed by core agentId (stable) — NOT agentColor,
+// which is not 8-distinct (process-architect and research-scout both #00ff41). The
+// hex values mirror the --agent-accent-* CSS vars; this map is the single source of
+// truth read by addMessage. Specialist / unknown agentId → neutral fallback.
+const AGENT_ACCENTS = {
+  'process-architect':    '#D71921',
+  'systems-synthesizer':  '#E0843C',
+  'divergent-generator':  '#D9C04A',
+  'convergent-evaluator': '#5FB86A',
+  'red-teamer':           '#C2425E',
+  'quantitative-expert':  '#4A9DE0',
+  'qualitative-expert':   '#9B6FD4',
+  'research-scout':       '#3FC4B8',
+};
+const AGENT_ACCENT_NEUTRAL = '#666666';
+function agentAccent(agentId) {
+  return AGENT_ACCENTS[agentId] || AGENT_ACCENT_NEUTRAL;
 }
 
 function addMessage(msg) {
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const content = formatMessageContent(msg.content);
-  const isLong = msg.content.length > 500;
+  const isLong = (msg.content || '').length > 500;
+
+  // Assemble the WRAPPER off-DOM in a DocumentFragment, single appendChild (AC5).
+  const frag = document.createDocumentFragment();
   const d = document.createElement('div');
   d.className = 'message';
-  d.innerHTML = `
-    <div class="message-header">
-      <div class="message-badge" style="border-color:${msg.agentColor}40"><span class="emoji">${msg.agentEmoji}</span><span style="color:${msg.agentColor}">${msg.agentName}</span></div>
-      <span class="message-phase">${msg.phase}</span>
-      <span class="message-time">${time}</span>
-    </div>
-    <div class="message-body${isLong ? ' collapsed' : ''}" style="border-color:${msg.agentColor}15">${content}</div>
-    ${isLong ? '<button class="msg-toggle">Show more</button>' : ''}
-    <div class="message-timestamp">${time}</div>
-  `;
+
+  const header = document.createElement('div');
+  header.className = 'message-header';
+  const badge = document.createElement('div');
+  badge.className = 'message-badge';
+  badge.style.borderColor = `${msg.agentColor}40`;
+  const emoji = document.createElement('span');
+  emoji.className = 'emoji';
+  emoji.textContent = msg.agentEmoji || '';
+  const name = document.createElement('span');
+  name.style.color = msg.agentColor || '';
+  name.textContent = msg.agentName || '';
+  badge.append(emoji, name);
+  const phase = document.createElement('span');
+  phase.className = 'message-phase';
+  phase.textContent = msg.phase || '';
+  const headerTime = document.createElement('span');
+  headerTime.className = 'message-time';
+  headerTime.textContent = time;
+  header.append(badge, phase, headerTime);
+
+  const body = document.createElement('div');
+  body.className = 'message-body' + (isLong ? ' collapsed' : '');
+  body.style.borderColor = `${msg.agentColor}15`;
+  // Per-agent left accent bar (HLB-99): keyed by stable agentId, not agentColor.
+  // Set both the CSS var (for the stylesheet rule) and the inline border-left-color
+  // so the accent wins over the borderColor shorthand set above (inline > sheet).
+  const _accent = agentAccent(msg.agentId);
+  body.style.setProperty('--msg-accent', _accent);
+  body.style.borderLeftColor = _accent;
+  // Sanctioned sink: inert sanitized markdown (html:false) or escaped plaintext.
+  body.innerHTML = formatMessageContent(msg.content);
+  if (getMd()) { wrapTables(body); applyVerdictHighlight(body); }
+
+  d.append(header, body);
+
   if (isLong) {
-    const toggle = d.querySelector('.msg-toggle');
-    const body = d.querySelector('.message-body');
+    const toggle = document.createElement('button');
+    toggle.className = 'msg-toggle';
+    toggle.textContent = 'Show more';
     toggle.addEventListener('click', () => {
       const collapsed = body.classList.toggle('collapsed');
       toggle.textContent = collapsed ? 'Show more' : 'Show less';
     });
+    d.append(toggle);
   }
-  document.getElementById('feed').appendChild(d);
+
+  const ts = document.createElement('div');
+  ts.className = 'message-timestamp';
+  ts.textContent = time;
+  d.append(ts);
+
+  frag.appendChild(d);
+  document.getElementById('feed').appendChild(frag);
+  // Lazy math/code enhancement runs AFTER the body is in the DOM (KaTeX/hljs need a
+  // live element). Only fetches a lib when its trigger token is present (HLB-98).
+  if (getMd()) enhanceMessageBody(body, msg.content);
   scrollFeed();
 }
 
