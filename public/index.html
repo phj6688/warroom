@@ -49,6 +49,20 @@
   --accent-subtle: rgba(215,25,33,0.15);
   --accent-dim: rgba(215,25,33,0.15);
   --accent-orange: #D4A843;
+
+  /* Per-agent accent palette (HLB-99) — 8 distinct hues keyed by core agentId,
+     tuned for the dark (#0a0a0a) crimson-accented theme: muted, mid-luminance,
+     no neon. Crimson family is the lead (process-architect). Specialist/unknown
+     agents fall back to --agent-accent-neutral. */
+  --agent-accent-process-architect:    #D71921; /* crimson — theme lead */
+  --agent-accent-systems-synthesizer:  #E0843C; /* amber */
+  --agent-accent-divergent-generator:  #D9C04A; /* gold */
+  --agent-accent-convergent-evaluator: #5FB86A; /* green */
+  --agent-accent-red-teamer:           #C2425E; /* rose-red */
+  --agent-accent-quantitative-expert:  #4A9DE0; /* sky blue */
+  --agent-accent-qualitative-expert:   #9B6FD4; /* violet */
+  --agent-accent-research-scout:       #3FC4B8; /* teal */
+  --agent-accent-neutral:              #666666; /* specialist / unknown fallback */
   --success: #4A9E5C;
   --warning: #D4A843;
   --error: #D71921;
@@ -622,6 +636,119 @@ html, body {
 }
 .example-chip:active { transform: scale(0.97); }
 
+/* ─── Role Presets ────────────────────────────────────── */
+.preset-picker { margin-top: 18px; width: 100%; }
+.preset-picker-title {
+  font-size: 11px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 1.5px; color: var(--text-dimmer); margin-bottom: 8px;
+}
+.preset-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.preset-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 16px; min-height: 40px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 999px; color: var(--text-dim);
+  font-family: var(--font); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.18s var(--transition);
+}
+.preset-chip .pc-glyph { font-size: 14px; }
+.preset-chip:hover { border-color: var(--border-bright); color: var(--text); }
+.preset-chip:active { transform: scale(0.97); }
+.preset-chip.active {
+  background: var(--accent); border-color: var(--accent);
+  color: #fff; box-shadow: 0 0 0 1px var(--accent), 0 4px 16px var(--accent-subtle);
+}
+.preset-caption {
+  margin-top: 8px; font-size: 11px; font-family: var(--font-mono);
+  color: var(--text-tertiary); min-height: 14px;
+}
+.preset-caption .pc-spec { color: var(--success); }
+
+/* ─── Escalation severity (intensity of the accent, not a new hue) ── */
+.esc-sev {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.5px; padding: 2px 7px; border-radius: 5px;
+  text-transform: uppercase; flex-shrink: 0;
+}
+.esc-sev.blocking { color: var(--accent); background: var(--accent-subtle); border: 1px solid var(--accent); }
+.esc-sev.optional { color: var(--text-tertiary); background: rgba(255,255,255,0.04); border: 1px solid var(--border); }
+.esc-card.sev-optional { opacity: 0.92; }
+.esc-card.sev-blocking { border-left: 2px solid var(--accent); }
+.esc-default-note { font-size: 11px; color: var(--text-tertiary); margin: 6px 0 2px; font-style: italic; }
+.esc-quick-row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.esc-quick {
+  padding: 6px 12px; min-height: 36px; border-radius: 8px;
+  font-family: var(--font); font-size: 12px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim);
+  transition: all 0.16s var(--transition);
+}
+.esc-quick:hover { border-color: var(--border-bright); color: var(--text); }
+.esc-quick.reframe:hover { border-color: var(--accent); color: var(--accent); }
+
+/* PENDING panel severity row + bulk action */
+.sheet-esc .se-sev { font-size: 9px; font-weight: 700; font-family: var(--font-mono); letter-spacing: 0.5px; }
+.sheet-esc .se-sev.blocking { color: var(--accent); }
+.sheet-esc .se-sev.optional { color: var(--text-tertiary); }
+.esc-bulk-bar { margin-top: 10px; }
+.esc-bulk-btn {
+  width: 100%; padding: 11px 14px; min-height: 44px; border-radius: 10px;
+  background: var(--bg-elevated); border: 1px solid var(--border-bright);
+  color: var(--text); font-family: var(--font-mono); font-size: 12px;
+  font-weight: 600; letter-spacing: 0.5px; cursor: pointer;
+  transition: all 0.18s var(--transition);
+}
+.esc-bulk-btn:hover { border-color: var(--accent); color: var(--accent); }
+.esc-bulk-undo {
+  margin-top: 8px; font-size: 11px; color: var(--text-tertiary);
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+}
+.esc-bulk-undo button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; text-decoration: underline; }
+
+/* ─── Decision Record / THE ANSWER card ───────────────── */
+.decision-record {
+  position: sticky; top: 0; z-index: 20;
+  margin: 0 0 16px; padding: 16px 18px;
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card));
+  border: 1px solid var(--border-bright); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+  contain: layout style;
+}
+.dr-eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 4px; font-family: var(--font-mono);
+}
+.dr-title { font-size: 16px; font-weight: 600; color: var(--text-display); margin-bottom: 10px; }
+.dr-fields { display: flex; flex-direction: column; gap: 9px; }
+.dr-field { border-left: 2px solid var(--border-bright); padding-left: 11px; }
+.dr-field-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-secondary); font-family: var(--font-mono); margin-bottom: 2px;
+}
+.dr-field-body { font-size: 13px; line-height: 1.5; color: var(--text-primary); white-space: pre-wrap; }
+.dr-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.dr-action {
+  padding: 7px 13px; min-height: 36px; border-radius: 8px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim);
+  transition: all 0.16s var(--transition);
+}
+.dr-action:hover { border-color: var(--accent); color: var(--accent); }
+.dr-quality { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.dr-quality-label { font-size: 11px; color: var(--text-tertiary); margin-bottom: 6px; }
+.dr-quality-row { display: flex; gap: 6px; }
+.dr-q {
+  flex: 1; padding: 8px; min-height: 40px; border-radius: 8px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim);
+  transition: all 0.16s var(--transition);
+}
+.dr-q:hover { border-color: var(--border-bright); color: var(--text); }
+.dr-q.useful.sel { border-color: var(--success); color: var(--success); background: rgba(74,158,92,0.12); }
+.dr-q.partial.sel { border-color: var(--warning); color: var(--warning); background: rgba(212,168,67,0.12); }
+.dr-q.mislead.sel { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+.dr-q.locked { opacity: 0.5; pointer-events: none; }
+
 /* ─── Session History ─────────────────────────────────── */
 .session-list { margin-top: 0; width: 100%; }
 .session-list-title {
@@ -889,11 +1016,78 @@ html, body {
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.7;
-  white-space: pre-wrap;
+  /* white-space:pre-wrap removed — markdown-it emits block structure for spacing;
+     pre-wrap would render every source newline as a visible blank line (HLB-97). */
   word-wrap: break-word;
+  overflow-wrap: anywhere;
   color: var(--text);
+  contain: layout style;
+  /* Per-agent left accent bar (HLB-99). --msg-accent is set per-message in
+     addMessage from the agentId-keyed palette; defaults to neutral. */
+  border-left: 3px solid var(--msg-accent, var(--agent-accent-neutral));
 }
 .message-body strong, .message-body b { color: var(--text); font-weight: 600; }
+
+/* ── Typography pass (HLB-97): rendered markdown block structure ── */
+.message-body > :first-child { margin-top: 0; }
+.message-body > :last-child { margin-bottom: 0; }
+.message-body p { margin: 0 0 8px; }
+.message-body h1, .message-body h2, .message-body h3, .message-body h4 {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 14px 0 6px;
+}
+.message-body h1 { font-size: 17px; border-bottom: 1px solid var(--border-bright); padding-bottom: 4px; }
+.message-body h2 { font-size: 15px; border-bottom: 1px solid var(--border); padding-bottom: 3px; }
+.message-body h3 { font-size: 14px; color: var(--text-primary); }
+.message-body h4 { font-size: 13px; color: var(--text-primary); text-transform: uppercase; letter-spacing: 0.5px; }
+.message-body ul, .message-body ol { margin: 6px 0 10px; padding-left: 22px; }
+.message-body li { margin: 3px 0; }
+.message-body li > ul, .message-body li > ol { margin: 3px 0; }
+.message-body blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent);
+  background: rgba(255,255,255,0.02);
+  color: var(--text-dim);
+  border-radius: 0 8px 8px 0;
+}
+.message-body blockquote p { margin: 4px 0; }
+.message-body code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--accent-orange);
+}
+.message-body pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #0d0d0d;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.message-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.message-body a { color: var(--accent-orange); text-decoration: underline; text-underline-offset: 2px; }
+.message-body a:hover { color: var(--text); }
+.message-body hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.message-body .md-table-wrap { overflow-x: auto; margin: 8px 0; -webkit-overflow-scrolling: touch; }
+.message-body table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.message-body th, .message-body td { border: 1px solid var(--border-bright); padding: 5px 9px; text-align: left; }
+.message-body th { background: var(--bg-elevated); color: var(--text); font-weight: 700; }
+.message-body tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 .message-body .msg-section-header {
   display: block;
   font-weight: 700;
@@ -963,12 +1157,16 @@ html, body {
   background: rgba(215,25,33,0.08);
   border: 1px solid rgba(215,25,33,0.3);
   border-radius: var(--radius);
-  animation: esc-glow 2s ease-in-out infinite;
+  contain: layout style;
 }
 @keyframes esc-glow {
   0%, 100% { box-shadow: 0 0 8px rgba(215,25,33,0.1); }
   50% { box-shadow: 0 0 20px rgba(215,25,33,0.15); }
 }
+/* Single shared pulse: only the most-recent unanswered card carries .pulsing
+   (keyed on mount in addEscalationInline), so many open cards = one running
+   animation, not N. */
+.escalation-card.pulsing { animation: esc-glow 2s ease-in-out infinite; }
 .escalation-card.answered { animation: none; border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.05); }
 .escalation-card .esc-header {
   display: flex; align-items: center; gap: 6px;
@@ -1723,6 +1921,17 @@ html, body {
   .desktop-sidebar, .desktop-right { display: none !important; }
 }
 </style>
+<!-- Renderer libs (HLB-96). markdown-it is eager (first-paint render path); KaTeX + hljs
+     are lazy-loaded on demand by ensureLib(). Versions/URLs/SRI: public/vendor/VERSIONS.txt
+     markdown-it 14.1.0 UMD — https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js -->
+<script
+  src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"
+  integrity="sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"
+  onload="window.hasMarkdownIt = typeof window.markdownit === 'function'"
+  onerror="this.onerror=null;var s=document.createElement('script');s.src='vendor/markdown-it.min.js';s.onload=function(){window.hasMarkdownIt=typeof window.markdownit==='function'};document.head.appendChild(s)"
+></script>
 </head>
 <body>
 <div class="app">
@@ -1780,6 +1989,14 @@ html, body {
           <div class="welcome-actions">
             <button class="improve-btn" id="btn-improve">✨ Improve</button>
             <button class="welcome-submit" id="welcome-submit">⚡ Deploy War Room</button>
+          </div>
+          <div class="preset-picker" id="preset-picker">
+            <div class="preset-picker-title">Tune the council</div>
+            <div class="preset-chips">
+              <button class="preset-chip" data-preset="engineer"><span class="pc-glyph">⚙</span>Engineer</button>
+              <button class="preset-chip" data-preset="scientist"><span class="pc-glyph">🔬</span>Scientist</button>
+            </div>
+            <div class="preset-caption" id="preset-caption"></div>
           </div>
           <div class="example-prompts" id="example-prompts">
             <div class="example-prompts-title">Try an example</div>
@@ -1944,6 +2161,10 @@ let escalationCount = 0;
 let pendingEscalations = 0;
 let sessionStart = null;
 let durationInterval = null;
+let selectedPreset = null;        // 'engineer' | 'scientist' | null (generalist)
+let presetData = [];              // fetched /api/presets
+let lastSynthesisMsg = null;      // captured for the Decision Record card
+let drQualitySent = false;        // one quality rating per completed session
 let pendingFiles = [];  // [{ id, file, tokens, mime, name, status, error, extraction_error }]
 let fsConfig = null;
 let activeSheet = null;
@@ -2127,6 +2348,9 @@ function handleMessage(data) {
     case 'message':
       removeThinking(data.agentId);
       addMessage(data);
+      // Capture the orchestrator's synthesis for the Decision Record (no
+      // extra LLM call — the card templates from this verbatim).
+      if (data.phase === 'Synthesis' && data.agentId === 'process-architect') lastSynthesisMsg = data;
       messageCount++;
       document.getElementById('info-messages').textContent = messageCount;
       updateBarStats();
@@ -2172,6 +2396,7 @@ function handleMessage(data) {
       break;
 
     case 'deliberation-complete':
+      renderDecisionRecord();
       addCompleteBanner();
       document.getElementById('status-badge').textContent = 'Complete';
       document.getElementById('status-badge').className = 'status-badge idle';
@@ -2281,6 +2506,11 @@ function handleMessage(data) {
       if (data.session.phase != null) {
         const phaseIdx = data.session.active ? data.session.phase : phases.length;
         updatePhases(phaseIdx);
+      }
+      // Completed sessions get the Decision Record card up top too (templated
+      // from the stored Synthesis message — no deliberation-complete event here).
+      if (!data.session.active && (data.session.messages || []).some(m => m.phase === 'Synthesis')) {
+        renderDecisionRecord();
       }
       break;
 
@@ -2570,8 +2800,118 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+// ─── Renderer libs (HLB-96) ──────────────────────────────
+// markdown-it is loaded eagerly via the <head> <script> (CDN + vendored onerror
+// fallback); it sets window.hasMarkdownIt true once the global exists. Renderers
+// MUST read this SYNCHRONOUS flag and never block on the async loader. KaTeX and
+// highlight.js are lazy: ensureLib() injects them only when loadKatex()/loadHljs()
+// is called. Each tries the CDN (with SRI) first and falls back to the vendored
+// copy under vendor/ on load error / SRI failure; if both are absent it rejects.
+if (typeof window.hasMarkdownIt === 'undefined') window.hasMarkdownIt = typeof window.markdownit === 'function';
+
+const VENDOR_LIBS = {
+  // name -> { cdn, sri, vendor, ready(): bool, css?: { cdn, vendor } }
+  'markdown-it': {
+    cdn: 'https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js',
+    sri: 'sha384-wLhprpjsmjc/XYIcF+LpMxd8yS1gss6jhevOp6F6zhiIoFK6AmHtm4bGKtehTani',
+    vendor: 'vendor/markdown-it.min.js',
+    ready: () => typeof window.markdownit === 'function',
+  },
+  'katex': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js',
+    sri: 'sha384-XjKyOOlGwcjNTAIQHIpgOno0Hl1YQqzUOEleOLALmuqehneUG+vnGctmUb0ZY0l8',
+    vendor: 'vendor/katex.min.js',
+    ready: () => typeof window.katex !== 'undefined',
+    css: {
+      cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css',
+      vendor: 'vendor/katex.min.css',
+    },
+  },
+  'katex-auto-render': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js',
+    sri: 'sha384-+VBxd3r6XgURycqtZ117nYw44OOcIax56Z4dCRWbxyPt0Koah1uHoK0o4+/RRE05',
+    vendor: 'vendor/katex-auto-render.min.js',
+    ready: () => typeof window.renderMathInElement === 'function',
+  },
+  'highlight': {
+    cdn: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js',
+    sri: 'sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU',
+    vendor: 'vendor/highlight.min.js',
+    ready: () => typeof window.hljs !== 'undefined',
+    css: {
+      cdn: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/atom-one-dark.min.css',
+      vendor: 'vendor/highlight-atom-one-dark.min.css',
+    },
+  },
+};
+
+const _libPromises = {};   // name -> Promise (one load attempt per name)
+
+function _injectScript(src, sri) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    if (sri) { s.integrity = sri; s.crossOrigin = 'anonymous'; s.referrerPolicy = 'no-referrer'; }
+    s.onload = () => resolve();
+    s.onerror = () => { s.remove(); reject(new Error('load failed: ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+function _injectCssOnce(cfg) {
+  if (!cfg) return;
+  // Try CDN stylesheet; swap to vendored on error. CSS need not block the JS promise.
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = cfg.cdn;
+  link.crossOrigin = 'anonymous';
+  link.onerror = () => { link.onerror = null; link.href = cfg.vendor; };
+  document.head.appendChild(link);
+}
+
+// ensureLib(name): resolve once the lib global exists. CDN (SRI) first, vendored on
+// failure, reject cleanly if both are absent. Memoized per name; never throws sync.
+function ensureLib(name) {
+  const cfg = VENDOR_LIBS[name];
+  if (!cfg) return Promise.reject(new Error('unknown lib: ' + name));
+  if (cfg.ready()) return Promise.resolve();
+  if (_libPromises[name]) return _libPromises[name];
+
+  _libPromises[name] = (async () => {
+    _injectCssOnce(cfg.css);
+    try {
+      await _injectScript(cfg.cdn, cfg.sri);
+      if (cfg.ready()) return;
+    } catch (_) { /* fall through to vendored */ }
+    try {
+      await _injectScript(cfg.vendor, null);
+      if (cfg.ready()) return;
+    } catch (_) { /* both failed */ }
+    throw new Error(name + ' unavailable (CDN + vendored both failed)');
+  })();
+
+  // A failed attempt must not poison future calls — drop the memo on reject.
+  _libPromises[name].catch(() => { delete _libPromises[name]; });
+  return _libPromises[name];
+}
+
+// Lazy loaders: KaTeX (core + auto-render) and highlight.js. Called only when a
+// message actually contains math / a fenced code block (wired in HLB-97/98).
+function loadKatex() {
+  return ensureLib('katex').then(() => ensureLib('katex-auto-render'));
+}
+function loadHljs() {
+  return ensureLib('highlight');
+}
+
 // ─── Feed ────────────────────────────────────────────────
-function clearFeed() { document.getElementById('feed').innerHTML = ''; }
+function clearFeed() {
+  document.getElementById('feed').innerHTML = '';
+  // Reset per-session Decision Record state so a fresh session never shows a
+  // stale answer card or a pre-locked quality tap.
+  lastSynthesisMsg = null;
+  drQualitySent = false;
+}
 function scrollFeed() { const f = document.getElementById('feed'); requestAnimationFrame(() => f.scrollTop = f.scrollHeight); }
 
 // Jump to latest / Back to top FABs
@@ -2646,39 +2986,212 @@ function addPhaseSeparator(name) {
   scrollFeed();
 }
 
+// Module-singleton markdown-it. Built lazily once the global is available;
+// html:false makes its output inert (raw agent tags are NOT honored), which is
+// what makes `bodyEl.innerHTML = md.render(...)` a sanctioned sink (TASKSPEC AC1/AC5).
+let _md = null;
+function getMd() {
+  if (_md) return _md;
+  if (!window.hasMarkdownIt || typeof window.markdownit !== 'function') return null;
+  _md = window.markdownit({ html: false, linkify: true, breaks: false });
+  // Preserve KaTeX delimiters (HLB-98): markdown-it's default `escape` rule strips
+  // the backslash before ( ) [ ], turning `\(a^2\)` into bare `(a^2)` — destroying the
+  // inline-math delimiters before KaTeX can see them. Override `escape` so a backslash
+  // before ( ) [ ] is emitted LITERALLY (delimiter survives into the DOM); every other
+  // backslash escape keeps markdown-it's normal behavior.
+  const _escape = _md.inline.ruler.__rules__.find(r => r.name === 'escape');
+  if (_escape) {
+    const _origEscape = _escape.fn;
+    _md.inline.ruler.at('escape', function (state, silent) {
+      const ch = state.src.charCodeAt(state.pos + 1);
+      // 0x28 ( 0x29 ) 0x5B [ 0x5D ]
+      if (state.src.charCodeAt(state.pos) === 0x5C /* \ */ &&
+          (ch === 0x28 || ch === 0x29 || ch === 0x5B || ch === 0x5D)) {
+        if (!silent) state.pending += '\\' + String.fromCharCode(ch);
+        state.pos += 2;
+        return true;
+      }
+      return _origEscape(state, silent);
+    });
+  }
+  return _md;
+}
+
+const _VERDICT_RE = /^(?:Recommendation|Verdict|Conclusion|Summary|Key Finding|Action Item|Risk|Warning)s?:/i;
+
+// Strip human-input markers (preserve legacy behavior). Returns plain text.
+function stripMarkers(raw) {
+  return String(raw == null ? '' : raw)
+    .replace(/<need_human_input>[\s\S]*?<\/need_human_input>/gi, '')
+    .replace(/NEED_HUMAN_INPUT:\s*.+/g, '')
+    .trim();
+}
+
+// Synchronous. Returns an HTML STRING. With markdown-it available, that string is
+// inert sanitized markdown (html:false). Without it (loader unresolved / failed),
+// returns escaped plaintext — never raw agent text into innerHTML.
 function formatMessageContent(raw) {
-  let content = raw.replace(/<need_human_input>[\s\S]*?<\/need_human_input>/gi, '').replace(/NEED_HUMAN_INPUT:\s*.+/g, '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').trim();
-  // Highlight verdict/recommendation/conclusion sections
-  content = content.replace(/^((?:Recommendation|Verdict|Conclusion|Summary|Key Finding|Action Item|Risk|Warning)s?:)/gim,
-    '<span class="msg-verdict">$1</span>');
-  return content;
+  const stripped = stripMarkers(raw);
+  const md = getMd();
+  if (!md) return escHtml(stripped);
+  return md.render(stripped);
+}
+
+// Post-render verdict highlight: walk the rendered block children and tag any
+// top-level block whose leading text matches a verdict keyword. Operates on the
+// rendered DOM (not a raw-text regex) so it can never match inside a code block.
+function applyVerdictHighlight(bodyEl) {
+  for (const child of bodyEl.children) {
+    if (child.classList && child.classList.contains('copy-btn')) continue;
+    // Skip the table wrapper (HLB-98): a wrapped table whose leading cell text is
+    // e.g. "Summary:" must not pick up a spurious .msg-verdict on the DIV.
+    if (child.classList && child.classList.contains('md-table-wrap')) continue;
+    const tag = child.tagName;
+    if (tag === 'PRE' || tag === 'CODE' || tag === 'TABLE' || tag === 'UL' || tag === 'OL' || tag === 'DIV') continue;
+    const text = (child.textContent || '').trimStart();
+    if (_VERDICT_RE.test(text)) child.classList.add('msg-verdict');
+  }
+}
+
+// Wrap rendered <table> elements so they scroll horizontally on mobile.
+function wrapTables(bodyEl) {
+  bodyEl.querySelectorAll('table').forEach((t) => {
+    if (t.parentElement && t.parentElement.classList.contains('md-table-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'md-table-wrap';
+    t.replaceWith(wrap);
+    wrap.appendChild(t);
+  });
+}
+
+// Trigger detection (HLB-98). KaTeX is restricted to \(…\) and $$…$$ ONLY — single
+// `$` is never math (so "costs $50" stays literal). hljs runs only on fenced blocks.
+const _MATH_RE = /\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$/;
+
+// Lazy enhancement of an ALREADY-appended message body, in place. Only fetches a lib
+// when its trigger token is present in the source (a text-only message fetches none).
+// Mutates one body subtree — never re-renders the feed (WS-flicker rules). The #feed
+// MutationObserver re-fires on this mutation; injectCopyBtn is idempotent so the body
+// keeps exactly one Copy button.
+function enhanceMessageBody(bodyEl, source) {
+  const src = String(source == null ? '' : source);
+
+  // (a) Math: typeset only \(…\) (inline) and $$…$$ (display). ignoredTags keeps a
+  //     `$$`/`\(` inside a code fence (pre/code) literal. throwOnError:false so a bad
+  //     expression renders the source, never throws.
+  if (_MATH_RE.test(src)) {
+    loadKatex().then(() => {
+      if (typeof window.renderMathInElement !== 'function' || !bodyEl.isConnected) return;
+      try {
+        window.renderMathInElement(bodyEl, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\(', right: '\\)', display: false },
+          ],
+          throwOnError: false,
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        });
+      } catch (_) { /* degrade to literal delimiters */ }
+    }).catch(() => { /* KaTeX unavailable: leave delimiters literal */ });
+  }
+
+  // (b) Code: highlight each fenced block (pre > code) only. Never prose / inline code.
+  const fences = bodyEl.querySelectorAll('pre > code');
+  if (fences.length) {
+    loadHljs().then(() => {
+      if (typeof window.hljs === 'undefined' || !bodyEl.isConnected) return;
+      bodyEl.querySelectorAll('pre > code').forEach((block) => {
+        if (block.dataset.highlighted) return;
+        try { window.hljs.highlightElement(block); } catch (_) { /* leave plain */ }
+      });
+    }).catch(() => { /* hljs unavailable: plain <pre> */ });
+  }
+}
+
+// 8-hue per-agent accent (HLB-99). Keyed by core agentId (stable) — NOT agentColor,
+// which is not 8-distinct (process-architect and research-scout both #00ff41). The
+// hex values mirror the --agent-accent-* CSS vars; this map is the single source of
+// truth read by addMessage. Specialist / unknown agentId → neutral fallback.
+const AGENT_ACCENTS = {
+  'process-architect':    '#D71921',
+  'systems-synthesizer':  '#E0843C',
+  'divergent-generator':  '#D9C04A',
+  'convergent-evaluator': '#5FB86A',
+  'red-teamer':           '#C2425E',
+  'quantitative-expert':  '#4A9DE0',
+  'qualitative-expert':   '#9B6FD4',
+  'research-scout':       '#3FC4B8',
+};
+const AGENT_ACCENT_NEUTRAL = '#666666';
+function agentAccent(agentId) {
+  return AGENT_ACCENTS[agentId] || AGENT_ACCENT_NEUTRAL;
 }
 
 function addMessage(msg) {
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const content = formatMessageContent(msg.content);
-  const isLong = msg.content.length > 500;
+  const isLong = (msg.content || '').length > 500;
+
+  // Assemble the WRAPPER off-DOM in a DocumentFragment, single appendChild (AC5).
+  const frag = document.createDocumentFragment();
   const d = document.createElement('div');
   d.className = 'message';
-  d.innerHTML = `
-    <div class="message-header">
-      <div class="message-badge" style="border-color:${msg.agentColor}40"><span class="emoji">${msg.agentEmoji}</span><span style="color:${msg.agentColor}">${msg.agentName}</span></div>
-      <span class="message-phase">${msg.phase}</span>
-      <span class="message-time">${time}</span>
-    </div>
-    <div class="message-body${isLong ? ' collapsed' : ''}" style="border-color:${msg.agentColor}15">${content}</div>
-    ${isLong ? '<button class="msg-toggle">Show more</button>' : ''}
-    <div class="message-timestamp">${time}</div>
-  `;
+
+  const header = document.createElement('div');
+  header.className = 'message-header';
+  const badge = document.createElement('div');
+  badge.className = 'message-badge';
+  badge.style.borderColor = `${msg.agentColor}40`;
+  const emoji = document.createElement('span');
+  emoji.className = 'emoji';
+  emoji.textContent = msg.agentEmoji || '';
+  const name = document.createElement('span');
+  name.style.color = msg.agentColor || '';
+  name.textContent = msg.agentName || '';
+  badge.append(emoji, name);
+  const phase = document.createElement('span');
+  phase.className = 'message-phase';
+  phase.textContent = msg.phase || '';
+  const headerTime = document.createElement('span');
+  headerTime.className = 'message-time';
+  headerTime.textContent = time;
+  header.append(badge, phase, headerTime);
+
+  const body = document.createElement('div');
+  body.className = 'message-body' + (isLong ? ' collapsed' : '');
+  body.style.borderColor = `${msg.agentColor}15`;
+  // Per-agent left accent bar (HLB-99): keyed by stable agentId, not agentColor.
+  // Set both the CSS var (for the stylesheet rule) and the inline border-left-color
+  // so the accent wins over the borderColor shorthand set above (inline > sheet).
+  const _accent = agentAccent(msg.agentId);
+  body.style.setProperty('--msg-accent', _accent);
+  body.style.borderLeftColor = _accent;
+  // Sanctioned sink: inert sanitized markdown (html:false) or escaped plaintext.
+  body.innerHTML = formatMessageContent(msg.content);
+  if (getMd()) { wrapTables(body); applyVerdictHighlight(body); }
+
+  d.append(header, body);
+
   if (isLong) {
-    const toggle = d.querySelector('.msg-toggle');
-    const body = d.querySelector('.message-body');
+    const toggle = document.createElement('button');
+    toggle.className = 'msg-toggle';
+    toggle.textContent = 'Show more';
     toggle.addEventListener('click', () => {
       const collapsed = body.classList.toggle('collapsed');
       toggle.textContent = collapsed ? 'Show more' : 'Show less';
     });
+    d.append(toggle);
   }
-  document.getElementById('feed').appendChild(d);
+
+  const ts = document.createElement('div');
+  ts.className = 'message-timestamp';
+  ts.textContent = time;
+  d.append(ts);
+
+  frag.appendChild(d);
+  document.getElementById('feed').appendChild(frag);
+  // Lazy math/code enhancement runs AFTER the body is in the DOM (KaTeX/hljs need a
+  // live element). Only fetches a lib when its trigger token is present (HLB-98).
+  if (getMd()) enhanceMessageBody(body, msg.content);
   scrollFeed();
 }
 
@@ -2720,8 +3233,9 @@ function addSearchIndicator(queries) {
 
 function addEscalationInline(data) {
   const agent = agents.find(a => a.id === data.agentId);
+  const sev = data.severity === 'optional' ? 'optional' : 'blocking';
   const d = document.createElement('div');
-  d.className = `escalation-card${data.answered ? ' answered' : ''}`; d.id = `esc-${data.id}`;
+  d.className = `escalation-card esc-card sev-${sev}${data.answered ? ' answered' : ''}`; d.id = `esc-${data.id}`;
   if (data.answered) {
     d.innerHTML = `
       <div class="esc-header-row">
@@ -2731,38 +3245,72 @@ function addEscalationInline(data) {
       <div class="esc-answer">✅ ${escHtml(data.answer || '')}</div>
     `;
   } else {
+    const sevBadge = `<span class="esc-sev ${sev}">${sev === 'blocking' ? '● blocking' : '○ optional'}</span>`;
+    const defNote = data.defaultAction ? `<div class="esc-default-note">default if unanswered: ${escHtml(data.defaultAction)}</div>` : '';
+    const useDefaultBtn = data.defaultAction ? `<button class="esc-quick use-default" data-id="${data.id}">Use default →</button>` : '';
     d.innerHTML = `
       <div class="esc-header-row">
         <div class="esc-header">⚠️ Input Required — ${escHtml(agent ? agent.name : 'Agent')}</div>
+        ${sevBadge}
         <button class="esc-dismiss" data-id="${data.id}" title="Dismiss">✕</button>
       </div>
       <div class="esc-question">${escHtml(data.question)}</div>
+      ${defNote}
       <div class="esc-input-row">
         <input type="text" class="esc-input" id="esc-in-${data.id}" placeholder="Your response...">
         <button class="esc-submit" data-id="${data.id}">▸</button>
+      </div>
+      <div class="esc-quick-row">
+        ${useDefaultBtn}
+        <button class="esc-quick reframe" data-id="${data.id}">⟲ Reframe</button>
       </div>
     `;
     d.querySelector(`#esc-in-${data.id}`).addEventListener('keydown', e => { if (e.key === 'Enter') respondEscalation(data.id); });
     d.querySelector('.esc-submit').addEventListener('click', () => respondEscalation(data.id));
     d.querySelector('.esc-dismiss').addEventListener('click', () => dismissEscalation(data.id));
+    const ud = d.querySelector('.use-default');
+    if (ud) ud.addEventListener('click', () => respondEscalationWith(data.id, data.defaultAction));
+    d.querySelector('.reframe').addEventListener('click', () => {
+      const inp = document.getElementById(`esc-in-${data.id}`);
+      if (inp) { inp.placeholder = 'Reframe — the question that actually matters is…'; inp.focus(); }
+    });
   }
   document.getElementById('feed').appendChild(d);
+  // Single-pulse invariant: at most ONE unanswered card pulses at a time — the
+  // most recently mounted one. Demote any current pulser, then promote this card.
+  // (A single session has hit 136 escalations; N infinite box-shadow animations
+  // = compositor churn, which the real-time UI rules forbid.)
+  // NOTE: the inline card here (full answer surface) and the right-rail panel
+  // (nav + bulk-accept) are an INTENTIONAL dual design — do NOT "dedupe" them.
+  if (!data.answered) {
+    document.querySelectorAll('.escalation-card.pulsing').forEach(c => c.classList.remove('pulsing'));
+    d.classList.add('pulsing');
+  }
   scrollFeed();
+}
+
+// Re-key the single pulse onto the most-recent still-open inline card after a
+// card resolves (answered or dismissed). If none remain open, nothing pulses.
+function repinEscalationPulse() {
+  const open = document.querySelectorAll('#feed .escalation-card:not(.answered):not(.dismissed)');
+  if (open.length) open[open.length - 1].classList.add('pulsing');
 }
 
 function addEscalationToQueue(data) {
   const agent = agents.find(a => a.id === data.agentId);
+  const sev = data.severity === 'optional' ? 'optional' : 'blocking';
   ['sheet-esc-list', 'desktop-escalations'].forEach(containerId => {
     const container = document.getElementById(containerId);
-    if (container.querySelector('span')) container.innerHTML = '';
+    // Remove ONLY the "None yet" placeholder span (a direct child), not row
+    // contents — escalation rows now contain their own <span> severity dot,
+    // so the old innerHTML-clear-on-any-span wiped prior escalations.
+    const ph = container.querySelector(':scope > span'); if (ph) ph.remove();
     const d = document.createElement('div');
     // Tag the row with an esc-queue-<id> class so markEscalationAnswered
     // can find both copies (mobile sheet + desktop sidebar) without
-    // needing two unique IDs. The queue rows previously had no marker at
-    // all, which is why answering stuck them on the red border until the
-    // page reloaded and session-state replayed everything.
+    // needing two unique IDs.
     d.className = `sheet-esc esc-queue-${data.id}${data.answered ? ' answered' : ''}`;
-    d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')}</div><div class="se-question">${escHtml(data.question)}</div>`;
+    d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')} <span class="se-sev ${sev}" title="${sev}">${sev === 'blocking' ? '●' : '○'}</span></div><div class="se-question">${escHtml(data.question)}</div>`;
     d.addEventListener('click', () => {
       closeSheet();
       const el = document.getElementById(`esc-${data.id}`);
@@ -2770,6 +3318,55 @@ function addEscalationToQueue(data) {
     });
     container.appendChild(d);
   });
+  updatePendingBulk();
+}
+
+// Bulk "ACCEPT N DEFAULTS · PROCEED" lives only in the desktop right-rail
+// panel (mobile parity is intentionally out of scope). rAF-coalesced so a
+// burst of escalations triggers one rebuild, not N.
+let _bulkRaf = null;
+function updatePendingBulk() {
+  if (_bulkRaf) return;
+  _bulkRaf = requestAnimationFrame(() => {
+    _bulkRaf = null;
+    const container = document.getElementById('desktop-escalations');
+    if (!container) return;
+    let bar = container.querySelector(':scope > .esc-bulk-bar');
+    const pending = container.querySelectorAll('.sheet-esc:not(.answered)').length;
+    if (pending >= 2 && currentSession && !bulkTimer) {
+      if (!bar) { bar = document.createElement('div'); bar.className = 'esc-bulk-bar'; }
+      container.appendChild(bar); // keep last
+      bar.innerHTML = `<button class="esc-bulk-btn">ACCEPT ${pending} DEFAULTS · PROCEED</button>`;
+      bar.querySelector('.esc-bulk-btn').addEventListener('click', () => bulkResolveEscalations(bar, pending));
+    } else if (bar && !bulkTimer) {
+      bar.remove();
+    }
+  });
+}
+
+// Optimistic 5s undo: the WS resolve is delayed so an accidental bulk-accept
+// can be taken back without any server-side un-resolve path.
+let bulkTimer = null;
+function bulkResolveEscalations(bar, count) {
+  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
+  if (bulkTimer) return;
+  bar.innerHTML = `<div class="esc-bulk-undo">Accepting ${count} default(s)… <button type="button">Undo</button></div>`;
+  bar.querySelector('button').addEventListener('click', () => {
+    if (bulkTimer) { clearTimeout(bulkTimer); bulkTimer = null; }
+    updatePendingBulk();
+  });
+  bulkTimer = setTimeout(() => {
+    bulkTimer = null;
+    ws.send(JSON.stringify({ type: 'escalation-bulk-resolve', sessionId: currentSession.id }));
+    showToast(`✅ Accepted defaults for ${count} question(s)`);
+  }, 5000);
+}
+
+function respondEscalationWith(escId, answer) {
+  if (!answer) return;
+  if (!currentSession) { showToast('⚠️ No active session'); return; }
+  if (!ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
+  ws.send(JSON.stringify({ type: 'escalation-response', sessionId: currentSession.id, escalationId: escId, answer }));
 }
 
 function respondEscalation(escId) {
@@ -2777,9 +3374,7 @@ function respondEscalation(escId) {
   if (!input) return;
   const answer = input.value.trim();
   if (!answer) { showToast('⚠️ Type your answer first'); return; }
-  if (!currentSession) { showToast('⚠️ No active session'); return; }
-  if (!ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
-  ws.send(JSON.stringify({ type: 'escalation-response', sessionId: currentSession.id, escalationId: escId, answer }));
+  respondEscalationWith(escId, answer);
   // Visual confirmation: dim the row immediately so the user knows the click
   // registered. The escalation-answered broadcast will replace this with the
   // final answered state when the server responds.
@@ -2789,23 +3384,32 @@ function respondEscalation(escId) {
 
 function dismissEscalation(escId) {
   const el = document.getElementById(`esc-${escId}`);
-  if (el) el.classList.add('dismissed');
+  if (el) {
+    const wasPulsing = el.classList.contains('pulsing');
+    el.classList.add('dismissed');
+    el.classList.remove('pulsing');
+    if (wasPulsing) repinEscalationPulse();
+  }
 }
 
 function markEscalationAnswered(escId, answer) {
   const el = document.getElementById(`esc-${escId}`);
   if (el) {
+    const wasPulsing = el.classList.contains('pulsing');
     el.classList.add('answered');
+    el.classList.remove('pulsing');
     const row = el.querySelector('.esc-input-row');
     if (row) row.innerHTML = `<div class="esc-answer">✅ ${escHtml(answer || '')}</div>`;
     const header = el.querySelector('.esc-header');
     if (header) header.textContent = '✅ Answered';
+    if (wasPulsing) repinEscalationPulse();
   }
   // Flip the matching rows in the desktop sidebar and the mobile sheet to
   // the answered (green-bordered, dimmed) state. Both copies share the
   // esc-queue-<id> class added by addEscalationToQueue. Without this, the
   // queues kept their red border until a full page reload.
   document.querySelectorAll(`.esc-queue-${CSS.escape(escId)}`).forEach(q => q.classList.add('answered'));
+  updatePendingBulk();
   // The pending counter and the red badge dot are tied to it. Decrement on
   // each answer (clamped at 0 so a stale broadcast cannot drive it negative)
   // and hide the badge once nothing is left pending. Previously the badge
@@ -2833,6 +3437,103 @@ function addHumanMessage(data) {
   `;
   document.getElementById('feed').appendChild(d);
   scrollFeed();
+}
+
+// Parse the Synthesis markdown into {label, body} sections by its "## HEADER"
+// lines (the synthesis prompt emits these verbatim per preset).
+function parseSynthesisSections(text) {
+  if (!text) return [];
+  const re = /^##\s+(.+?)\s*$/gm;
+  const idx = []; let m;
+  while ((m = re.exec(text)) !== null) idx.push({ label: m[1].trim(), contentStart: re.lastIndex, start: m.index });
+  if (idx.length === 0) return [{ label: 'SUMMARY', body: text.trim() }];
+  return idx.map((it, i) => ({
+    label: it.label,
+    body: text.slice(it.contentStart, i + 1 < idx.length ? idx[i + 1].start : text.length).trim(),
+  }));
+}
+
+// Light markdown→text so the card stays clean and is injected as textContent
+// (no HTML from model output in the sticky card).
+function mdToText(s) {
+  return (s || '')
+    .replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1')
+    .replace(/`(.+?)`/g, '$1').replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ').trim();
+}
+
+// Build the sticky "THE ANSWER" / Decision Record card from the captured
+// Synthesis message. Single-mount, zero new LLM calls, chrome only.
+function renderDecisionRecord() {
+  if (document.getElementById('decision-record')) return; // mount exactly once
+  let synth = lastSynthesisMsg && lastSynthesisMsg.content;
+  if (!synth && currentSession && currentSession.messages) {
+    const m = currentSession.messages.filter(x => x.phase === 'Synthesis' && x.agentId === 'process-architect').pop();
+    synth = m && m.content;
+  }
+  if (!synth) return; // no synthesis (e.g. stopped early) — no card
+  const sections = parseSynthesisSections(synth);
+  const title = mdToText(sections[0].body).split('\n')[0].slice(0, 220) || 'Deliberation complete';
+
+  const card = document.createElement('div');
+  card.className = 'decision-record'; card.id = 'decision-record';
+  const fields = sections.map(s => {
+    const f = document.createElement('div'); f.className = 'dr-field';
+    const lab = document.createElement('div'); lab.className = 'dr-field-label'; lab.textContent = s.label;
+    const bod = document.createElement('div'); bod.className = 'dr-field-body'; bod.textContent = mdToText(s.body);
+    f.appendChild(lab); f.appendChild(bod); return f;
+  });
+  card.innerHTML = `
+    <div class="dr-eyebrow">⚑ The Answer</div>
+    <div class="dr-title"></div>
+    <div class="dr-fields"></div>
+    <div class="dr-actions">
+      <button class="dr-action" data-act="copy">⧉ Copy</button>
+      <button class="dr-action" data-act="export">↓ Export .md</button>
+      <button class="dr-action" data-act="prompt">⤷ Copy as prompt</button>
+    </div>
+    <div class="dr-quality">
+      <div class="dr-quality-label">Was this deliberation useful?</div>
+      <div class="dr-quality-row">
+        <button class="dr-q useful" data-q="USEFUL">Useful</button>
+        <button class="dr-q partial" data-q="PARTIAL">Partial</button>
+        <button class="dr-q mislead" data-q="MISLEADING">Misleading</button>
+      </div>
+    </div>`;
+  card.querySelector('.dr-title').textContent = title;
+  const fieldsWrap = card.querySelector('.dr-fields');
+  fields.forEach(f => fieldsWrap.appendChild(f));
+
+  card.querySelector('[data-act="copy"]').addEventListener('click', () => {
+    navigator.clipboard.writeText(synth).then(() => showToast('⧉ Decision record copied'));
+  });
+  card.querySelector('[data-act="export"]').addEventListener('click', () => {
+    const blob = new Blob([synth], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `decision-record-${(currentSession && currentSession.id || 'session').slice(0, 8)}.md`;
+    a.click(); URL.revokeObjectURL(a.href); showToast('↓ Exported .md');
+  });
+  card.querySelector('[data-act="prompt"]').addEventListener('click', () => {
+    const prob = currentSession ? currentSession.problem : '';
+    const block = `Context — an 8-agent War Room deliberation reached this decision record.\n\nProblem: ${prob}\n\n${synth}`;
+    navigator.clipboard.writeText(block).then(() => showToast('⤷ Copied as a context prompt'));
+  });
+  card.querySelectorAll('.dr-q').forEach(b => b.addEventListener('click', () => {
+    if (drQualitySent) return;
+    drQualitySent = true;
+    b.classList.add('sel');
+    card.querySelectorAll('.dr-q').forEach(x => x.classList.add('locked'));
+    if (currentSession) {
+      fetch(apiUrl(`/api/sessions/${currentSession.id}/quality`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: b.dataset.q }),
+      }).catch(() => {});
+    }
+    showToast('Thanks — feedback recorded');
+  }));
+
+  const feed = document.getElementById('feed');
+  feed.insertBefore(card, feed.firstChild);
 }
 
 function addCompleteBanner() {
@@ -2890,7 +3591,7 @@ async function submitFromWelcome() {
   }
 
   btn.textContent = '⚡ Deploying...';
-  const payload = { problem, file_ids: file_ids };
+  const payload = { problem, file_ids: file_ids, preset_id: selectedPreset };
 
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'new-session', ...payload }));
@@ -3227,8 +3928,46 @@ document.querySelectorAll('.example-chip').forEach(chip => {
   chip.addEventListener('click', () => {
     document.getElementById('welcome-input').value = chip.dataset.prompt;
     document.getElementById('welcome-input').focus();
+    updateWelcomeReady();
   });
 });
+
+// ─── Role presets ───────────────────────────────────────────
+// Fetch preset configs once; selecting a chip swaps the example prompts
+// (textContent only — no DOM rebuild) and seeds the specialist caption.
+async function loadPresets() {
+  try {
+    const res = await fetch(apiUrl('/api/presets'));
+    if (!res.ok) return;
+    presetData = await res.json();
+  } catch (_) { /* presets are additive; absence just means Generalist-only */ }
+}
+function applyPreset(id) {
+  selectedPreset = (selectedPreset === id) ? null : id; // toggle off if re-clicked
+  document.querySelectorAll('.preset-chip').forEach(c => {
+    c.classList.toggle('active', c.dataset.preset === selectedPreset);
+  });
+  const caption = document.getElementById('preset-caption');
+  const preset = presetData.find(p => p.id === selectedPreset);
+  const chips = document.querySelectorAll('#example-prompts .example-chip');
+  if (preset) {
+    // Swap example chips in place (textContent + data-prompt only).
+    preset.examples.forEach((ex, i) => {
+      if (chips[i]) { chips[i].textContent = ex; chips[i].dataset.prompt = ex; }
+    });
+    caption.innerHTML = 'specialists: <span class="pc-spec">' + preset.specialists.join(' · ') + '</span>';
+  } else {
+    // Restore the generalist defaults from the data-prompt baked into HTML.
+    chips.forEach(c => { c.textContent = c.dataset.default || c.textContent; });
+    caption.textContent = '';
+  }
+}
+document.querySelectorAll('.preset-chip').forEach(chip => {
+  chip.addEventListener('click', () => applyPreset(chip.dataset.preset));
+});
+// Snapshot generalist defaults so toggling a preset off can restore them.
+document.querySelectorAll('#example-prompts .example-chip').forEach(c => { c.dataset.default = c.textContent; });
+loadPresets();
 document.getElementById('welcome-submit').addEventListener('click', submitFromWelcome);
 document.getElementById('welcome-input').addEventListener('input', updateWelcomeReady);
 document.getElementById('welcome-input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitFromWelcome(); });

@@ -19,6 +19,7 @@ const { createMemoryManager } = require('./lib/memory');
 const { createQualityManager } = require('./lib/quality');
 const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
+const { getPreset, listPresets } = require('./lib/presets');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 const { buildContext } = require('./lib/context');
 const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
@@ -167,10 +168,13 @@ async function attachFiles(sessionId, fileIds) {
   return attached;
 }
 
-async function createSession(problem, fileIds = []) {
+async function createSession(problem, fileIds = [], presetId = null) {
   const id = genId();
   const now = Date.now();
   stmts.insertSession.run(id, problem, now, now);
+
+  const preset = getPreset(presetId);
+  if (preset) stmts.updateSessionPreset.run(preset.id, now, id);
 
   let files = [];
   if (fileIds.length > 0) {
@@ -182,6 +186,8 @@ async function createSession(problem, fileIds = []) {
     messages: [], humanMessages: [], escalations: [],
     agentStates: {}, active: true, createdAt: now,
     _hasFiles: files.length > 0,
+    _preset: preset,
+    presetId: preset ? preset.id : null,
     searchCache: new Map(),
     searchBudget: makeSessionBudget(),
   };
@@ -207,7 +213,8 @@ function loadSession(id) {
   const escalations = stmts.getSessionEscalations.all(id).map(e => ({
     id: e.id, agentId: e.agent_id, agentName: e.agent_name, agentEmoji: e.agent_emoji,
     question: e.question, sessionId: id, answered: e.status === 'answered',
-    answer: e.answer, createdAt: e.created_at
+    answer: e.answer, createdAt: e.created_at,
+    severity: e.severity || 'blocking', defaultAction: e.default_action || null,
   }));
   const humanMessages = stmts.getSessionHumanMessages.all(id).map(h => ({
     id: h.id, content: h.content, timestamp: h.created_at
@@ -229,6 +236,8 @@ function loadSession(id) {
     pinned: !!row.pinned,
     specialistAgents,
     _hasFiles: files.length > 0,
+    _preset: getPreset(row.preset_id),
+    presetId: row.preset_id || null,
   };
 }
 
@@ -261,28 +270,37 @@ function extractEscalations(text, agentId, sessionId) {
   let match;
   while ((match = xmlRegex.exec(text)) !== null) {
     const q = match[1].trim();
-    if (q) escalations.push({ id: genId(), agentId, question: q, sessionId, answered: false, answer: null, createdAt: Date.now() });
+    if (q) escalations.push({ id: genId(), agentId, question: q, severity: 'blocking', defaultAction: null, sessionId, answered: false, answer: null, createdAt: Date.now() });
   }
   const legacy = /NEED_HUMAN_INPUT:\s*(.+?)(?:\n|$)/g;
   while ((match = legacy.exec(text)) !== null) {
     const q = match[1].trim();
-    if (q) escalations.push({ id: genId(), agentId, question: q, sessionId, answered: false, answer: null, createdAt: Date.now() });
+    if (q) escalations.push({ id: genId(), agentId, question: q, severity: 'blocking', defaultAction: null, sessionId, answered: false, answer: null, createdAt: Date.now() });
   }
   return escalations;
 }
 
 const ESCALATE_TOOL = {
   name: 'escalate_to_human',
-  description: 'Send ONE specific question to the human facilitator. Use this tool only for ambiguities in the problem spec, missing stakeholder context, or constraints you cannot infer — questions ONLY the human can answer. Do NOT use this tool for rhetorical questions that belong inside your deliberation output. Call the tool multiple times to ask multiple questions.',
+  description: 'Send ONE forced-choice question to the human facilitator. Use ONLY for an ambiguity that changes scope, success criteria, or the final recommendation and that only the human can resolve — not for rhetorical questions that belong in your deliberation output. If you cannot name two genuinely competing options, do not call this — decide and announce it in your response instead.',
   input_schema: {
     type: 'object',
     properties: {
       question: {
         type: 'string',
-        description: 'One specific, directly-answerable question for the human. Not a topic, not a list — a single question.',
+        description: 'A single forced-choice question, phrased: "QUESTION — [A] <option> / [B] <option> — default: A". Directly answerable, not a topic or a list.',
+      },
+      severity: {
+        type: 'string',
+        enum: ['blocking', 'optional'],
+        description: '"blocking" if the deliberation cannot sensibly continue without the answer; "optional" if you have a safe default and only want confirmation. Optional questions are auto-resolved to default_action if unanswered.',
+      },
+      default_action: {
+        type: 'string',
+        description: 'In one clause, exactly what you will assume if the human does not answer (your option A).',
       },
     },
-    required: ['question'],
+    required: ['question', 'severity'],
   },
 };
 
@@ -293,6 +311,11 @@ function escalationsFromToolCalls(toolCalls, agentId, sessionId) {
       id: genId(),
       agentId,
       question: tc.input.question.trim(),
+      // Default to 'blocking' on an unrecognized/missing value so an
+      // un-classified escalation is never silently auto-skipped.
+      severity: tc.input.severity === 'optional' ? 'optional' : 'blocking',
+      defaultAction: (typeof tc.input.default_action === 'string' && tc.input.default_action.trim())
+        ? tc.input.default_action.trim() : null,
       sessionId,
       answered: false,
       answer: null,
@@ -468,7 +491,7 @@ async function runAgentTurn(session, agentId, phase) {
     const escalations = [...toolEscalations, ...regexEscalations.filter(e => !seen.has(e.question))];
     escalations.forEach(esc => {
       session.escalations.push(esc);
-      stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.createdAt);
+      stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.severity, esc.defaultAction, esc.createdAt);
       broadcast(session.id, { type: 'escalation', ...esc, agentName: agent.name, agentEmoji: agent.emoji });
     });
 
@@ -515,6 +538,10 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   if (resumeFromPhase > 0) {
     sLog.info({ resumeFromPhase, totalPhases: PHASES.length }, 'resuming deliberation');
   }
+  // Specialist domains come from two sources, preset first: the user's role
+  // preset (explicit intent) is a stronger signal than the auto-classifier.
+  // The classifier still runs for archetype tagging and to top up domains.
+  let recommendedSpecialists = [];
   try {
     const classification = await fingerprint.classify(session.problem);
     if (classification.archetype && classification.confidence >= fingerprint.MIN_CONFIDENCE) {
@@ -524,30 +551,36 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         specialists: classification.recommendedSpecialists,
       }, 'fingerprint classified');
       stmts.updateSessionArchetype.run(classification.archetype, Date.now(), session.id);
-
-      // Store archetype
       const now = Date.now();
       stmts.insertArchetype.run(classification.archetype, classification.archetype, classification.reasoning, now, now);
       stmts.insertSessionArchetype.run(session.id, classification.archetype, classification.confidence);
-
-      // Spawn specialists
-      if (classification.recommendedSpecialists.length > 0) {
-        const specialists = specialist.spawnSpecialists(classification.recommendedSpecialists);
-        if (specialists.length > 0) {
-          session._specialists = specialists;
-          stmts.updateSessionSpecialists.run(JSON.stringify(specialists.map(s => s.id)), Date.now(), session.id);
-          // Initialize specialist agent states
-          specialists.forEach(s => { session.agentStates[s.id] = 'idle'; });
-          // Broadcast updated agent list — global so dashboards refresh.
-          const allAgents = getAgentsForSession(session);
-          broadcastGlobal({ type: 'agents', agents: allAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat, isSpecialist: !!a.isSpecialist })) });
-        }
-      }
+      recommendedSpecialists = classification.recommendedSpecialists || [];
     } else {
       sLog.info({ confidence: classification.confidence }, 'fingerprint: no confident archetype, proceeding with core 8');
     }
   } catch (err) {
     sLog.warn({ err: err.message }, 'fingerprint classification error (proceeding with core 8)');
+  }
+
+  // Preset-seeded specialists take priority, then classifier picks fill the
+  // remaining slots (spawnSpecialists caps the total). A preset spawns its
+  // specialists even when the classifier is not confident.
+  try {
+    const presetSpecialists = (session._preset && Array.isArray(session._preset.specialists))
+      ? session._preset.specialists : [];
+    const domains = [...new Set([...presetSpecialists, ...recommendedSpecialists])];
+    if (domains.length > 0) {
+      const specialists = specialist.spawnSpecialists(domains);
+      if (specialists.length > 0) {
+        session._specialists = specialists;
+        stmts.updateSessionSpecialists.run(JSON.stringify(specialists.map(s => s.id)), Date.now(), session.id);
+        specialists.forEach(s => { session.agentStates[s.id] = 'idle'; });
+        const allAgents = getAgentsForSession(session);
+        broadcastGlobal({ type: 'agents', agents: allAgents.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, color: a.color, role: a.role, hat: a.hat, isSpecialist: !!a.isSpecialist })) });
+      }
+    }
+  } catch (err) {
+    sLog.warn({ err: err.message }, 'specialist spawn error (proceeding with core 8)');
   }
 
   // Retrieve relevant prior sessions for memory injection
@@ -595,7 +628,10 @@ async function runDeliberation(session, resumeFromPhase = 0) {
 
     for (const agentId of phaseAgents) {
       if (!session.active) break;
-      const pending = session.escalations.filter(e => !e.answered);
+      // Only BLOCKING escalations halt the deliberation. Optional ones
+      // accumulate in the pending panel and auto-resolve to their stated
+      // default at phase end (below) — they never block an agent turn.
+      const pending = session.escalations.filter(e => !e.answered && e.severity !== 'optional');
       if (pending.length > 0) {
         broadcast(session.id, { type: 'waiting-for-human', pendingCount: pending.length, sessionId: session.id });
         // F13 — event-driven wait. Each pending escalation gets its own
@@ -614,6 +650,20 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         }
       }
       await runAgentTurn(session, agentId, phaseIdx);
+    }
+
+    // Phase end: auto-resolve any still-open OPTIONAL escalations to their
+    // stated default so the next phase proceeds with the resolution recorded
+    // and fed back to agents — never silently dropped.
+    const unresolvedOptional = session.escalations.filter(e => !e.answered && e.severity === 'optional');
+    for (const e of unresolvedOptional) {
+      const ans = e.defaultAction
+        ? `[auto-resolved to default] ${e.defaultAction}`
+        : '[auto-resolved] No human answer; proceed with your stated default / best judgment.';
+      e.answered = true;
+      e.answer = ans;
+      stmts.answerEscalationBulk.run(ans, Date.now(), e.id);
+      broadcast(session.id, { type: 'escalation-answered', escalationId: e.id, answer: ans, sessionId: session.id, autoResolved: true });
     }
   }
 
