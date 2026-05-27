@@ -17,6 +17,7 @@ import os from 'node:os';
 const require = createRequire(import.meta.url);
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { getPreset, listPresets, EXPERIMENTAL_FIELDS } = require(path.join(root, 'lib', 'presets.js'));
+const { validateWS } = require(path.join(root, 'lib', 'validation.js'));
 const { runMigrations } = require(path.join(root, 'lib', 'migrations.js'));
 const Database = require(path.join(root, 'node_modules', 'better-sqlite3'));
 
@@ -37,6 +38,29 @@ test('presets: unknown / null id resolves to Generalist (null), never throws', (
   assert.equal(getPreset(null), null);
   assert.equal(getPreset(''), null);
   assert.equal(getPreset('bogus'), null);
+});
+
+test('validateWS: new-session preserves preset_id through the gate', () => {
+  // Regression: zod .object() strips unknown keys, so an unregistered field is
+  // silently dropped before the handler reads it. The WS path is preferred over
+  // HTTP when the socket is open, so a missing schema field = presets never apply.
+  const ok = validateWS({ type: 'new-session', problem: 'x', preset_id: 'engineer' });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.data.preset_id, 'engineer');
+  // unrecognized preset is rejected, not coerced
+  const bad = validateWS({ type: 'new-session', problem: 'x', preset_id: 'wizard' });
+  assert.equal(bad.ok, false);
+  // omitting it is still valid (Generalist)
+  assert.equal(validateWS({ type: 'new-session', problem: 'x' }).ok, true);
+});
+
+test('validateWS: escalation-bulk-resolve is an accepted message type', () => {
+  // Regression: the bulk "ACCEPT N DEFAULTS · PROCEED" message was unreachable
+  // because it had no schema entry and validateWS rejects unknown types.
+  const ok = validateWS({ type: 'escalation-bulk-resolve', sessionId: 's1' });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.data.sessionId, 's1');
+  assert.equal(validateWS({ type: 'escalation-bulk-resolve' }).ok, false);
 });
 
 test('migration 016: adds columns and seeds research-methods specialist', () => {
