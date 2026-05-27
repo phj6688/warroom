@@ -2,6 +2,8 @@
 
 > *Eight minds. Five phases. One answer.*
 
+![War Room demo](docs/images/demo.gif)
+
 **War Room** is a multi-agent AI deliberation engine that assembles a council of 8 specialized cognitive agents to rigorously analyze complex problems — from architecture decisions to strategic pivots. Each agent has a distinct role, reasoning style, and area of expertise. Together they run a structured 5-phase deliberation and produce a synthesized, battle-tested recommendation.
 
 ---
