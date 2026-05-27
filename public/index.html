@@ -49,6 +49,20 @@
   --accent-subtle: rgba(215,25,33,0.15);
   --accent-dim: rgba(215,25,33,0.15);
   --accent-orange: #D4A843;
+
+  /* Per-agent accent palette (HLB-99) — 8 distinct hues keyed by core agentId,
+     tuned for the dark (#0a0a0a) crimson-accented theme: muted, mid-luminance,
+     no neon. Crimson family is the lead (process-architect). Specialist/unknown
+     agents fall back to --agent-accent-neutral. */
+  --agent-accent-process-architect:    #D71921; /* crimson — theme lead */
+  --agent-accent-systems-synthesizer:  #E0843C; /* amber */
+  --agent-accent-divergent-generator:  #D9C04A; /* gold */
+  --agent-accent-convergent-evaluator: #5FB86A; /* green */
+  --agent-accent-red-teamer:           #C2425E; /* rose-red */
+  --agent-accent-quantitative-expert:  #4A9DE0; /* sky blue */
+  --agent-accent-qualitative-expert:   #9B6FD4; /* violet */
+  --agent-accent-research-scout:       #3FC4B8; /* teal */
+  --agent-accent-neutral:              #666666; /* specialist / unknown fallback */
   --success: #4A9E5C;
   --warning: #D4A843;
   --error: #D71921;
@@ -1008,6 +1022,9 @@ html, body {
   overflow-wrap: anywhere;
   color: var(--text);
   contain: layout style;
+  /* Per-agent left accent bar (HLB-99). --msg-accent is set per-message in
+     addMessage from the agentId-keyed palette; defaults to neutral. */
+  border-left: 3px solid var(--msg-accent, var(--agent-accent-neutral));
 }
 .message-body strong, .message-body b { color: var(--text); font-weight: 600; }
 
@@ -3091,6 +3108,25 @@ function enhanceMessageBody(bodyEl, source) {
   }
 }
 
+// 8-hue per-agent accent (HLB-99). Keyed by core agentId (stable) — NOT agentColor,
+// which is not 8-distinct (process-architect and research-scout both #00ff41). The
+// hex values mirror the --agent-accent-* CSS vars; this map is the single source of
+// truth read by addMessage. Specialist / unknown agentId → neutral fallback.
+const AGENT_ACCENTS = {
+  'process-architect':    '#D71921',
+  'systems-synthesizer':  '#E0843C',
+  'divergent-generator':  '#D9C04A',
+  'convergent-evaluator': '#5FB86A',
+  'red-teamer':           '#C2425E',
+  'quantitative-expert':  '#4A9DE0',
+  'qualitative-expert':   '#9B6FD4',
+  'research-scout':       '#3FC4B8',
+};
+const AGENT_ACCENT_NEUTRAL = '#666666';
+function agentAccent(agentId) {
+  return AGENT_ACCENTS[agentId] || AGENT_ACCENT_NEUTRAL;
+}
+
 function addMessage(msg) {
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const isLong = (msg.content || '').length > 500;
@@ -3123,6 +3159,12 @@ function addMessage(msg) {
   const body = document.createElement('div');
   body.className = 'message-body' + (isLong ? ' collapsed' : '');
   body.style.borderColor = `${msg.agentColor}15`;
+  // Per-agent left accent bar (HLB-99): keyed by stable agentId, not agentColor.
+  // Set both the CSS var (for the stylesheet rule) and the inline border-left-color
+  // so the accent wins over the borderColor shorthand set above (inline > sheet).
+  const _accent = agentAccent(msg.agentId);
+  body.style.setProperty('--msg-accent', _accent);
+  body.style.borderLeftColor = _accent;
   // Sanctioned sink: inert sanitized markdown (html:false) or escaped plaintext.
   body.innerHTML = formatMessageContent(msg.content);
   if (getMd()) { wrapTables(body); applyVerdictHighlight(body); }
