@@ -2977,6 +2977,26 @@ function getMd() {
   if (_md) return _md;
   if (!window.hasMarkdownIt || typeof window.markdownit !== 'function') return null;
   _md = window.markdownit({ html: false, linkify: true, breaks: false });
+  // Preserve KaTeX delimiters (HLB-98): markdown-it's default `escape` rule strips
+  // the backslash before ( ) [ ], turning `\(a^2\)` into bare `(a^2)` — destroying the
+  // inline-math delimiters before KaTeX can see them. Override `escape` so a backslash
+  // before ( ) [ ] is emitted LITERALLY (delimiter survives into the DOM); every other
+  // backslash escape keeps markdown-it's normal behavior.
+  const _escape = _md.inline.ruler.__rules__.find(r => r.name === 'escape');
+  if (_escape) {
+    const _origEscape = _escape.fn;
+    _md.inline.ruler.at('escape', function (state, silent) {
+      const ch = state.src.charCodeAt(state.pos + 1);
+      // 0x28 ( 0x29 ) 0x5B [ 0x5D ]
+      if (state.src.charCodeAt(state.pos) === 0x5C /* \ */ &&
+          (ch === 0x28 || ch === 0x29 || ch === 0x5B || ch === 0x5D)) {
+        if (!silent) state.pending += '\\' + String.fromCharCode(ch);
+        state.pos += 2;
+        return true;
+      }
+      return _origEscape(state, silent);
+    });
+  }
   return _md;
 }
 
@@ -3006,8 +3026,11 @@ function formatMessageContent(raw) {
 function applyVerdictHighlight(bodyEl) {
   for (const child of bodyEl.children) {
     if (child.classList && child.classList.contains('copy-btn')) continue;
+    // Skip the table wrapper (HLB-98): a wrapped table whose leading cell text is
+    // e.g. "Summary:" must not pick up a spurious .msg-verdict on the DIV.
+    if (child.classList && child.classList.contains('md-table-wrap')) continue;
     const tag = child.tagName;
-    if (tag === 'PRE' || tag === 'CODE' || tag === 'TABLE' || tag === 'UL' || tag === 'OL') continue;
+    if (tag === 'PRE' || tag === 'CODE' || tag === 'TABLE' || tag === 'UL' || tag === 'OL' || tag === 'DIV') continue;
     const text = (child.textContent || '').trimStart();
     if (_VERDICT_RE.test(text)) child.classList.add('msg-verdict');
   }
@@ -3022,6 +3045,50 @@ function wrapTables(bodyEl) {
     t.replaceWith(wrap);
     wrap.appendChild(t);
   });
+}
+
+// Trigger detection (HLB-98). KaTeX is restricted to \(…\) and $$…$$ ONLY — single
+// `$` is never math (so "costs $50" stays literal). hljs runs only on fenced blocks.
+const _MATH_RE = /\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$/;
+
+// Lazy enhancement of an ALREADY-appended message body, in place. Only fetches a lib
+// when its trigger token is present in the source (a text-only message fetches none).
+// Mutates one body subtree — never re-renders the feed (WS-flicker rules). The #feed
+// MutationObserver re-fires on this mutation; injectCopyBtn is idempotent so the body
+// keeps exactly one Copy button.
+function enhanceMessageBody(bodyEl, source) {
+  const src = String(source == null ? '' : source);
+
+  // (a) Math: typeset only \(…\) (inline) and $$…$$ (display). ignoredTags keeps a
+  //     `$$`/`\(` inside a code fence (pre/code) literal. throwOnError:false so a bad
+  //     expression renders the source, never throws.
+  if (_MATH_RE.test(src)) {
+    loadKatex().then(() => {
+      if (typeof window.renderMathInElement !== 'function' || !bodyEl.isConnected) return;
+      try {
+        window.renderMathInElement(bodyEl, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\(', right: '\\)', display: false },
+          ],
+          throwOnError: false,
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        });
+      } catch (_) { /* degrade to literal delimiters */ }
+    }).catch(() => { /* KaTeX unavailable: leave delimiters literal */ });
+  }
+
+  // (b) Code: highlight each fenced block (pre > code) only. Never prose / inline code.
+  const fences = bodyEl.querySelectorAll('pre > code');
+  if (fences.length) {
+    loadHljs().then(() => {
+      if (typeof window.hljs === 'undefined' || !bodyEl.isConnected) return;
+      bodyEl.querySelectorAll('pre > code').forEach((block) => {
+        if (block.dataset.highlighted) return;
+        try { window.hljs.highlightElement(block); } catch (_) { /* leave plain */ }
+      });
+    }).catch(() => { /* hljs unavailable: plain <pre> */ });
+  }
 }
 
 function addMessage(msg) {
@@ -3080,6 +3147,9 @@ function addMessage(msg) {
 
   frag.appendChild(d);
   document.getElementById('feed').appendChild(frag);
+  // Lazy math/code enhancement runs AFTER the body is in the DOM (KaTeX/hljs need a
+  // live element). Only fetches a lib when its trigger token is present (HLB-98).
+  if (getMd()) enhanceMessageBody(body, msg.content);
   scrollFeed();
 }
 
