@@ -8,6 +8,9 @@ services:
     env_file:
       - .env
     environment:
+      # OPENAI_BASE_URL / OPENAI_API_KEY are loaded from .env
+      # via env_file above. WAR_ROOM_TOKEN, MCP_API_KEY, etc. also come
+      # from .env. NEVER inline secrets here — docker-compose.yml is in git.
       - BASELINE_LOG=data/baseline-usage.jsonl
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
       - EMBED_GATEWAY_URL=${EMBED_GATEWAY_URL:-http://embed-gateway:8200}

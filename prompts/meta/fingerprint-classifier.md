@@ -15,7 +15,7 @@ Available archetypes:
 - innovation-exploration: Novel concepts, emerging technology, feasibility
 
 Available specialist domains:
-legal, medical, financial, security, engineering-infra, engineering-ml, education, policy, ux-design, data-science
+legal, medical, financial, security, engineering-infra, engineering-ml, education, policy, ux-design, data-science, research-methods
 
 Output format — respond with EXACTLY this structure (no other text):
 ARCHETYPE: [archetype-id]
