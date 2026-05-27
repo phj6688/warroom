@@ -1076,12 +1076,16 @@ html, body {
   background: rgba(215,25,33,0.08);
   border: 1px solid rgba(215,25,33,0.3);
   border-radius: var(--radius);
-  animation: esc-glow 2s ease-in-out infinite;
+  contain: layout style;
 }
 @keyframes esc-glow {
   0%, 100% { box-shadow: 0 0 8px rgba(215,25,33,0.1); }
   50% { box-shadow: 0 0 20px rgba(215,25,33,0.15); }
 }
+/* Single shared pulse: only the most-recent unanswered card carries .pulsing
+   (keyed on mount in addEscalationInline), so many open cards = one running
+   animation, not N. */
+.escalation-card.pulsing { animation: esc-glow 2s ease-in-out infinite; }
 .escalation-card.answered { animation: none; border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.05); }
 .escalation-card .esc-header {
   display: flex; align-items: center; gap: 6px;
@@ -2903,7 +2907,24 @@ function addEscalationInline(data) {
     });
   }
   document.getElementById('feed').appendChild(d);
+  // Single-pulse invariant: at most ONE unanswered card pulses at a time — the
+  // most recently mounted one. Demote any current pulser, then promote this card.
+  // (A single session has hit 136 escalations; N infinite box-shadow animations
+  // = compositor churn, which the real-time UI rules forbid.)
+  // NOTE: the inline card here (full answer surface) and the right-rail panel
+  // (nav + bulk-accept) are an INTENTIONAL dual design — do NOT "dedupe" them.
+  if (!data.answered) {
+    document.querySelectorAll('.escalation-card.pulsing').forEach(c => c.classList.remove('pulsing'));
+    d.classList.add('pulsing');
+  }
   scrollFeed();
+}
+
+// Re-key the single pulse onto the most-recent still-open inline card after a
+// card resolves (answered or dismissed). If none remain open, nothing pulses.
+function repinEscalationPulse() {
+  const open = document.querySelectorAll('#feed .escalation-card:not(.answered):not(.dismissed)');
+  if (open.length) open[open.length - 1].classList.add('pulsing');
 }
 
 function addEscalationToQueue(data) {
@@ -2994,17 +3015,25 @@ function respondEscalation(escId) {
 
 function dismissEscalation(escId) {
   const el = document.getElementById(`esc-${escId}`);
-  if (el) el.classList.add('dismissed');
+  if (el) {
+    const wasPulsing = el.classList.contains('pulsing');
+    el.classList.add('dismissed');
+    el.classList.remove('pulsing');
+    if (wasPulsing) repinEscalationPulse();
+  }
 }
 
 function markEscalationAnswered(escId, answer) {
   const el = document.getElementById(`esc-${escId}`);
   if (el) {
+    const wasPulsing = el.classList.contains('pulsing');
     el.classList.add('answered');
+    el.classList.remove('pulsing');
     const row = el.querySelector('.esc-input-row');
     if (row) row.innerHTML = `<div class="esc-answer">✅ ${escHtml(answer || '')}</div>`;
     const header = el.querySelector('.esc-header');
     if (header) header.textContent = '✅ Answered';
+    if (wasPulsing) repinEscalationPulse();
   }
   // Flip the matching rows in the desktop sidebar and the mobile sheet to
   // the answered (green-bordered, dimmed) state. Both copies share the
