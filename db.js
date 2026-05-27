@@ -51,8 +51,11 @@ const stmts = {
   getActiveSessions: db.prepare('SELECT id FROM sessions WHERE active = 1'),
   insertFile: db.prepare('INSERT OR IGNORE INTO session_files (session_id, file_id, file_sha256, file_name, file_tokens, file_mime, attached_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   insertMessage: db.prepare('INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
-  insertEscalation: db.prepare('INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, NULL, \'pending\', ?, NULL)'),
+  insertEscalation: db.prepare('INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, severity, default_action, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, \'pending\', ?, NULL)'),
   answerEscalation: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ? WHERE id = ?'),
+  // Bulk / auto-resolve path also flags bulk_resolved so we can measure how
+  // often the human carpet-bombs defaults vs engages (Red Team watch-metric).
+  answerEscalationBulk: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ?, bulk_resolved = 1 WHERE id = ?'),
   insertHumanMessage: db.prepare('INSERT INTO human_messages (id, session_id, content, created_at) VALUES (?, ?, ?, ?)'),
   getSessions: db.prepare('SELECT * FROM sessions ORDER BY created_at DESC'),
   getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
@@ -109,6 +112,8 @@ const stmts = {
   // Session specialist tracking
   updateSessionArchetype: db.prepare('UPDATE sessions SET archetype_id = ?, updated_at = ? WHERE id = ?'),
   updateSessionSpecialists: db.prepare('UPDATE sessions SET specialist_agents = ?, updated_at = ? WHERE id = ?'),
+  updateSessionPreset: db.prepare('UPDATE sessions SET preset_id = ?, updated_at = ? WHERE id = ?'),
+  updateSessionSynthesisQuality: db.prepare('UPDATE sessions SET synthesis_quality = ?, updated_at = ? WHERE id = ?'),
   insertEmbedding: db.prepare('INSERT INTO session_embeddings(embedding) VALUES (?)'),
   insertEmbeddingMeta: db.prepare('INSERT INTO embedding_meta (rowid, session_id, content_type, created_at) VALUES (?, ?, ?, ?)'),
   getEmbeddingMetaBySession: db.prepare('SELECT * FROM embedding_meta WHERE session_id = ?'),
