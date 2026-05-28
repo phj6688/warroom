@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- CI was discovering only 126 of 153 tests. The `npm test` script globbed `tests/*.test.mjs` (top-level, `.mjs` only), so the 4 vitest test files under `tests/clients/`, `tests/db/`, `tests/prompt/`, and `tests/e2e-integration.test.js` (27 tests covering files-service client, content blocks, legacy migration, and the gated E2E roundtrip) never ran in CI. Split the test script into `test:node` and `test:vitest` and chain both from `npm test`. Also added `dev` to the workflow's push triggers so dev's status is always visible, not only when a PR is opened.
+
 ### Added
 - Files-service integration: War Room no longer processes files locally. Upload, extraction, tokenization, and RAG are handled by a standalone files-service container at `:9100`. Frontend uploads directly to files-service via CORS and passes `file_ids` when creating sessions.
 - `lib/clients/files-service.js` — HTTP client for files-service health check, file metadata, and content retrieval.

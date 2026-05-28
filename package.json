@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "mcp": "node mcp/stdio.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test:node": "node --test tests/*.test.mjs",
+    "test:vitest": "vitest run",
+    "test": "npm run test:node && npm run test:vitest"
   },
   "bin": {
     "warroom-mcp": "./mcp/stdio.mjs"
