@@ -3,8 +3,8 @@
 # Tests: HTTP, WebSocket, File Upload, LLM API call
 set -e
 
-HOST="http://localhost:8090"
-WS_HOST="ws://localhost:8090"
+HOST="${WARROOM_HOST_URL:-http://localhost:8090}"
+WS_HOST="${WARROOM_WS_URL:-$(echo "$HOST" | sed 's#^http#ws#')}"
 PASS=0
 FAIL=0
 ERRORS=""
@@ -118,16 +118,23 @@ fi
 
 echo ""
 
-# ─── 5. Container Health ────────────────────────────────
+# ─── 5. Container Health (optional) ─────────────────────
+# Inspects a remotely-deployed container over SSH. Skipped unless WARROOM_SSH
+# is set, e.g. WARROOM_SSH=user@host WARROOM_SSH_KEY=/path/to/key ./test.sh
 echo "▸ Container Health"
 
-ssh -i ~/.ssh/id_rsa user@localhost "docker inspect war-room --format='{{.State.Status}}'" 2>/dev/null | grep -q "running" && pass "Container: running" || fail "Container: not running"
-ssh -i ~/.ssh/id_rsa user@localhost "docker inspect war-room --format='{{.State.Restarting}}'" 2>/dev/null | grep -q "false" && pass "Container: not restarting" || fail "Container: restart loop"
+if [ -n "$WARROOM_SSH" ]; then
+  SSH_CMD="ssh ${WARROOM_SSH_KEY:+-i $WARROOM_SSH_KEY} $WARROOM_SSH"
+  $SSH_CMD "docker inspect war-room --format='{{.State.Status}}'" 2>/dev/null | grep -q "running" && pass "Container: running" || fail "Container: not running"
+  $SSH_CMD "docker inspect war-room --format='{{.State.Restarting}}'" 2>/dev/null | grep -q "false" && pass "Container: not restarting" || fail "Container: restart loop"
 
-# Check logs for errors
-RECENT_LOGS=$(ssh -i ~/.ssh/id_rsa user@localhost "docker logs --since 5m war-room 2>&1")
-echo "$RECENT_LOGS" | grep -qi "error\|crash\|uncaught\|EACCES" && fail "Container: errors in logs" || pass "Container: no errors in logs"
-echo "$RECENT_LOGS" | grep -q "API Key: ✅ configured" && pass "Container: API key configured" || fail "Container: API key not configured"
+  # Check logs for errors
+  RECENT_LOGS=$($SSH_CMD "docker logs --since 5m war-room 2>&1")
+  echo "$RECENT_LOGS" | grep -qi "error\|crash\|uncaught\|EACCES" && fail "Container: errors in logs" || pass "Container: no errors in logs"
+  echo "$RECENT_LOGS" | grep -q "API Key: ✅ configured" && pass "Container: API key configured" || fail "Container: API key not configured"
+else
+  echo "  ⊘ skipped (set WARROOM_SSH=user@host, optionally WARROOM_SSH_KEY=/path/to/key)"
+fi
 
 echo ""
 

@@ -26,8 +26,7 @@ services:
       # true  = Anthropic tool_use via lib/agents/tool-loop.js.
       - SCOUT_USE_TOOL=${SCOUT_USE_TOOL:-false}
       # Expand web_search to tier-B / tier-C agents. Independent of
-      # SCOUT_USE_TOOL so scout can canary alone. See forge/session-5-
-      # expansion/ROSTER.md for the tier table.
+      # SCOUT_USE_TOOL so scout can canary alone.
       - AGENT_SEARCH_EXPANSION=${AGENT_SEARCH_EXPANSION:-false}
       # Per-deliberation cross-agent search quota.
       - SESSION_QUERY_BUDGET=${SESSION_QUERY_BUDGET:-30}
@@ -43,7 +42,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=platform-net
       - traefik.http.routers.war-room.entrypoints=web
-      - traefik.http.routers.war-room.rule=Host(`warroom.example.com`)
+      - traefik.http.routers.war-room.rule=Host(`${WARROOM_HOST:-warroom.localhost}`)
       - traefik.http.routers.war-room.middlewares=forwardauth-zitadel@file
       - traefik.http.services.war-room.loadbalancer.server.port=8090
 
