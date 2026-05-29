@@ -12,8 +12,10 @@ services:
       # via env_file above. WAR_ROOM_TOKEN, MCP_API_KEY, etc. also come
       # from .env. NEVER inline secrets here — docker-compose.yml is in git.
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
-      - EMBEDDING_URL=http://localhost:11434/api/embed
-      - EMBEDDING_MODEL=nomic-embed-text
+      # Embedding endpoint (Ollama-compatible). Defaults to an Ollama on the
+      # docker host via host-gateway; override in .env for a remote instance.
+      - EMBEDDING_URL=${EMBEDDING_URL:-http://host.docker.internal:11434/api/embed}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
       # Search provider: tavily (default), smart (SearXNG + DDG, no API cost),
       # or coexist (smart first, tavily fallback on empty/error).
       - SEARCH_PROVIDER=${SEARCH_PROVIDER:-tavily}
@@ -25,8 +27,7 @@ services:
       # true  = Anthropic tool_use via lib/agents/tool-loop.js.
       - SCOUT_USE_TOOL=${SCOUT_USE_TOOL:-false}
       # Expand web_search to tier-B / tier-C agents. Independent of
-      # SCOUT_USE_TOOL so scout can canary alone. See forge/session-5-
-      # expansion/ROSTER.md for the tier table.
+      # SCOUT_USE_TOOL so scout can canary alone.
       - AGENT_SEARCH_EXPANSION=${AGENT_SEARCH_EXPANSION:-false}
       # Per-deliberation cross-agent search quota.
       - SESSION_QUERY_BUDGET=${SESSION_QUERY_BUDGET:-30}
@@ -42,7 +43,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=platform-net
       - traefik.http.routers.war-room-mcp.entrypoints=web
-      - traefik.http.routers.war-room-mcp.rule=Host(`warroom.example.com`) && PathPrefix(`/mcp`)
+      - traefik.http.routers.war-room-mcp.rule=Host(`${WARROOM_HOST:-warroom.localhost}`) && PathPrefix(`/mcp`)
       - traefik.http.services.war-room-mcp.loadbalancer.server.port=8090
 
 networks:
