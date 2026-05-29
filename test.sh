@@ -121,11 +121,11 @@ echo ""
 # ─── 5. Container Health ────────────────────────────────
 echo "▸ Container Health"
 
-ssh -i ~/.ssh/id_rsa user@localhost "docker inspect war-room --format='{{.State.Status}}'" 2>/dev/null | grep -q "running" && pass "Container: running" || fail "Container: not running"
-ssh -i ~/.ssh/id_rsa user@localhost "docker inspect war-room --format='{{.State.Restarting}}'" 2>/dev/null | grep -q "false" && pass "Container: not restarting" || fail "Container: restart loop"
+ssh localhost "docker inspect war-room --format='{{.State.Status}}'" 2>/dev/null | grep -q "running" && pass "Container: running" || fail "Container: not running"
+ssh localhost "docker inspect war-room --format='{{.State.Restarting}}'" 2>/dev/null | grep -q "false" && pass "Container: not restarting" || fail "Container: restart loop"
 
 # Check logs for errors
-RECENT_LOGS=$(ssh -i ~/.ssh/id_rsa user@localhost "docker logs --since 5m war-room 2>&1")
+RECENT_LOGS=$(ssh localhost "docker logs --since 5m war-room 2>&1")
 echo "$RECENT_LOGS" | grep -qi "error\|crash\|uncaught\|EACCES" && fail "Container: errors in logs" || pass "Container: no errors in logs"
 echo "$RECENT_LOGS" | grep -q "API Key: ✅ configured" && pass "Container: API key configured" || fail "Container: API key not configured"
 

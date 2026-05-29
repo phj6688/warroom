@@ -12,7 +12,7 @@ services:
       # MODEL, etc. are loaded from .env via env_file above. NEVER inline secrets
       # or gateway URLs here — docker-compose.yml is in git. See forge/hardening/SCARS.md §S03.
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
-      - EMBEDDING_URL=http://localhost:11434/api/embed
+      - EMBEDDING_URL=${EMBEDDING_URL:-http://host.docker.internal:11434/api/embed}
       - EMBEDDING_MODEL=nomic-embed-text
     volumes:
       - ./data:/app/data
