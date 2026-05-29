@@ -106,7 +106,7 @@ Problem Statement
 | `GET` | `/api/files-service-config` | Get files-service URL + token for direct upload |
 | `GET` | `/health` | Service health check |
 
-**File handling:** War Room does not process files locally. File upload, extraction, and tokenization are handled by [files-service](http://localhost:9100) — a standalone container on the homelab. The frontend uploads directly to files-service and passes `file_ids` when creating a session. War Room fetches file metadata and content blocks from files-service at deliberation time.
+**File handling:** War Room does not process files locally. File upload, extraction, and tokenization are handled by an external **files-service** (a standalone container), configured via the `FILES_SERVICE_URL` env var. The frontend uploads directly to files-service and passes `file_ids` when creating a session. War Room fetches file metadata and content blocks from files-service at deliberation time. File upload is optional — War Room runs without it.
 
 **WebSocket** at `ws://<host>:8090` — real-time agent message streaming during deliberation.
 
