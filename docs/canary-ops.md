@@ -113,7 +113,7 @@ console.log(JSON.stringify(
 
 | Signal | Who/where | Notes |
 | --- | --- | --- |
-| Any tier's `error_rate` > 5% over the past 7 days | Self — investigate before anything else. | Red band. Check Tavily status and OpenAI-compatible logs before blaming the code. |
+| Any tier's `error_rate` > 5% over the past 7 days | Self — investigate before anything else. | Red band. Check Tavily status and LLM gateway logs before blaming the code. |
 | `budget_saturation` > 35% over 7 days | Self — raise `SESSION_QUERY_BUDGET` in `.env`, note the date. | Saturation at the default-30 cap means long deliberations are losing search capacity. |
 | `tool_use_emission_rate` red on any tier | Self — read 5 sample turns, adjust the fragment prompt or the tier classification in `search-config.js`. | Do NOT flip defaults in Session 7 if this tier is in red. |
 | `synthesis_length_delta` > ±30% on scout | Self — read 5 samples of each path, write a note in `forge/session-6-canary/reports/` explaining which direction is better. | Signal for a human eyeball, not a veto. |
