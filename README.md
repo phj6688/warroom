@@ -83,7 +83,7 @@ Problem Statement
 │  sessions · messages · escalations        │
 ├────────────────────────────────────────────┤
 │           LLM Backend                      │
-│  LLM gateway Gateway  OR  Anthropic API       │
+│  OpenAI-compatible  OR  Anthropic (native) │
 ├────────────────────────────────────────────┤
 │           Search Backend (optional)        │
 │           Tavily API → Research Scout      │
@@ -149,12 +149,13 @@ Create `.env` from `.env.example`:
 ```env
 # LLM Backend — pick one:
 
-# Option A: OpenAI-compatible Gateway (recommended for homelab)
-OPENAI_BASE_URL=http://your-gateway:18789
-OPENAI_API_KEY=your-token
-MODEL=claude-opus-4-7
+# Option A: any OpenAI-compatible API (OpenAI, OpenRouter, Groq, Gemini, ...)
+OPENAI_API_KEY=sk-...
+# OPENAI_BASE_URL defaults to OpenAI; set for other providers:
+# OPENAI_BASE_URL=https://openrouter.ai/api/v1
+MODEL=gpt-4o
 
-# Option B: Direct Anthropic API
+# Option B: Anthropic (native API)
 ANTHROPIC_API_KEY=sk-ant-...
 MODEL=claude-sonnet-4-5
 
