@@ -44,7 +44,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Live escalation-answered update no longer requires a page reload. `addEscalationToQueue` now tags both the desktop sidebar and mobile sheet rows with an `esc-queue-<id>` class, and `markEscalationAnswered` flips them to the answered (green-bordered) state in lockstep with the inline feed card. The `pendingEscalations` counter also decrements on each answer (clamped at 0) so the red badge dot clears at zero instead of waiting for the user to open the escalations sheet.
 - Archived sessions all rendering as "Unclassified" in the session-history view. Three independent bugs combined to produce the symptom:
   1. Tests spawned the server without setting `WAR_ROOM_DB_PATH`, so test fixtures landed in the canonical `./data/warroom.db` and pushed every previously classified session past the `LIMIT 50` window of `getRecentSessions`. `tests/_helpers.mjs` now mints a temp DB per spawn by default and cleans it up on `dispose()`.
-  2. The LLM gateway gateway ignores compact system prompts and replies with prose, so `parseClassification` always saw `null`. The classifier now inlines the rubric on the user turn so both gateway-fronted and direct-Anthropic configurations return the four labelled lines.
+  2. Some OpenAI-compatible gateways ignore compact system prompts and replies with prose, so `parseClassification` always saw `null`. The classifier now inlines the rubric on the user turn so both gateway-fronted and direct-Anthropic configurations return the four labelled lines.
   3. `loadSession()` and the WS `session-state` payload dropped `archetypeId`, `qualityScore`, `pinned`, and `specialistAgents`, so re-joining a session lost its categorization. Both paths now carry these fields.
 - Boot-time `fingerprint.backfillArchetypes()` retro-classifies any completed session with a substantial problem statement but no archetype. Pre-fingerprint sessions and ones whose original classification call failed get a single throttled retry on next boot.
 - Cleaned up 96 fixture rows from the canonical `./data/warroom.db` left behind by historical test runs that pre-dated the helper-level isolation fix.
@@ -93,7 +93,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - File upload — attach context documents to a session (PDF, MD, TXT, JSON)
 - REST API — full CRUD for sessions, messages, escalations
 - Docker deployment — single `docker compose up -d`
-- LLM gateway Gateway support — routes LLM calls through homelab proxy
+- OpenAI-compatible gateway support: route LLM calls through any compatible provider
 - Direct Anthropic API support as fallback
 
 ---
