@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "mcp": "node mcp/stdio.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "playwright test"
   },
   "bin": {
     "warroom-mcp": "./mcp/stdio.mjs"
@@ -24,6 +25,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "1.60.0",
     "vitest": "^4.1.4"
   }
 }

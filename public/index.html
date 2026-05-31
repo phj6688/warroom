@@ -717,7 +717,19 @@ html, body {
 .dr-eyebrow {
   font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--accent); margin-bottom: 4px; font-family: var(--font-mono);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
 }
+.dr-close {
+  flex-shrink: 0; margin: -8px -6px -8px 0;
+  width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; cursor: pointer; line-height: 1;
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim);
+  font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+  transition: all 0.16s var(--transition);
+}
+.dr-close:hover { border-color: var(--accent); color: var(--accent); }
+.dr-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dr-title { font-size: 16px; font-weight: 600; color: var(--text-display); margin-bottom: 10px; }
 .dr-fields { display: flex; flex-direction: column; gap: 9px; }
 .dr-field { border-left: 2px solid var(--border-bright); padding-left: 11px; }
@@ -2165,6 +2177,7 @@ let selectedPreset = null;        // 'engineer' | 'scientist' | null (generalist
 let presetData = [];              // fetched /api/presets
 let lastSynthesisMsg = null;      // captured for the Decision Record card
 let drQualitySent = false;        // one quality rating per completed session
+let drDismissed = false;          // user dismissed the answer card this session
 let pendingFiles = [];  // [{ id, file, tokens, mime, name, status, error, extraction_error }]
 let fsConfig = null;
 let activeSheet = null;
@@ -2908,9 +2921,11 @@ function loadHljs() {
 function clearFeed() {
   document.getElementById('feed').innerHTML = '';
   // Reset per-session Decision Record state so a fresh session never shows a
-  // stale answer card or a pre-locked quality tap.
+  // stale answer card or a pre-locked quality tap, and a prior dismissal does
+  // not suppress the next session's answer.
   lastSynthesisMsg = null;
   drQualitySent = false;
+  drDismissed = false;
 }
 function scrollFeed() { const f = document.getElementById('feed'); requestAnimationFrame(() => f.scrollTop = f.scrollHeight); }
 
@@ -3464,9 +3479,10 @@ function mdToText(s) {
 
 // Build the sticky "THE ANSWER" / Decision Record card from the captured
 // Synthesis message. Single-mount, zero new LLM calls, chrome only.
-function renderDecisionRecord() {
+function renderDecisionRecord(explicitSynth) {
+  if (drDismissed) return; // user dismissed it this session — don't force it back
   if (document.getElementById('decision-record')) return; // mount exactly once
-  let synth = lastSynthesisMsg && lastSynthesisMsg.content;
+  let synth = explicitSynth || (lastSynthesisMsg && lastSynthesisMsg.content);
   if (!synth && currentSession && currentSession.messages) {
     const m = currentSession.messages.filter(x => x.phase === 'Synthesis' && x.agentId === 'process-architect').pop();
     synth = m && m.content;
@@ -3484,7 +3500,7 @@ function renderDecisionRecord() {
     f.appendChild(lab); f.appendChild(bod); return f;
   });
   card.innerHTML = `
-    <div class="dr-eyebrow">⚑ The Answer</div>
+    <div class="dr-eyebrow"><span>⚑ The Answer</span><button type="button" class="dr-close" data-act="dismiss" aria-label="Dismiss" title="Dismiss">✕</button></div>
     <div class="dr-title"></div>
     <div class="dr-fields"></div>
     <div class="dr-actions">
@@ -3533,6 +3549,23 @@ function renderDecisionRecord() {
   }));
 
   const feed = document.getElementById('feed');
+
+  // Dismiss: drop the sticky card so the transcript above is readable again.
+  // The card is the feed's first child and occupies flow space at the top, so
+  // removing it shifts everything above the viewport up. Measure the exact flow
+  // space it freed (scrollHeight delta — accounts for the card's box and its
+  // margin) and subtract the scrolled-past portion so the visible transcript
+  // stays put. Latch drDismissed so a poll or re-render this session does not
+  // force the card back.
+  card.querySelector('[data-act="dismiss"]').addEventListener('click', () => {
+    const before = feed.scrollTop;
+    const heightBefore = feed.scrollHeight;
+    drDismissed = true;
+    card.remove();
+    const freed = heightBefore - feed.scrollHeight;
+    feed.scrollTop = before - Math.min(before, freed);
+  });
+
   feed.insertBefore(card, feed.firstChild);
 }
 
@@ -4348,7 +4381,6 @@ document.getElementById('export-modal-close').addEventListener('click', closeExp
 document.getElementById('export-modal-overlay').addEventListener('click', e => { if (e.target === document.getElementById('export-modal-overlay')) closeExportModal(); });
 document.getElementById('export-submit').addEventListener('click', doExport);
 document.getElementById('export-copy').addEventListener('click', copyExportToClipboard);
-
 
 connect();
 </script>

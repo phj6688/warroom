@@ -5,3 +5,5 @@ secrets/
 data/
 forge/
 *.backup
+test-results/
+playwright-report/
