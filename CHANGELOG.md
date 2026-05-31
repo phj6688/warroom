@@ -28,6 +28,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Escalations now travel over a structured `escalate_to_human` tool call instead of a `<need_human_input>` XML tag in the response body. Agents invoke the tool 0-N times per turn; the tool's `question` argument is the single item the human must answer. Tool definition lives in `server.js` (`ESCALATE_TOOL`); tool-aware LLM path is `lib/llm.js` → `callAnthropicWithTools`. The XML-tag regex extractor stays as a belt-and-suspenders fallback so a prompt slip still surfaces. System-prompt footer (`lib/context.js`) now teaches rhetorical-vs-actionable with a concrete example, and all 8 per-agent prompts reference the tool by name.
+- Default model bumped to `anthropic/claude-opus-4-8` (was `anthropic/claude-sonnet-4-5`). Every agent resolves to opus-4-8: with `QUALITY_MODEL` unset and no `AGENT_MODEL_*` overrides, the haiku-class agents (quality-evaluator, adversarial-twin, memory-analyzer, fingerprint-classifier) fall through to the default. `MODEL_WINDOWS` gains 200k entries for the new id.
 
 ### Fixed
 - Agents routinely emitted clarifying questions as prose bullets (not the XML escalation tag), so the human never saw them. Switching escalation to a tool call makes the channel structural rather than advisory — the tool contract is what Claude parses against, not a line of markdown it can skip.
