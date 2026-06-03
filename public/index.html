@@ -664,6 +664,47 @@ html, body {
 }
 .preset-caption .pc-spec { color: var(--success); }
 
+/* ─── Session continuation picker ─────────────────────── */
+.continuation-picker { margin-top: 18px; width: 100%; }
+.cont-search-wrap { position: relative; display: flex; align-items: center; }
+.cont-search-input {
+  width: 100%; padding: 9px 32px 9px 14px; min-height: 40px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text);
+  font-family: var(--font); font-size: 13px;
+  transition: border-color 0.18s var(--transition);
+}
+.cont-search-input::placeholder { color: var(--text-dimmer); }
+.cont-search-input:focus { outline: none; border-color: var(--accent); }
+.cont-clear {
+  position: absolute; right: 8px; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-dimmer); font-size: 13px; border-radius: 6px;
+}
+.cont-clear:hover { color: var(--text); }
+.cont-results { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cont-result {
+  contain: layout style;
+  text-align: left; padding: 9px 12px; min-height: 40px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-dim); cursor: pointer;
+  font-family: var(--font); font-size: 12px; line-height: 1.4;
+  transition: border-color 0.16s var(--transition), color 0.16s var(--transition);
+}
+.cont-result:hover { border-color: var(--border-bright); color: var(--text); }
+.cont-result .cr-meta { display: block; margin-top: 2px; font-size: 10px; font-family: var(--font-mono); color: var(--text-tertiary); }
+.cont-selected {
+  margin-top: 8px; padding: 10px 12px;
+  background: var(--accent-subtle); border: 1px solid var(--accent);
+  border-radius: 8px; color: var(--text);
+  font-size: 12px; line-height: 1.4;
+}
+.cont-selected .cs-label {
+  display: block; font-family: var(--font-mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 3px;
+}
+
 /* ─── Escalation severity (intensity of the accent, not a new hue) ── */
 .esc-sev {
   display: inline-flex; align-items: center; gap: 4px;
@@ -2010,6 +2051,15 @@ html, body {
             </div>
             <div class="preset-caption" id="preset-caption"></div>
           </div>
+          <div class="continuation-picker" id="continuation-picker">
+            <div class="preset-picker-title">Continue from a previous session</div>
+            <div class="cont-search-wrap">
+              <input type="text" class="cont-search-input" id="cont-search-input" placeholder="Search prior sessions to continue..." autocomplete="off" spellcheck="false">
+              <button type="button" class="cont-clear" id="cont-clear" style="display:none" title="Clear continuation">✕</button>
+            </div>
+            <div class="cont-results" id="cont-results"></div>
+            <div class="cont-selected" id="cont-selected" style="display:none"></div>
+          </div>
           <div class="example-prompts" id="example-prompts">
             <div class="example-prompts-title">Try an example</div>
             <button class="example-chip" data-prompt="Compare the trade-offs between microservices and monolithic architecture for a 10-person startup.">Compare microservices vs monolith for a startup</button>
@@ -2175,6 +2225,7 @@ let sessionStart = null;
 let durationInterval = null;
 let selectedPreset = null;        // 'engineer' | 'scientist' | null (generalist)
 let presetData = [];              // fetched /api/presets
+let selectedContinuationId = null; // prior session id to seed a continuation from
 let lastSynthesisMsg = null;      // captured for the Decision Record card
 let drQualitySent = false;        // one quality rating per completed session
 let drDismissed = false;          // user dismissed the answer card this session
@@ -2555,6 +2606,19 @@ function handleMessage(data) {
         }
       }
       break;
+
+    case 'continuation-injected': {
+      const feed = document.getElementById('feed');
+      if (feed) {
+        const note = document.createElement('div');
+        note.className = 'memory-note';
+        const src = (data.sourceProblem || '').slice(0, 80);
+        note.textContent = `🔗 Continued from prior session "${src}": its summary was injected into the council's context.`;
+        feed.appendChild(note);
+        note.scrollIntoView({ behavior: 'smooth' });
+      }
+      break;
+    }
 
     case 'error':
       showToast(`⚠️ ${data.message}`);
@@ -3624,7 +3688,7 @@ async function submitFromWelcome() {
   }
 
   btn.textContent = '⚡ Deploying...';
-  const payload = { problem, file_ids: file_ids, preset_id: selectedPreset };
+  const payload = { problem, file_ids: file_ids, preset_id: selectedPreset, continuesFromSessionId: selectedContinuationId };
 
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'new-session', ...payload }));
@@ -3647,6 +3711,7 @@ async function submitFromWelcome() {
   textarea.value = '';
   pendingFiles = [];
   renderFileList();
+  clearContinuation();
   updateWelcomeReady();
   btn.disabled = false;
   btn.textContent = '⚡ Deploy War Room';
@@ -4000,6 +4065,79 @@ document.querySelectorAll('.preset-chip').forEach(chip => {
 });
 // Snapshot generalist defaults so toggling a preset off can restore them.
 document.querySelectorAll('#example-prompts .example-chip').forEach(c => { c.dataset.default = c.textContent; });
+
+// ─── Session continuation picker ───────────────────────
+// Seed a new session from a chosen prior session's summary. The picker reuses
+// /api/search; rows are written with textContent so a prior problem can never
+// inject markup into the welcome form.
+const contSearchInput = document.getElementById('cont-search-input');
+const contResults = document.getElementById('cont-results');
+const contSelected = document.getElementById('cont-selected');
+const contClearBtn = document.getElementById('cont-clear');
+let contSearchTimeout = null;
+
+function truncateText(s, n) {
+  s = s || '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function clearContinuation() {
+  selectedContinuationId = null;
+  contSelected.style.display = 'none';
+  contSelected.textContent = '';
+  contClearBtn.style.display = 'none';
+  if (contSearchInput) contSearchInput.value = '';
+  contResults.replaceChildren();
+}
+
+function selectContinuation(session) {
+  selectedContinuationId = session.id;
+  contResults.replaceChildren();
+  contSelected.replaceChildren();
+  const label = document.createElement('span');
+  label.className = 'cs-label';
+  label.textContent = 'Continuing from';
+  const body = document.createElement('span');
+  body.textContent = truncateText(session.problem, 160);
+  contSelected.appendChild(label);
+  contSelected.appendChild(body);
+  contSelected.style.display = 'block';
+  contClearBtn.style.display = 'inline-flex';
+}
+
+async function searchContinuation(query) {
+  if (!query) { contResults.replaceChildren(); return; }
+  let sessions = [];
+  try {
+    const res = await fetch(apiUrl('/api/search?q=' + encodeURIComponent(query)));
+    if (res.ok) sessions = await res.json();
+  } catch (_) { /* search is best-effort; an empty list is fine */ }
+  contResults.replaceChildren();
+  sessions.slice(0, 6).forEach(s => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'cont-result';
+    const title = document.createElement('span');
+    title.textContent = truncateText(s.problem, 120);
+    const meta = document.createElement('span');
+    meta.className = 'cr-meta';
+    meta.textContent = (s.active ? 'active' : 'done') + ' · ' + (s.messageCount || 0) + ' msgs · phase ' + (s.phase || 0) + '/4';
+    row.appendChild(title);
+    row.appendChild(meta);
+    row.addEventListener('click', () => selectContinuation(s));
+    contResults.appendChild(row);
+  });
+}
+
+if (contSearchInput) {
+  contSearchInput.addEventListener('input', () => {
+    clearTimeout(contSearchTimeout);
+    const q = contSearchInput.value.trim();
+    contSearchTimeout = setTimeout(() => searchContinuation(q), 200);
+  });
+}
+if (contClearBtn) contClearBtn.addEventListener('click', clearContinuation);
+
 loadPresets();
 document.getElementById('welcome-submit').addEventListener('click', submitFromWelcome);
 document.getElementById('welcome-input').addEventListener('input', updateWelcomeReady);
