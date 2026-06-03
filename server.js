@@ -27,7 +27,7 @@ const { createFilesServiceClient } = require('./lib/clients/files-service');
 const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
-const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
+const { waitForEscalation, abortSessionWaits, getDeadline, pauseEscalation, DEFAULT_TIMEOUT_MS } = require('./lib/escalation');
 const { createSearchProvider } = require('./lib/search');
 const { getSearchConfigForAgent, makeSessionBudget, SESSION_QUERY_BUDGET, AGENT_SEARCH_EXPANSION } = require('./lib/agents/search-config');
 const { createMetricsSink, tierForAgent } = require('./lib/metrics/search-metrics');
@@ -205,6 +205,31 @@ async function createSession(problem, fileIds = [], presetId = null, continuesFr
   return session;
 }
 
+// HLB-148 — the per-escalation countdown the client renders. A live blocking
+// wait owns a mutable deadline (pause/reset mutate it); getDeadline() reads it.
+// When no live waiter exists (answered escalation, or one loaded for an inactive
+// session) fall back to created_at + the default window so the card can still
+// show a deadline. Answered escalations carry no countdown.
+//   esc: { id, sessionId, answered, createdAt }
+// Returns { deadlineAt, paused } merged onto the escalation object.
+function escalationTiming(esc) {
+  if (esc.answered) return { deadlineAt: null, paused: false };
+  const live = getDeadline(esc.sessionId, esc.id);
+  if (live) return { deadlineAt: live.deadlineAt, paused: live.paused };
+  // No live waiter (escalation created before its phase gate, or loaded for an
+  // inactive session). Honor any pause/reset the human already applied (mirrored
+  // onto the in-memory escalation by the escalation-timer handler), else fall
+  // back to the created_at + default window.
+  if (esc.paused === true && typeof esc.deadlineAt === 'number') {
+    return { deadlineAt: esc.deadlineAt, paused: true };
+  }
+  if (typeof esc.deadlineAt === 'number') {
+    return { deadlineAt: esc.deadlineAt, paused: false };
+  }
+  const base = (typeof esc.createdAt === 'number' ? esc.createdAt : Date.now());
+  return { deadlineAt: base + DEFAULT_TIMEOUT_MS, paused: false };
+}
+
 function loadSession(id) {
   const row = stmts.getSession.get(id);
   if (!row) return null;
@@ -213,12 +238,15 @@ function loadSession(id) {
     agentEmoji: m.agent_emoji, agentColor: m.agent_color,
     content: m.content, phase: m.phase, timestamp: m.created_at
   }));
-  const escalations = stmts.getSessionEscalations.all(id).map(e => ({
-    id: e.id, agentId: e.agent_id, agentName: e.agent_name, agentEmoji: e.agent_emoji,
-    question: e.question, sessionId: id, answered: e.status === 'answered',
-    answer: e.answer, createdAt: e.created_at,
-    severity: e.severity || 'blocking', defaultAction: e.default_action || null,
-  }));
+  const escalations = stmts.getSessionEscalations.all(id).map(e => {
+    const esc = {
+      id: e.id, agentId: e.agent_id, agentName: e.agent_name, agentEmoji: e.agent_emoji,
+      question: e.question, sessionId: id, answered: e.status === 'answered',
+      answer: e.answer, createdAt: e.created_at,
+      severity: e.severity || 'blocking', defaultAction: e.default_action || null,
+    };
+    return { ...esc, ...escalationTiming(esc) };
+  });
   const humanMessages = stmts.getSessionHumanMessages.all(id).map(h => ({
     id: h.id, content: h.content, timestamp: h.created_at
   }));
@@ -496,7 +524,11 @@ async function runAgentTurn(session, agentId, phase) {
     escalations.forEach(esc => {
       session.escalations.push(esc);
       stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.severity, esc.defaultAction, esc.createdAt);
-      broadcast(session.id, { type: 'escalation', ...esc, agentName: agent.name, agentEmoji: agent.emoji });
+      // HLB-148 — send the countdown deadline with the escalation so the inline
+      // card and queue can render time-remaining from the first frame. The
+      // blocking wait that owns the live deadline starts at the next phase
+      // gate; until then the client shows the created_at + default window.
+      broadcast(session.id, { type: 'escalation', ...esc, ...escalationTiming(esc), agentName: agent.name, agentEmoji: agent.emoji });
     });
 
     session.agentStates[agentId] = 'idle';
@@ -662,11 +694,23 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         // F13 — event-driven wait. Each pending escalation gets its own
         // promise resolved by the WS escalation-response handler. Wakeup is
         // immediate (sub-100ms) instead of the prior 2 s polling tick.
-        const waits = pending.map(e =>
-          waitForEscalation(session.id, e.id, { timeoutMs: 300_000 })
+        // HLB-148 — the live waiter owns the mutable countdown. If the human
+        // already paused the card before this phase gate opened, carry that
+        // pause onto the fresh waiter so it holds. Then push the authoritative
+        // (live) deadline to the client so the card counts down to the real one.
+        const waits = pending.map(e => {
+          const p = waitForEscalation(session.id, e.id, { timeoutMs: DEFAULT_TIMEOUT_MS });
+          if (e.paused === true) pauseEscalation(session.id, e.id);
+          const live = getDeadline(session.id, e.id);
+          if (live) {
+            e.deadlineAt = live.deadlineAt;
+            e.paused = live.paused;
+            broadcast(session.id, { type: 'escalation-timer-updated', sessionId: session.id, escalationId: e.id, paused: live.paused, deadlineAt: live.deadlineAt });
+          }
+          return p
             .then(() => ({ id: e.id, status: 'answered' }))
-            .catch((err) => ({ id: e.id, status: 'timeout', err }))
-        );
+            .catch((err) => ({ id: e.id, status: 'timeout', err }));
+        });
         const results = await Promise.all(waits);
         const timedOut = results.filter(r => r.status === 'timeout');
         if (timedOut.length > 0) {
@@ -752,7 +796,7 @@ async function runFollowUp(sessionId, session, question) {
 }
 
 // ─── Wire Modules ───────────────────────────────────────────
-const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession, attachFiles, filesServiceClient };
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession, attachFiles, filesServiceClient, escalationTiming };
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
