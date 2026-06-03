@@ -205,7 +205,7 @@ async function createSession(problem, fileIds = [], presetId = null, continuesFr
   return session;
 }
 
-// HLB-148 — the per-escalation countdown the client renders. A live blocking
+// HLB-148: the per-escalation countdown the client renders. A live blocking
 // wait owns a mutable deadline (pause/reset/resume mutate it); getDeadline()
 // reads it. When no live waiter exists, the deadline is only meaningful if the
 // session is still ACTIVE (its escalation will get a waiter once the phase gate
@@ -221,7 +221,7 @@ function escalationTiming(esc, isActive = false) {
   const live = getDeadline(esc.sessionId, esc.id);
   if (live) return { deadlineAt: live.deadlineAt, paused: live.paused };
   // No live waiter. Honor any pause/reset/resume the human already applied
-  // (mirrored onto the in-memory escalation by the escalation-timer handler) —
+  // (mirrored onto the in-memory escalation by the escalation-timer handler),
   // that is a deliberate human action regardless of active state.
   if (esc.paused === true && typeof esc.deadlineAt === 'number') {
     return { deadlineAt: esc.deadlineAt, paused: true };
@@ -231,7 +231,7 @@ function escalationTiming(esc, isActive = false) {
   }
   // No waiter, no human-applied deadline. Only an ACTIVE session's escalation
   // (created before its phase gate) will acquire a waiter and auto-resolve, so
-  // give it a fallback window. An inactive escalation will never auto-resolve —
+  // give it a fallback window. An inactive escalation will never auto-resolve,
   // render a neutral state, no ticking countdown.
   if (!isActive) return { deadlineAt: null, paused: false };
   const base = (typeof esc.createdAt === 'number' ? esc.createdAt : Date.now());
@@ -532,7 +532,7 @@ async function runAgentTurn(session, agentId, phase) {
     escalations.forEach(esc => {
       session.escalations.push(esc);
       stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.severity, esc.defaultAction, esc.createdAt);
-      // HLB-148 — send the countdown deadline with the escalation so the inline
+      // HLB-148: send the countdown deadline with the escalation so the inline
       // card and queue can render time-remaining from the first frame. The
       // blocking wait that owns the live deadline starts at the next phase
       // gate; until then the client shows the created_at + default window.
@@ -702,7 +702,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         // F13 — event-driven wait. Each pending escalation gets its own
         // promise resolved by the WS escalation-response handler. Wakeup is
         // immediate (sub-100ms) instead of the prior 2 s polling tick.
-        // HLB-148 — the live waiter owns the mutable countdown. If the human
+        // HLB-148: the live waiter owns the mutable countdown. If the human
         // already paused the card before this phase gate opened, carry that
         // pause onto the fresh waiter so it holds. Then push the authoritative
         // (live) deadline to the client so the card counts down to the real one.

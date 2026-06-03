@@ -67,12 +67,10 @@
   --warning: #D4A843;
   --error: #D71921;
   --info: #999999;
-  /* HLB-148 — paused-countdown accent. The pause state reads as a hold (amber),
+  /* HLB-148: paused-countdown accent. The pause state reads as a hold (amber),
      distinct from the running crimson accent. `-subtle` is the translucent fill. */
   --amber: #ffa500;
   --amber-subtle: rgba(255,165,0,0.08);
-  --amber-border: rgba(255,165,0,0.3);
-  --amber-border-strong: rgba(255,165,0,0.6);
 
   --border: #222222;
   --border-bright: #333333;
@@ -732,7 +730,7 @@ html, body {
 }
 .esc-quick:hover { border-color: var(--border-bright); color: var(--text); }
 .esc-quick.reframe:hover { border-color: var(--accent); color: var(--accent); }
-/* HLB-148 — Pause/Reset countdown controls. 44pt touch targets per the mobile
+/* HLB-148: Pause/Reset countdown controls. 44pt touch targets per the mobile
    rules; share the .esc-quick visual family. */
 .esc-quick.esc-pause, .esc-quick.esc-reset {
   min-height: 44px; font-weight: 600;
@@ -744,7 +742,7 @@ html, body {
   background: var(--amber-subtle);
 }
 /* Inline countdown chip in the card header. Only its textContent changes on the
-   1s tick — the element itself is stable (no innerHTML churn). */
+   1s tick, the element itself is stable (no innerHTML churn). */
 .esc-countdown {
   font-family: var(--font-mono); font-size: 11px; font-weight: 700;
   letter-spacing: 0.5px; color: var(--accent);
@@ -1834,7 +1832,7 @@ html, body {
   border-radius: 10px; margin-bottom: 8px;
   font-size: 11px; cursor: pointer;
   min-height: 44px; transition: all 0.2s;
-  /* HLB-148 — this repeated queue row now carries the per-second .se-countdown
+  /* HLB-148: this repeated queue row now carries the per-second .se-countdown
      chip; isolate its layout so a tick can't ripple into sibling rows. */
   contain: layout style;
 }
@@ -2274,9 +2272,9 @@ let escalationCount = 0;
 let pendingEscalations = 0;
 let sessionStart = null;
 let durationInterval = null;
-// HLB-148 — per-escalation countdown state, keyed by escalation id:
+// HLB-148: per-escalation countdown state, keyed by escalation id:
 //   { deadlineAt:number, paused:boolean }. A single 1s tick (escTimerTick)
-//   updates every visible countdown via textContent only — no innerHTML in the
+//   updates every visible countdown via textContent only, no innerHTML in the
 //   loop, per the UI rendering rules.
 const escTimers = new Map();
 let escTimerInterval = null;
@@ -2566,7 +2564,7 @@ function handleMessage(data) {
       break;
 
     case 'escalation-timer-updated':
-      // HLB-148 — authoritative timing sync after a pause/reset (or when the
+      // HLB-148: authoritative timing sync after a pause/reset (or when the
       // blocking wait parks and the live deadline supersedes the optimistic one).
       applyEscTimerUpdate(data);
       break;
@@ -3154,7 +3152,7 @@ function clearFeed(preserveDismissal) {
   // The feed DOM is gone, so the rendered-id set must reset too — the upcoming
   // rebuild re-registers every row it draws.
   renderedMsgIds = new Set();
-  // HLB-148 — drop any countdowns from the previous view so the shared 1s tick
+  // HLB-148: drop any countdowns from the previous view so the shared 1s tick
   // stops once nothing is pending (and no stale id leaks into the next session).
   escTimers.clear();
   if (escTimerInterval) { clearInterval(escTimerInterval); escTimerInterval = null; }
@@ -3507,9 +3505,9 @@ function addEscalationInline(data) {
     const sevBadge = `<span class="esc-sev ${sev}">${sev === 'blocking' ? '● blocking' : '○ optional'}</span>`;
     const defNote = data.defaultAction ? `<div class="esc-default-note">default if unanswered: ${escHtml(data.defaultAction)}</div>` : '';
     const useDefaultBtn = data.defaultAction ? `<button class="esc-quick use-default" data-id="${data.id}">Use default →</button>` : '';
-    // HLB-148 — live countdown + Pause/Reset. The <span> is the only element the
+    // HLB-148: live countdown + Pause/Reset. The <span> is the only element the
     // 1s tick mutates (textContent). Buttons send escalation-timer ops.
-    // When the server sends no deadline (no live waiter — e.g. an inactive or
+    // When the server sends no deadline (no live waiter, e.g. an inactive or
     // crash-recovered session that will never auto-resolve), show a NEUTRAL
     // static chip instead of a fake ticking countdown, and the per-second tick
     // never registers this card (registerEscTimer no-ops on a non-numeric
@@ -3519,7 +3517,7 @@ function addEscalationInline(data) {
     const pauseLabel = paused ? '▶ Resume' : '⏸ Pause';
     const countdownChip = hasDeadline
       ? `<span class="esc-countdown${paused ? ' paused' : ''}" id="esc-timer-${data.id}" title="Time until the agents proceed without you">⏳ —</span>`
-      : `<span class="esc-countdown neutral" id="esc-timer-${data.id}" title="No active countdown — waiting on you, nothing will auto-proceed">—</span>`;
+      : `<span class="esc-countdown neutral" id="esc-timer-${data.id}" title="No active countdown, waiting on you, nothing will auto-proceed">—</span>`;
     const timerControls = hasDeadline
       ? `<button class="esc-quick esc-pause${paused ? ' active' : ''}" id="esc-pause-${data.id}" data-id="${data.id}" title="Pause or resume the countdown">${pauseLabel}</button>
         <button class="esc-quick esc-reset" data-id="${data.id}" title="Restart the countdown">↻ Reset</button>`
@@ -3569,7 +3567,7 @@ function addEscalationInline(data) {
   if (!data.answered) {
     document.querySelectorAll('.escalation-card.pulsing').forEach(c => c.classList.remove('pulsing'));
     d.classList.add('pulsing');
-    // HLB-148 — start (or refresh) this card's countdown from the deadline the
+    // HLB-148: start (or refresh) this card's countdown from the deadline the
     // server sent. registerEscTimer paints once immediately and the shared 1s
     // tick keeps it current.
     registerEscTimer(data.id, data.deadlineAt, data.paused);
@@ -3598,16 +3596,16 @@ function addEscalationToQueue(data) {
     // can find both copies (mobile sheet + desktop sidebar) without
     // needing two unique IDs.
     d.className = `sheet-esc esc-queue-${data.id}${data.answered ? ' answered' : ''}`;
-    // HLB-148 — a compact countdown chip on each queue row. The 1s tick targets
+    // HLB-148: a compact countdown chip on each queue row. The 1s tick targets
     // it by the esc-queue-timer-<id> class (textContent only). Hidden once
     // answered, and rendered as a neutral static dash (no hourglass) when the
-    // server sent no deadline (no live waiter — nothing will auto-proceed).
+    // server sent no deadline (no live waiter, nothing will auto-proceed).
     const queueHasDeadline = typeof data.deadlineAt === 'number';
     const queueTimer = data.answered
       ? ''
       : (queueHasDeadline
         ? `<span class="se-countdown esc-queue-timer-${data.id}" title="Time until the agents proceed">⏳ —</span>`
-        : `<span class="se-countdown neutral esc-queue-timer-${data.id}" title="No active countdown — waiting on you">—</span>`);
+        : `<span class="se-countdown neutral esc-queue-timer-${data.id}" title="No active countdown, waiting on you">—</span>`);
     d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')} <span class="se-sev ${sev}" title="${sev}">${sev === 'blocking' ? '●' : '○'}</span>${queueTimer}</div><div class="se-question">${escHtml(data.question)}</div>`;
     d.addEventListener('click', () => {
       closeSheet();
@@ -3616,7 +3614,7 @@ function addEscalationToQueue(data) {
     });
     container.appendChild(d);
   });
-  // HLB-148 — ensure the countdown is tracked even when the queue row mounts
+  // HLB-148: ensure the countdown is tracked even when the queue row mounts
   // independently of the inline card (e.g. session-state rehydration). Idempotent
   // with the inline registration (same Map key).
   if (!data.answered) registerEscTimer(data.id, data.deadlineAt, data.paused);
@@ -3685,7 +3683,7 @@ function respondEscalation(escId) {
 }
 
 function dismissEscalation(escId) {
-  // HLB-148 — dismissing the card hides it; stop its countdown too.
+  // HLB-148: dismissing the card hides it; stop its countdown too.
   clearEscTimer(escId);
   const el = document.getElementById(`esc-${escId}`);
   if (el) {
@@ -3697,7 +3695,7 @@ function dismissEscalation(escId) {
 }
 
 function markEscalationAnswered(escId, answer) {
-  // HLB-148 — stop the countdown the moment the escalation resolves.
+  // HLB-148: stop the countdown the moment the escalation resolves.
   clearEscTimer(escId);
   const el = document.getElementById(`esc-${escId}`);
   if (el) {
@@ -4186,7 +4184,7 @@ function renderEscCountdown(id) {
   const inline = document.getElementById(`esc-timer-${id}`);
   if (inline) {
     // Only registered (numeric-deadline) timers reach here, so a chip that was
-    // neutral has become live — drop the neutral styling.
+    // neutral has become live, drop the neutral styling.
     inline.classList.remove('neutral');
     if (t.paused) {
       inline.textContent = '⏸ Paused';
@@ -4222,15 +4220,15 @@ function clearEscTimer(id) {
 // Pause/Resume/Reset controls send the matching op; the server replies with an
 // escalation-timer-updated broadcast that re-syncs escTimers (authoritative).
 // The Pause button TOGGLES: running -> pause, paused -> resume (continue from the
-// time left, NOT a fresh window — that is the separate Reset button).
+// time left, NOT a fresh window, that is the separate Reset button).
 function toggleEscTimer(id) {
-  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
+  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected, reconnecting...'); return; }
   const t = escTimers.get(id);
   const op = t && t.paused ? 'resume' : 'pause';
   ws.send(JSON.stringify({ type: 'escalation-timer', sessionId: currentSession.id, escalationId: id, op }));
 }
 function resetEscTimer(id) {
-  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected — reconnecting...'); return; }
+  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected, reconnecting...'); return; }
   ws.send(JSON.stringify({ type: 'escalation-timer', sessionId: currentSession.id, escalationId: id, op: 'reset' }));
 }
 function applyEscTimerUpdate(data) {
