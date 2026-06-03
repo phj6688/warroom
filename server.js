@@ -241,6 +241,7 @@ function loadSession(id) {
     _hasFiles: files.length > 0,
     _preset: getPreset(row.preset_id),
     presetId: row.preset_id || null,
+    continuesFromSessionId: row.continues_from_session_id || null,
   };
 }
 
@@ -595,8 +596,10 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       const summary = memory.buildSessionSummary(session.continuesFromSessionId);
       const src = stmts.getSession.get(session.continuesFromSessionId);
       if (summary && src) {
+        // buildSessionSummary already opens with a (capped) `Problem:` line, so
+        // the summary body carries the prior problem; no separate Problem line.
         session._continuationText =
-          `=== CONTINUED FROM PRIOR SESSION ===\nSource session: ${src.id}\nProblem: ${src.problem}\n\n${summary}\n=== END CONTINUED FROM PRIOR SESSION ===\n\n`;
+          `=== CONTINUED FROM PRIOR SESSION ===\nSource session: ${src.id}\n\n${summary}\n=== END CONTINUED FROM PRIOR SESSION ===\n\n`;
         broadcast(session.id, { type: 'continuation-injected', sessionId: session.id, sourceId: src.id, sourceProblem: src.problem });
         sLog.info({ sourceId: src.id }, 'continuation injected from prior session');
       }
