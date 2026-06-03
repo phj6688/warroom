@@ -113,6 +113,7 @@ const stmts = {
   updateSessionArchetype: db.prepare('UPDATE sessions SET archetype_id = ?, updated_at = ? WHERE id = ?'),
   updateSessionSpecialists: db.prepare('UPDATE sessions SET specialist_agents = ?, updated_at = ? WHERE id = ?'),
   updateSessionPreset: db.prepare('UPDATE sessions SET preset_id = ?, updated_at = ? WHERE id = ?'),
+  updateSessionContinuation: db.prepare('UPDATE sessions SET continues_from_session_id = ?, updated_at = ? WHERE id = ?'),
   updateSessionSynthesisQuality: db.prepare('UPDATE sessions SET synthesis_quality = ?, updated_at = ? WHERE id = ?'),
   insertEmbedding: db.prepare('INSERT INTO session_embeddings(embedding) VALUES (?)'),
   insertEmbeddingMeta: db.prepare('INSERT INTO embedding_meta (rowid, session_id, content_type, created_at) VALUES (?, ?, ?, ?)'),
