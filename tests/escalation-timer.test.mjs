@@ -173,13 +173,85 @@ describe('HLB-148 — escalation timer (mutable deadline, pause, reset)', () => 
     assert.ok(parsed.elapsed >= 130, `should honor the ~150ms window; timed out after ${parsed.elapsed}ms`);
   });
 
-  test('pause/reset on an unknown escalation return false (no throw)', async () => {
+  test('resume CONTINUES from the remaining-at-pause (does NOT grant a fresh full window like reset)', async () => {
+    // The bug this guards: "Resume" must continue the countdown from whatever
+    // time was left when the human paused, NOT silently restart the full window.
+    // We pause partway through a short window, hold paused, then resume and check
+    // that the new deadline sits ~remaining-at-pause in the future. reset, by
+    // contrast, must hand back the FULL window. Short injectable timeoutMs keeps
+    // the test sub-second — never a real 5-minute wait.
     const script = `
       'use strict';
       const mod = require(${JSON.stringify(ESC_MODULE)});
-      const { pauseEscalation, resetEscalation, getDeadline } = mod;
+      (async () => {
+        const { waitForEscalation, pauseEscalation, resumeEscalation, resetEscalation, getDeadline, resolveEscalation } = mod;
+        if (typeof resumeEscalation !== 'function') {
+          process.stdout.write(JSON.stringify({ ok: false, stage: 'export', error: 'missing resumeEscalation' }));
+          process.exit(1); return;
+        }
+        const WINDOW = 300;
+        const p = waitForEscalation('s', 'e', { timeoutMs: WINDOW });
+        p.catch(() => {}); // keep the rejection from going unhandled if it ever fires
+        // Burn ~200ms of the 300ms window, then pause. ~100ms should remain.
+        await new Promise(r => setTimeout(r, 200));
+        const dBeforePause = getDeadline('s', 'e');
+        const remainingAtPause = dBeforePause.deadlineAt - Date.now();
+        const pausedOk = pauseEscalation('s', 'e');
+        // Hold paused well past the original window. The remaining must NOT decay.
+        await new Promise(r => setTimeout(r, 400));
+        const resumeAt = Date.now();
+        const resumedOk = resumeEscalation('s', 'e');
+        const dAfterResume = getDeadline('s', 'e');
+        const resumeDelta = dAfterResume.deadlineAt - resumeAt; // ~remainingAtPause, NOT ~WINDOW
+
+        // Now prove reset is the FULL-window restart (the contrast).
+        const resetAt = Date.now();
+        const resetOk = resetEscalation('s', 'e');
+        const dAfterReset = getDeadline('s', 'e');
+        const resetDelta = dAfterReset.deadlineAt - resetAt; // ~WINDOW
+
+        resolveEscalation('s', 'e', 'done'); // let the process exit cleanly
+        await p.catch(() => {});
+        process.stdout.write(JSON.stringify({
+          ok: true, WINDOW, pausedOk, resumedOk, resetOk,
+          remainingAtPause, resumeDelta, resetDelta,
+          resumePaused: dAfterResume.paused, resetPaused: dAfterReset.paused,
+        }));
+      })().catch(err => { process.stdout.write(JSON.stringify({ ok: false, stage: 'unhandled', error: err && err.message })); process.exit(9); });
+    `;
+    const { code, stdout, stderr } = await runNodeScript(script, { timeoutMs: 10_000 });
+    let parsed = null; try { parsed = JSON.parse(stdout); } catch {}
+    assert.ok(parsed && parsed.ok, `runner failed (code=${code}).\nstdout=${stdout}\nstderr=${stderr}`);
+    assert.equal(parsed.pausedOk, true, 'pause must succeed for a live wait');
+    assert.equal(parsed.resumedOk, true, 'resume must succeed for a paused live wait');
+    assert.equal(parsed.resetOk, true, 'reset must succeed for a live wait');
+    assert.equal(parsed.resumePaused, false, 'resume must clear paused');
+    assert.equal(parsed.resetPaused, false, 'reset must clear paused');
+    // The crux: resume continues from the remaining-at-pause (~100ms), it does NOT
+    // jump to a fresh full window (~300ms). Generous bounds absorb scheduler jitter.
+    assert.ok(
+      parsed.resumeDelta <= parsed.remainingAtPause + 80,
+      `resume must NOT extend the window: new deadline ${parsed.resumeDelta}ms out but only ${parsed.remainingAtPause}ms remained at pause (a fresh ${parsed.WINDOW}ms window would be the reset bug)`
+    );
+    assert.ok(
+      parsed.resumeDelta < parsed.WINDOW - 100,
+      `resume (${parsed.resumeDelta}ms) must be clearly LESS than a fresh full window (${parsed.WINDOW}ms) — proving it continued, not restarted`
+    );
+    // reset, by contrast, restores the full window.
+    assert.ok(
+      parsed.resetDelta >= parsed.WINDOW - 60 && parsed.resetDelta <= parsed.WINDOW + 80,
+      `reset must restore the FULL ${parsed.WINDOW}ms window; got ${parsed.resetDelta}ms`
+    );
+  });
+
+  test('pause/resume/reset on an unknown escalation return false (no throw)', async () => {
+    const script = `
+      'use strict';
+      const mod = require(${JSON.stringify(ESC_MODULE)});
+      const { pauseEscalation, resumeEscalation, resetEscalation, getDeadline } = mod;
       const out = {
         pause: pauseEscalation('nope', 'nope'),
+        resume: typeof resumeEscalation === 'function' ? resumeEscalation('nope', 'nope') : 'missing',
         reset: resetEscalation('nope', 'nope'),
         deadline: getDeadline('nope', 'nope'),
       };
@@ -189,6 +261,7 @@ describe('HLB-148 — escalation timer (mutable deadline, pause, reset)', () => 
     let parsed = null; try { parsed = JSON.parse(stdout); } catch {}
     assert.ok(parsed && parsed.ok, `runner failed (code=${code}).\nstdout=${stdout}\nstderr=${stderr}`);
     assert.equal(parsed.out.pause, false, 'pause on unknown id is a no-op false');
+    assert.equal(parsed.out.resume, false, 'resume on unknown id is a no-op false');
     assert.equal(parsed.out.reset, false, 'reset on unknown id is a no-op false');
     assert.equal(parsed.out.deadline, null, 'getDeadline on unknown id is null');
   });

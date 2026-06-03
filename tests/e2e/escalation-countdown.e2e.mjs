@@ -1,7 +1,8 @@
 /**
  * HLB-148 — a pending human escalation card must show a live countdown the user
- * can pause and reset, so they control how long the agents wait instead of
- * racing a hidden 5-minute deadline.
+ * can pause, RESUME (continue from the time left), and reset (fresh full window),
+ * so they control how long the agents wait instead of racing a hidden 5-minute
+ * deadline.
  *
  * Drives the REAL path end-to-end against a live server (isolated temp DB via
  * spawnServer): an ACTIVE session carrying one PENDING blocking escalation is
@@ -12,10 +13,13 @@
  * and no page-side test hook is installed, so production index.html ships no
  * debug residue.
  *
- * Asserts: the inline countdown + queue chip render and tick down (textContent
- * only), the Pause and Reset buttons exist with 44pt touch targets, Pause flips
- * the card to a paused state via a real escalation-timer WS round-trip, Reset
- * restores the countdown, and the whole flow fires no console errors.
+ * Two specs:
+ *   1. The countdown renders + ticks (textContent only) and Pause/Reset have
+ *      44pt touch targets — the baseline UI contract.
+ *   2. The resume-vs-reset distinction (the fix): an escalation seeded with an
+ *      OLD created_at surfaces a REDUCED remaining window. Pausing freezes it;
+ *      Resume CONTINUES from that reduced value (NOT a fresh 5:00); Reset hands
+ *      back the full window. Screenshots prove each state.
  */
 import { test, expect } from '@playwright/test';
 import { spawnServer } from '../_helpers.mjs';
@@ -32,24 +36,39 @@ const ARTIFACT_DIR =
 mkdirSync(ARTIFACT_DIR, { recursive: true });
 
 const QUESTION = 'Ship v1 now or wait for the audit? — [A] ship / [B] wait — default: A';
+// The fallback window the server grants an active escalation with no live waiter.
+const FULL_WINDOW_MS = 5 * 60 * 1000;
 
 // Seed an ACTIVE session with one PENDING blocking escalation — the rows a live
 // deliberation persists mid-flight. Active + pending so the server treats the
 // deadline as live and surfaces deadlineAt over join-session. Seeding the row
 // directly keeps it out of activeSessions, so the WS join-session handler falls
 // through to loadSession() and replies with the genuine decorated state.
-function seedPendingEscalation(dbPath, sessionId, escId) {
+//
+// `ageMs` backdates created_at so the active-session fallback deadline
+// (created_at + full window) lands only (full window - ageMs) in the future —
+// i.e. a REDUCED remaining time, the precondition for proving resume continues
+// from less than a fresh window.
+function seedPendingEscalation(dbPath, sessionId, escId, ageMs = 0) {
   const db = new Database(dbPath);
   try {
     const now = Date.now();
+    const created = now - ageMs;
     db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)')
-      .run(sessionId, 'HLB-148 e2e: pausable escalation countdown', now, now);
+      .run(sessionId, 'HLB-148 e2e: pausable escalation countdown', created, now);
     db.prepare(
       "INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, severity, default_action, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, 'blocking', ?, NULL, 'pending', ?, NULL)",
-    ).run(escId, sessionId, 'process-architect', 'Process Architect', '⚑', QUESTION, 'ship v1 now', now);
+    ).run(escId, sessionId, 'process-architect', 'Process Architect', '⚑', QUESTION, 'ship v1 now', created);
   } finally {
     db.close();
   }
+}
+
+// Parse a countdown chip's "⏳ M:SS" / "M:SS" text into whole seconds.
+function parseMmSs(text) {
+  const m = /(\d+):(\d{2})/.exec(text || '');
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
 }
 
 test.describe('HLB-148 escalation countdown + Pause/Reset', () => {
@@ -86,9 +105,6 @@ test.describe('HLB-148 escalation countdown + Pause/Reset', () => {
     await expect(countdown).toBeVisible();
     await expect(countdown).toHaveText(/\d+:\d{2}/, { timeout: 4000 });
     const first = (await countdown.textContent()).trim();
-
-    // BEFORE: the card with a running countdown + Pause/Reset controls.
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'before-countdown-running.png'), fullPage: false });
 
     // R3: it ticks DOWN once per second without re-rendering the card body. We
     // confirm the value changes and the card's identity (the input element) is
@@ -133,18 +149,92 @@ test.describe('HLB-148 escalation countdown + Pause/Reset', () => {
     await page.waitForTimeout(1500);
     expect((await countdown.textContent()).trim(), 'paused countdown must not change').toEqual(pausedText);
 
-    // AFTER: the paused card (Resume button + Paused chip).
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'after-paused.png'), fullPage: false });
-
     // Reset resumes the countdown (back to a ticking m:ss, button back to Pause).
     await resetBtn.click();
     await expect(pauseBtn).toHaveText(/Pause/, { timeout: 4000 });
     await expect(countdown).toHaveText(/\d+:\d{2}/, { timeout: 4000 });
     await expect(card).not.toHaveClass(/esc-paused/);
 
-    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'after-reset-resumed.png'), fullPage: false });
-
     // No console errors fired through the whole flow.
     expect(consoleErrors, `console errors: ${consoleErrors.join(' | ')}`).toEqual([]);
+  });
+
+  // The fix: Resume must CONTINUE from the time left at pause, not silently grant
+  // a fresh full window (the old behavior sent op:'reset' on Resume). We seed an
+  // escalation aged so only ~30s remains, prove Pause freezes that reduced value,
+  // Resume keeps it reduced, and Reset jumps it back to the full 5:00.
+  test('Resume continues from the REDUCED remaining time; Reset restores the full window', async ({ page }) => {
+    const errors = [];
+    page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
+    page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+
+    // ~30s remaining: created 4.5 min ago, full window 5 min → ~0:30 on the clock.
+    const reducedSessionId = randomUUID();
+    const reducedEscId = randomUUID();
+    seedPendingEscalation(server.dbPath, reducedSessionId, reducedEscId, FULL_WINDOW_MS - 30_000);
+
+    await page.goto(server.baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => typeof ws !== 'undefined' && ws && ws.readyState === 1, null, { timeout: 8000 });
+    await page.evaluate((sid) => ws.send(JSON.stringify({ type: 'join-session', sessionId: sid })), reducedSessionId);
+
+    const card = page.locator(`#esc-${reducedEscId}`);
+    await expect(card).toBeVisible({ timeout: 8000 });
+    const countdown = page.locator(`#esc-timer-${reducedEscId}`);
+    await expect(countdown).toHaveText(/\d+:\d{2}/, { timeout: 4000 });
+
+    // The remaining time must be CLEARLY less than a fresh window — proving the
+    // reduced precondition (a fresh 5:00 would read 4:5x / 5:00).
+    const reducedSecs = parseMmSs(await countdown.textContent());
+    expect(reducedSecs, `seeded escalation should show a reduced ~30s, got ${reducedSecs}s`).not.toBeNull();
+    expect(reducedSecs, `remaining ${reducedSecs}s must be well under the full ${FULL_WINDOW_MS / 1000}s window`).toBeLessThan(120);
+
+    // (a) PAUSE — freezes at the reduced value.
+    const pauseBtn = page.locator(`#esc-pause-${reducedEscId}`);
+    const resetBtn = card.locator('.esc-reset');
+    await pauseBtn.click();
+    await expect(card).toHaveClass(/esc-paused/, { timeout: 4000 });
+    await expect(pauseBtn).toHaveText(/Resume/);
+    await expect(countdown).toHaveText(/Paused/);
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'fix-pause.png'), fullPage: false });
+
+    // (b) RESUME — must CONTINUE from the reduced value, NOT jump to a fresh 5:00.
+    await pauseBtn.click(); // paused -> Resume sends op:'resume'
+    await expect(pauseBtn).toHaveText(/Pause/, { timeout: 4000 });
+    await expect(countdown).toHaveText(/\d+:\d{2}/, { timeout: 4000 });
+    await expect(card).not.toHaveClass(/esc-paused/);
+    const resumedSecs = parseMmSs(await countdown.textContent());
+    expect(resumedSecs, `resumed countdown should be numeric, got "${await countdown.textContent()}"`).not.toBeNull();
+    // The crux: resume stayed near the reduced value (a fresh window would be ~300s).
+    expect(
+      resumedSecs,
+      `Resume must CONTINUE from ~${reducedSecs}s, not restart to a full window — got ${resumedSecs}s`,
+    ).toBeLessThan(90);
+    expect(
+      resumedSecs,
+      `Resume (${resumedSecs}s) must be far below a fresh ${FULL_WINDOW_MS / 1000}s window`,
+    ).toBeLessThan(FULL_WINDOW_MS / 1000 - 120);
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'fix-resume.png'), fullPage: false });
+
+    // (c) RESET — the separate button restores the FULL window (fresh ~5:00).
+    await resetBtn.click();
+    await expect(countdown).toHaveText(/\d+:\d{2}/, { timeout: 4000 });
+    // Wait for the reset broadcast to push the value clearly above the reduced one.
+    await page.waitForFunction(
+      (id) => {
+        const el = document.getElementById(`esc-timer-${id}`);
+        const m = el && /(\d+):(\d{2})/.exec(el.textContent || '');
+        return m && (Number(m[1]) * 60 + Number(m[2])) > 120;
+      },
+      reducedEscId,
+      { timeout: 4000 },
+    );
+    const resetSecs = parseMmSs(await countdown.textContent());
+    expect(
+      resetSecs,
+      `Reset must restore the full ~${FULL_WINDOW_MS / 1000}s window, got ${resetSecs}s`,
+    ).toBeGreaterThan(FULL_WINDOW_MS / 1000 - 30);
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'fix-reset.png'), fullPage: false });
+
+    expect(errors, `console errors: ${errors.join(' | ')}`).toEqual([]);
   });
 });

@@ -71,11 +71,32 @@ function seedPendingEscalation(dbPath, sessionId, escId) {
   }
 }
 
+// Seed an INACTIVE session (active=0) with a still-pending escalation aged past
+// the default window — the crash-recovered / closed-session shape. No live waiter
+// will ever park for it, so the server must NOT fabricate a (past) deadline.
+function seedInactivePendingEscalation(dbPath, sessionId, escId) {
+  const db = new Database(dbPath);
+  try {
+    const now = Date.now();
+    const old = now - 60 * 60 * 1000; // an hour ago — well past any 5-min window
+    db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 0, 0, ?, ?)')
+      .run(sessionId, 'HLB-148 inactive escalation', old, old);
+    db.prepare(
+      "INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, severity, default_action, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, 'blocking', ?, NULL, 'pending', ?, NULL)",
+    ).run(escId, sessionId, 'process-architect', 'Process Architect', '⚑', 'Stale Q — [A] x / [B] y', 'assume A', old);
+  } finally {
+    db.close();
+  }
+}
+
 describe('HLB-148 — deadline on the wire + escalation-timer op', () => {
-  test('validateWS accepts escalation-timer pause/reset and rejects junk ops', () => {
+  test('validateWS accepts escalation-timer pause/resume/reset and rejects junk ops', () => {
     const pause = validateWS({ type: 'escalation-timer', sessionId: 's', escalationId: 'e', op: 'pause' });
     assert.equal(pause.ok, true, 'pause op must validate');
     assert.equal(pause.data.op, 'pause');
+    const resume = validateWS({ type: 'escalation-timer', sessionId: 's', escalationId: 'e', op: 'resume' });
+    assert.equal(resume.ok, true, 'resume op must validate');
+    assert.equal(resume.data.op, 'resume');
     const reset = validateWS({ type: 'escalation-timer', sessionId: 's', escalationId: 'e', op: 'reset' });
     assert.equal(reset.ok, true, 'reset op must validate');
     assert.equal(validateWS({ type: 'escalation-timer', sessionId: 's', escalationId: 'e', op: 'frobnicate' }).ok, false);
@@ -100,6 +121,31 @@ describe('HLB-148 — deadline on the wire + escalation-timer op', () => {
     assert.equal(typeof esc.deadlineAt, 'number', 'pending escalation must carry a numeric deadlineAt');
     assert.ok(esc.deadlineAt > Date.now(), 'deadlineAt must be in the future for a fresh pending escalation');
     assert.equal(esc.paused, false, 'a fresh pending escalation is not paused');
+
+    a.ws.close();
+  });
+
+  test('an INACTIVE session pending escalation carries deadlineAt=null (no fabricated past deadline)', async () => {
+    // FIX 2: with no live waiter AND the session inactive, nothing will
+    // auto-resolve, so the server must send deadlineAt:null rather than a
+    // created_at + window timestamp that is already in the past (which the UI
+    // would render as a false 0:00). The active path above still gets a number.
+    const sessionId = randomUUID();
+    const escId = randomUUID();
+    seedInactivePendingEscalation(server.dbPath, sessionId, escId);
+
+    const a = await openWs(server.wsUrl);
+    await delay(150);
+    a.inbox.length = 0;
+    await send(a.ws, { type: 'join-session', sessionId });
+    await delay(300);
+
+    const state = a.inbox.find((m) => m.type === 'session-state' && m.session && m.session.id === sessionId);
+    assert.ok(state, `expected a session-state for ${sessionId}; inbox types: ${a.inbox.map((m) => m.type).join(',')}`);
+    const esc = (state.session.escalations || []).find((e) => e.id === escId);
+    assert.ok(esc, 'the pending escalation must be present in session-state');
+    assert.equal(esc.deadlineAt, null, 'an inactive-session escalation must NOT carry a fabricated deadline');
+    assert.equal(esc.paused, false, 'paused is false in the neutral state');
 
     a.ws.close();
   });

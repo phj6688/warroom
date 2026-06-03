@@ -206,26 +206,34 @@ async function createSession(problem, fileIds = [], presetId = null, continuesFr
 }
 
 // HLB-148 — the per-escalation countdown the client renders. A live blocking
-// wait owns a mutable deadline (pause/reset mutate it); getDeadline() reads it.
-// When no live waiter exists (answered escalation, or one loaded for an inactive
-// session) fall back to created_at + the default window so the card can still
-// show a deadline. Answered escalations carry no countdown.
+// wait owns a mutable deadline (pause/reset/resume mutate it); getDeadline()
+// reads it. When no live waiter exists, the deadline is only meaningful if the
+// session is still ACTIVE (its escalation will get a waiter once the phase gate
+// opens). For an INACTIVE session there is nothing left to auto-resolve, so we
+// return deadlineAt:null instead of fabricating a past `created_at + window`
+// timestamp that would render a false 0:00. Answered escalations carry no
+// countdown.
 //   esc: { id, sessionId, answered, createdAt }
+//   isActive: whether the owning session is active (live deliberation)
 // Returns { deadlineAt, paused } merged onto the escalation object.
-function escalationTiming(esc) {
+function escalationTiming(esc, isActive = false) {
   if (esc.answered) return { deadlineAt: null, paused: false };
   const live = getDeadline(esc.sessionId, esc.id);
   if (live) return { deadlineAt: live.deadlineAt, paused: live.paused };
-  // No live waiter (escalation created before its phase gate, or loaded for an
-  // inactive session). Honor any pause/reset the human already applied (mirrored
-  // onto the in-memory escalation by the escalation-timer handler), else fall
-  // back to the created_at + default window.
+  // No live waiter. Honor any pause/reset/resume the human already applied
+  // (mirrored onto the in-memory escalation by the escalation-timer handler) —
+  // that is a deliberate human action regardless of active state.
   if (esc.paused === true && typeof esc.deadlineAt === 'number') {
     return { deadlineAt: esc.deadlineAt, paused: true };
   }
   if (typeof esc.deadlineAt === 'number') {
     return { deadlineAt: esc.deadlineAt, paused: false };
   }
+  // No waiter, no human-applied deadline. Only an ACTIVE session's escalation
+  // (created before its phase gate) will acquire a waiter and auto-resolve, so
+  // give it a fallback window. An inactive escalation will never auto-resolve —
+  // render a neutral state, no ticking countdown.
+  if (!isActive) return { deadlineAt: null, paused: false };
   const base = (typeof esc.createdAt === 'number' ? esc.createdAt : Date.now());
   return { deadlineAt: base + DEFAULT_TIMEOUT_MS, paused: false };
 }
@@ -245,7 +253,7 @@ function loadSession(id) {
       answer: e.answer, createdAt: e.created_at,
       severity: e.severity || 'blocking', defaultAction: e.default_action || null,
     };
-    return { ...esc, ...escalationTiming(esc) };
+    return { ...esc, ...escalationTiming(esc, !!row.active) };
   });
   const humanMessages = stmts.getSessionHumanMessages.all(id).map(h => ({
     id: h.id, content: h.content, timestamp: h.created_at
@@ -528,7 +536,7 @@ async function runAgentTurn(session, agentId, phase) {
       // card and queue can render time-remaining from the first frame. The
       // blocking wait that owns the live deadline starts at the next phase
       // gate; until then the client shows the created_at + default window.
-      broadcast(session.id, { type: 'escalation', ...esc, ...escalationTiming(esc), agentName: agent.name, agentEmoji: agent.emoji });
+      broadcast(session.id, { type: 'escalation', ...esc, ...escalationTiming(esc, session.active !== false), agentName: agent.name, agentEmoji: agent.emoji });
     });
 
     session.agentStates[agentId] = 'idle';
