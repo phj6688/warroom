@@ -168,13 +168,15 @@ async function attachFiles(sessionId, fileIds) {
   return attached;
 }
 
-async function createSession(problem, fileIds = [], presetId = null) {
+async function createSession(problem, fileIds = [], presetId = null, continuesFromSessionId = null) {
   const id = genId();
   const now = Date.now();
   stmts.insertSession.run(id, problem, now, now);
 
   const preset = getPreset(presetId);
   if (preset) stmts.updateSessionPreset.run(preset.id, now, id);
+
+  if (continuesFromSessionId) stmts.updateSessionContinuation.run(continuesFromSessionId, now, id);
 
   let files = [];
   if (fileIds.length > 0) {
@@ -188,6 +190,7 @@ async function createSession(problem, fileIds = [], presetId = null) {
     _hasFiles: files.length > 0,
     _preset: preset,
     presetId: preset ? preset.id : null,
+    continuesFromSessionId: continuesFromSessionId || null,
     searchCache: new Map(),
     searchBudget: makeSessionBudget(),
   };
@@ -581,6 +584,25 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     }
   } catch (err) {
     sLog.warn({ err: err.message }, 'specialist spawn error (proceeding with core 8)');
+  }
+
+  // Seed from a chosen prior session (HLB-147). This block is injected ahead
+  // of the similarity-based memory block below so the council reads "where we
+  // left off" before "what looks similar". A missing/deleted source is not
+  // fatal: the session proceeds as a fresh one.
+  if (session.continuesFromSessionId) {
+    try {
+      const summary = memory.buildSessionSummary(session.continuesFromSessionId);
+      const src = stmts.getSession.get(session.continuesFromSessionId);
+      if (summary && src) {
+        session._continuationText =
+          `=== CONTINUED FROM PRIOR SESSION ===\nSource session: ${src.id}\nProblem: ${src.problem}\n\n${summary}\n=== END CONTINUED FROM PRIOR SESSION ===\n\n`;
+        broadcast(session.id, { type: 'continuation-injected', sessionId: session.id, sourceId: src.id, sourceProblem: src.problem });
+        sLog.info({ sourceId: src.id }, 'continuation injected from prior session');
+      }
+    } catch (err) {
+      sLog.warn({ err: err.message }, 'continuation source unavailable (proceeding without)');
+    }
   }
 
   // Retrieve relevant prior sessions for memory injection
