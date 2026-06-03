@@ -2216,6 +2216,11 @@ html, body {
 let ws = null;
 let agents = [];
 let phases = [];
+// Index of the phase currently active (or `phases.length` once every phase is
+// done). The server re-broadcasts `phases` on each (re)connection, which rebuilds
+// the phase nodes in their default "pending" state, so the live position must be
+// re-applied after every render. This module variable is its single source.
+let phaseActiveIdx = 0;
 let currentSession = null;
 let sessionsList = [];
 let messageCount = 0;
@@ -2451,6 +2456,9 @@ function handleMessage(data) {
       currentSession = data.session;
       sessionStart = Date.now();
       messageCount = 0; escalationCount = 0; pendingEscalations = 0;
+      // Reset the phase indicator so a fresh session starts at the first phase,
+      // even if a prior session left the panel further along.
+      updatePhases(0);
       if (typeof updateChatReady === 'function') updateChatReady();
       showView('view-deliberation');
       document.getElementById('problem-display').textContent = data.session.problem;
@@ -2773,6 +2781,11 @@ function renderPhases() {
   document.getElementById('sheet-phase-list').innerHTML = html;
   document.getElementById('desktop-phases').innerHTML = html.replace(/id="phase-/g, 'id="dphase-');
   renderPhaseBar();
+  // A `phases` (re)broadcast rebuilds every node back to "pending". Re-apply the
+  // live position (single source: updatePhases) so the right panel, phase bar,
+  // and mobile sheet keep the active/completed phase across a reconnect instead
+  // of snapping back to the first phase mid-deliberation.
+  updatePhases(phaseActiveIdx);
 }
 
 function renderPhaseBar() {
@@ -2791,6 +2804,9 @@ function renderPhaseBar() {
 }
 
 function updatePhases(activeIdx) {
+  // Remember the live position so a later renderPhases() (a `phases` re-broadcast
+  // on reconnect) can restore it instead of reverting to the first phase.
+  phaseActiveIdx = activeIdx;
   phases.forEach((_, i) => {
     ['', 'd'].forEach(prefix => {
       const el = document.getElementById(`${prefix}phase-${i}`);
