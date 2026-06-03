@@ -2229,6 +2229,13 @@ let selectedContinuationId = null; // prior session id to seed a continuation fr
 let lastSynthesisMsg = null;      // captured for the Decision Record card
 let drQualitySent = false;        // one quality rating per completed session
 let drDismissed = false;          // user dismissed the answer card this session
+// Rendered agent-message ids, so a live `message` whose row was already drawn by
+// a session-state rebuild (the reconnect race) is dropped instead of duplicated.
+let renderedMsgIds = new Set();
+// Set true only while a reconnect-triggered join-session rebuild runs, so the
+// session-state handler preserves a dismissed Decision Record and the user's
+// scroll position instead of treating it like a fresh open.
+let isReconnectRebuild = false;
 let pendingFiles = [];  // [{ id, file, tokens, mime, name, status, error, extraction_error }]
 let fsConfig = null;
 let activeSheet = null;
@@ -2319,6 +2326,44 @@ function getWsUrl() {
 
 let wsFailCount = 0;
 let httpPollTimer = null;
+// Heartbeat: any inbound frame counts as liveness. If no traffic arrives within
+// SILENCE_WINDOW we treat the socket as half-open (TCP dead, readyState still
+// OPEN) and force a reconnect — no server pong is involved. 35s sits safely
+// above the live broadcast cadence so a busy deliberation never trips it.
+//
+// To tell "idle but healthy" from "dead", a single benign already-valid
+// {type:'get-sessions'} is sent once the socket nears the silence threshold: a
+// healthy socket answers (resetting the timer), a dead one stays silent and is
+// dropped. The poke is gated to fire at most ~once per SILENCE_WINDOW so the
+// `sessions` reply re-renders the session list no more often than ~35s, which
+// respects the "setInterval rebuilds >= 30s" UI rule and avoids needless churn.
+const SILENCE_WINDOW = 35000;
+const POKE_AFTER = 28000;           // start poking once silent this long
+const RECONNECT_DELAY = 5000;
+let hbTimer = null;
+let lastTrafficAt = 0;
+let lastPokeAt = 0;
+
+function startHeartbeat() {
+  stopHeartbeat();
+  lastTrafficAt = Date.now();
+  lastPokeAt = 0;
+  hbTimer = setInterval(() => {
+    if (!ws || ws.readyState !== 1) return;
+    const silent = Date.now() - lastTrafficAt;
+    if (silent > SILENCE_WINDOW) {
+      // Silent for too long — drop it so onclose drives the normal reconnect.
+      try { ws.close(); } catch (_) {}
+      return;
+    }
+    // Near the threshold and not poked this idle window: elicit one reply.
+    if (silent > POKE_AFTER && Date.now() - lastPokeAt > POKE_AFTER) {
+      lastPokeAt = Date.now();
+      try { ws.send(JSON.stringify({ type: 'get-sessions' })); } catch (_) {}
+    }
+  }, 5000);
+}
+function stopHeartbeat() { if (hbTimer) { clearInterval(hbTimer); hbTimer = null; } }
 
 function connect() {
   const url = getWsUrl();
@@ -2327,16 +2372,28 @@ function connect() {
     console.log('WS connected');
     wsFailCount = 0;
     if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; }
+    startHeartbeat();
+    // Re-subscribe to the open session after every (re)connect. A fresh socket
+    // starts with an empty server-side subscribedSessions set, so without this
+    // the live feed freezes until the user reopens the session. The server
+    // replies session-state, which rebuilds the feed authoritatively (and so
+    // also delivers any messages that landed during the gap, exactly once).
+    if (currentSession && currentSession.id && ws.readyState === 1) {
+      isReconnectRebuild = true;
+      ws.send(JSON.stringify({ type: 'join-session', sessionId: currentSession.id }));
+    }
     if (typeof updateChatReady === 'function') updateChatReady();
   };
   ws.onclose = () => {
     wsFailCount++;
+    stopHeartbeat();
     if (wsFailCount >= 2 && !httpPollTimer) { loadViaHttp(); httpPollTimer = setInterval(loadViaHttp, 15000); }
     if (typeof updateChatReady === 'function') updateChatReady();
-    setTimeout(connect, 5000);
+    const delay = (typeof window !== 'undefined' && window.__wsReconnectDelayMs) || RECONNECT_DELAY;
+    setTimeout(connect, delay);
   };
   ws.onerror = (e) => console.error('WS error:', e);
-  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+  ws.onmessage = (e) => { lastTrafficAt = Date.now(); handleMessage(JSON.parse(e.data)); };
 }
 
 function loadViaHttp() {
@@ -2349,6 +2406,15 @@ function loadViaHttp() {
   fetch(apiUrl('/api/phases')).then(r => r.ok ? r.json() : []).then(phases => {
     if (phases.length) handleMessage({ type: 'phases', phases });
   }).catch(() => {});
+  // Degraded mode must also advance the OPEN session's feed, not just the global
+  // lists. /api/sessions/:id returns the same shape as a WS session-state, so
+  // feed it through the identical handler (flagged as a rebuild so a dismissed
+  // Decision Record and the scroll position survive the re-render).
+  if (currentSession && currentSession.id) {
+    fetch(apiUrl('/api/sessions/' + currentSession.id)).then(r => r.ok ? r.json() : null).then(session => {
+      if (session) { isReconnectRebuild = true; handleMessage({ type: 'session-state', session }); }
+    }).catch(() => {});
+  }
 }
 
 function handleMessage(data) {
@@ -2410,6 +2476,10 @@ function handleMessage(data) {
       break;
 
     case 'message':
+      // Drop a live broadcast whose row a session-state rebuild already drew
+      // (the reconnect race): the authoritative rebuild wins, only strictly-new
+      // ids append. Without this the post-reconnect feed grows a duplicate row.
+      if (data.id && renderedMsgIds.has(data.id)) break;
       removeThinking(data.agentId);
       addMessage(data);
       // Capture the orchestrator's synthesis for the Decision Record (no
@@ -2514,7 +2584,16 @@ function handleMessage(data) {
       showToast(`▶ Resumed from phase ${(data.fromPhase ?? 0) + 1}`);
       break;
 
-    case 'session-state':
+    case 'session-state': {
+      // A reconnect (or HTTP-fallback) rebuild of the SAME session must not feel
+      // like reopening it: keep a dismissed Decision Record dismissed and keep
+      // the user where they were scrolled. Latch the flag locally and clear the
+      // module flag immediately so it never leaks into a later fresh open.
+      const _isRebuild = isReconnectRebuild;
+      isReconnectRebuild = false;
+      const _feedEl = document.getElementById('feed');
+      const _prevScrollTop = _feedEl.scrollTop;
+      const _wasAtBottom = _feedEl.scrollHeight - _feedEl.scrollTop - _feedEl.clientHeight < 80;
       currentSession = data.session;
       if (typeof updateChatReady === 'function') updateChatReady();
       showView('view-deliberation');
@@ -2539,7 +2618,7 @@ function handleMessage(data) {
         document.getElementById('btn-stop').style.display = '';
         document.getElementById('btn-resume').style.display = 'none';
       }
-      clearFeed();
+      clearFeed(_isRebuild);
       addInitMessage(data.session.problem, false, data.session.files);
       // Merge messages + human messages, sort by timestamp, interleave
       const allItems = [];
@@ -2576,7 +2655,16 @@ function handleMessage(data) {
       if (!data.session.active && (data.session.messages || []).some(m => m.phase === 'Synthesis')) {
         renderDecisionRecord();
       }
+      // Scroll: a fresh open lands at the bottom (the default). A reconnect
+      // rebuild must not yank the user around — restore their prior offset,
+      // unless they were already pinned to the bottom (then keep following).
+      // addMessage()'s own rAF scroll-to-bottom runs first; this rAF is queued
+      // after it, so it wins for the restore case.
+      if (_isRebuild && !_wasAtBottom) {
+        requestAnimationFrame(() => { _feedEl.scrollTop = _prevScrollTop; });
+      }
       break;
+    }
 
     case 'session-deleted':
       sessionsList = sessionsList.filter(s => s.id !== data.sessionId);
@@ -2982,14 +3070,19 @@ function loadHljs() {
 }
 
 // ─── Feed ────────────────────────────────────────────────
-function clearFeed() {
+function clearFeed(preserveDismissal) {
   document.getElementById('feed').innerHTML = '';
+  // The feed DOM is gone, so the rendered-id set must reset too — the upcoming
+  // rebuild re-registers every row it draws.
+  renderedMsgIds = new Set();
   // Reset per-session Decision Record state so a fresh session never shows a
   // stale answer card or a pre-locked quality tap, and a prior dismissal does
-  // not suppress the next session's answer.
+  // not suppress the next session's answer. A reconnect-driven rebuild of the
+  // SAME session must NOT un-dismiss a card the user already closed (HLB-140),
+  // so the caller passes preserveDismissal in that case.
   lastSynthesisMsg = null;
   drQualitySent = false;
-  drDismissed = false;
+  if (!preserveDismissal) drDismissed = false;
 }
 function scrollFeed() { const f = document.getElementById('feed'); requestAnimationFrame(() => f.scrollTop = f.scrollHeight); }
 
@@ -3209,11 +3302,15 @@ function agentAccent(agentId) {
 function addMessage(msg) {
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const isLong = (msg.content || '').length > 500;
+  // Track the rendered id so the live `message` handler can drop a duplicate
+  // that a session-state rebuild already drew after a reconnect.
+  if (msg.id) renderedMsgIds.add(msg.id);
 
   // Assemble the WRAPPER off-DOM in a DocumentFragment, single appendChild (AC5).
   const frag = document.createDocumentFragment();
   const d = document.createElement('div');
   d.className = 'message';
+  if (msg.id) d.dataset.msgId = msg.id;
 
   const header = document.createElement('div');
   header.className = 'message-header';
