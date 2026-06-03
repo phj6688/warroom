@@ -2782,7 +2782,12 @@ function renderPhaseBar() {
     return (i > 0 ? '<span class="pb-arrow">›</span>' : '') +
       `<div class="pb-item" id="pbar-${i}"><div class="pb-dot"></div><span>${p.name}</span></div>`;
   }).join('') +
-    '<div class="pb-stats"><span id="bar-msgs">0 msgs</span><span id="bar-esc">0 escalations</span><span id="bar-dur">—</span></div>';
+    '<div class="pb-stats"><span id="bar-msgs"></span><span id="bar-esc"></span><span id="bar-dur">—</span></div>';
+  // The server re-broadcasts `phases` on every (re)connection, so this runs
+  // mid-session and re-creates the stat nodes. Re-apply the live counts here
+  // (single source: updateBarStats) so the bar never reverts to zero while the
+  // right-panel counters still hold the real totals.
+  updateBarStats();
 }
 
 function updatePhases(activeIdx) {
