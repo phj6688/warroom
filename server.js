@@ -21,6 +21,8 @@ const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
+const { createTokenLedger, persistSessionTokens } = require('./lib/token-usage');
+const { estimateTokens } = require('./lib/embeddings');
 const { buildContext } = require('./lib/context');
 const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
 const { createFilesServiceClient } = require('./lib/clients/files-service');
@@ -120,9 +122,21 @@ if (FILES_SERVICE_URL && FILES_SERVICE_TOKEN) {
 
 // ─── Shared State ───────────────────────────────────────────
 const activeSessions = new Map();
-const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES });
-const quality = createQualityManager({ db, stmts, callAnthropic, PHASES });
-const fingerprint = createFingerprintClassifier({ callAnthropic, db, stmts });
+
+// HLB-152 — per-session token ledger. Every LLM/embedding call routed through a
+// session-aware caller adds its normalized usage here; the deliberation-
+// complete path snapshots and persists it to the sessions row. onTokenUsage is
+// the seam the memory/quality/fingerprint managers use to attribute the usage
+// of the callAnthropic calls they own.
+const tokenLedger = createTokenLedger();
+function onTokenUsage(sessionId, category, usage, opts) {
+  try { tokenLedger.add(sessionId, category, usage, opts); }
+  catch (err) { log.warn({ sessionId, err: err && err.message }, 'token ledger add failed'); }
+}
+
+const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES, onTokenUsage });
+const quality = createQualityManager({ db, stmts, callAnthropic, PHASES, onTokenUsage });
+const fingerprint = createFingerprintClassifier({ callAnthropic, db, stmts, onTokenUsage });
 const specialist = createSpecialistSpawner({ db, stmts });
 
 function genId() { return crypto.randomUUID(); }
@@ -278,6 +292,8 @@ function loadSession(id) {
     _preset: getPreset(row.preset_id),
     presetId: row.preset_id || null,
     continuesFromSessionId: row.continues_from_session_id || null,
+    totalTokens: row.total_tokens ?? null,
+    tokenBreakdown: (() => { try { return row.token_breakdown ? JSON.parse(row.token_breakdown) : null; } catch (_) { return null; } })(),
   };
 }
 
@@ -466,6 +482,11 @@ async function runAgentTurn(session, agentId, phase) {
         .filter(inv => inv.toolName === 'escalate_to_human')
         .map(inv => ({ name: 'escalate_to_human', input: inv.input || {} }));
 
+      // Usage from the tool-loop is the sum across every round-trip in this
+      // turn. Attribute it to the tool-call bucket since this is the search-
+      // enabled path.
+      onTokenUsage(session.id, 'tool_call', loopOut.usage);
+
       // Aggregate per-invocation search numbers for the turn-complete row.
       // Truncation is a property of any individual invocation, so truncated
       // at the turn level is "any call was truncated".
@@ -485,7 +506,9 @@ async function runAgentTurn(session, agentId, phase) {
       turnBudgetExhausted = !!loopOut.budgetExhausted;
     } else {
       // Prose-marker path (pre-Session-4 default; stays canonical until canary flips SCOUT_USE_TOOL).
-      ({ text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
+      let primary;
+      ({ text: response, toolCalls, ...primary } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
+      onTokenUsage(session.id, 'agent_turn', primary.usage);
 
       if (isResearchScout && searchAvailable) {
         const searchQueries = searchProvider.extractQueriesFromText(response);
@@ -510,6 +533,7 @@ async function runAgentTurn(session, agentId, phase) {
           const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
           response = follow.text;
           toolCalls = [...toolCalls, ...follow.toolCalls];
+          onTokenUsage(session.id, 'agent_turn', follow.usage);
         } else {
           turnQueriesExecuted = 0;
         }
@@ -587,7 +611,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // The classifier still runs for archetype tagging and to top up domains.
   let recommendedSpecialists = [];
   try {
-    const classification = await fingerprint.classify(session.problem);
+    const classification = await fingerprint.classify(session.problem, { sessionId: session.id });
     if (classification.archetype && classification.confidence >= fingerprint.MIN_CONFIDENCE) {
       sLog.info({
         archetype: classification.archetype,
@@ -648,8 +672,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     }
   }
 
-  // Retrieve relevant prior sessions for memory injection
+  // Retrieve relevant prior sessions for memory injection. The query embedding
+  // spends tokens against the embedding provider; attribute the estimate to
+  // this session (HLB-152).
   try {
+    onTokenUsage(session.id, 'embedding', { input_tokens: estimateTokens(session.problem || ''), output_tokens: 0 }, { estimated: true });
     const memories = await memory.retrieveSimilar(session.problem, 3);
     if (memories.length > 0) {
       session._memories = memories;
@@ -755,11 +782,26 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   jobs.enqueue('memory.extractArchivalFacts', { sessionId: session.id });
   jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
 
+  // HLB-152 — persist the per-session token tally accumulated across all agent
+  // turns and tool round-trips. Embedding/memory/quality tokens are added by
+  // the post-deliberation jobs above (async); each of those re-persists the
+  // cumulative snapshot when it finishes, so this write captures the synchronous
+  // portion and the jobs top it up.
+  let tokenSnap = { total_tokens: 0, token_breakdown: {} };
+  try {
+    tokenSnap = persistSessionTokens(db, session.id, tokenLedger);
+    broadcast(session.id, { type: 'tokens-counted', sessionId: session.id, totalTokens: tokenSnap.total_tokens, breakdown: tokenSnap.token_breakdown });
+    sLog.info({ totalTokens: tokenSnap.total_tokens }, 'session token total persisted');
+  } catch (err) {
+    sLog.warn({ err: err && err.message }, 'token persistence failed');
+  }
+
   const synthCount = stmts.synthCountForSession.get(session.id).c;
   const qaCount = stmts.escalationCountForSession.get(session.id).c;
   const totalMsgs = session.messages.length;
   broadcast(session.id, {
     type: 'deliberation-complete', sessionId: session.id,
+    totalTokens: tokenSnap.total_tokens,
     export: {
       available: true,
       modes: [
@@ -787,7 +829,13 @@ async function runFollowUp(sessionId, session, question) {
     const humanHistory = (session.humanMessages || []).map(h => `[Human]: ${h.content}`).join('\n');
     const systemPrompt = `You are the Process Architect responding to a follow-up question after a completed War Room deliberation.\n\nYou have access to the full deliberation history. Answer the human's question directly, drawing on the insights and analysis from all 8 agents' contributions. Be concise, specific, and actionable.\n\nIf the question requires information that wasn't covered in the deliberation, say so and suggest what additional research would help.`;
     const userContent = `ORIGINAL PROBLEM: ${session.problem}\n\nDELIBERATION SUMMARY (all agents' contributions):\n${priorMessages}\n\n${humanHistory ? `HUMAN MESSAGES:\n${humanHistory}\n\n` : ''}FOLLOW-UP QUESTION: ${question}\n\nAnswer this question based on the deliberation above. Be direct and specific.`;
-    const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId);
+    const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId, 1500,
+      (u) => onTokenUsage(sessionId, 'agent_turn', u));
+    // A follow-up adds to the session's running total after completion.
+    try {
+      const snap = persistSessionTokens(db, sessionId, tokenLedger);
+      broadcast(sessionId, { type: 'tokens-counted', sessionId, totalTokens: snap.total_tokens, breakdown: snap.token_breakdown });
+    } catch (_) { /* non-fatal */ }
 
     broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'speaking', sessionId });
     const now = Date.now();
@@ -813,13 +861,36 @@ setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberat
 // ─── Background Job Handlers (F11) ──────────────────────────
 // Replace the three fire-and-forget post-deliberation calls. The worker
 // drains these from the background_jobs table, retrying with backoff.
-jobs.register('memory.storeSessionMemory', ({ sessionId }) => memory.storeSessionMemory(sessionId));
-jobs.register('memory.extractArchivalFacts', ({ sessionId }) => memory.extractArchivalFacts(sessionId));
+// HLB-152 — these post-deliberation jobs spend embedding/memory/quality tokens
+// after deliberation-complete has already fired. Each re-persists the cumulative
+// token snapshot so the sessions row converges on the true grand total once all
+// async work has drained. persistSnapshot is overwrite-safe (full cumulative
+// tally) and never throws into the job worker.
+function persistTokenSnapshot(sessionId) {
+  try {
+    const snap = persistSessionTokens(db, sessionId, tokenLedger);
+    broadcast(sessionId, { type: 'tokens-counted', sessionId, totalTokens: snap.total_tokens, breakdown: snap.token_breakdown });
+  } catch (err) {
+    log.warn({ sessionId, err: err && err.message }, 'token re-persist failed');
+  }
+}
+
+jobs.register('memory.storeSessionMemory', async ({ sessionId }) => {
+  const r = await memory.storeSessionMemory(sessionId);
+  persistTokenSnapshot(sessionId);
+  return r;
+});
+jobs.register('memory.extractArchivalFacts', async ({ sessionId }) => {
+  const r = await memory.extractArchivalFacts(sessionId);
+  persistTokenSnapshot(sessionId);
+  return r;
+});
 jobs.register('quality.evaluateSession', async ({ sessionId }) => {
   const result = await quality.evaluateSession(sessionId);
   if (result) {
     broadcast(sessionId, { type: 'quality-scored', sessionId, score: result.score, breakdown: result.breakdown });
   }
+  persistTokenSnapshot(sessionId);
   return result;
 });
 
