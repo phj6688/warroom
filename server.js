@@ -21,7 +21,7 @@ const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
-const { createTokenLedger, persistSessionTokens } = require('./lib/token-usage');
+const { createTokenLedger, persistSessionTokens, createTickThrottle } = require('./lib/token-usage');
 const { estimateTokens } = require('./lib/embeddings');
 const { buildContext } = require('./lib/context');
 const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
@@ -129,8 +129,21 @@ const activeSessions = new Map();
 // the seam the memory/quality/fingerprint managers use to attribute the usage
 // of the callAnthropic calls they own.
 const tokenLedger = createTokenLedger();
+// HLB-335 — live "on the fly" token counter. Every accrual can push a snapshot
+// to the session's subscribers, throttled to one broadcast per TOKEN_TICK_MS so
+// a busy phase does not spam the socket (UI no-flicker rule: render <= 1/1-2s).
+// The authoritative tokens-counted still fires at each completion boundary, so a
+// dropped intermediate tick never loses the final number.
+const TOKEN_TICK_MS = 1500;
+const tokenTick = createTickThrottle(TOKEN_TICK_MS);
 function onTokenUsage(sessionId, category, usage, opts) {
-  try { tokenLedger.add(sessionId, category, usage, opts); }
+  try {
+    tokenLedger.add(sessionId, category, usage, opts);
+    if (sessionId && tokenTick.shouldEmit(sessionId, Date.now())) {
+      const snap = tokenLedger.snapshot(sessionId);
+      broadcast(sessionId, { type: 'token-tick', sessionId, totalTokens: snap.total_tokens, breakdown: snap.token_breakdown });
+    }
+  }
   catch (err) { log.warn({ sessionId, err: err && err.message }, 'token ledger add failed'); }
 }
 
@@ -790,6 +803,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   let tokenSnap = { total_tokens: 0, token_breakdown: {} };
   try {
     tokenSnap = persistSessionTokens(db, session.id, tokenLedger);
+    tokenTick.reset(session.id);
     broadcast(session.id, { type: 'tokens-counted', sessionId: session.id, totalTokens: tokenSnap.total_tokens, breakdown: tokenSnap.token_breakdown });
     sLog.info({ totalTokens: tokenSnap.total_tokens }, 'session token total persisted');
   } catch (err) {
