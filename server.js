@@ -6,6 +6,7 @@ const crypto = require('crypto');
 
 // ─── Modules ────────────────────────────────────────────────
 const { db, stmts, dbPath } = require('./db');
+require('./lib/app-config').init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
 const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');

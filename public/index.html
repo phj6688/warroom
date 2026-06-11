@@ -1458,6 +1458,17 @@ html, body {
   -webkit-backdrop-filter: blur(6px);
 }
 .export-modal-overlay.open { display: flex; }
+
+/* HLB-336 — agent models & providers settings */
+.settings-modal { max-width: 640px; width: 92vw; }
+.settings-hint { font-size: 11px; color: var(--text-dimmer); line-height: 1.5; margin-bottom: 14px; }
+.settings-agent-row { display: grid; grid-template-columns: 1fr 140px 1.2fr; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.settings-agent-row .sa-name { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.settings-agent-row select, .settings-agent-row input { font-family: var(--font-mono); font-size: 11px; padding: 6px; background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 6px; width: 100%; }
+.settings-agent-row input::placeholder { color: var(--text-dimmer); }
+@media (max-width: 600px) { .settings-agent-row { grid-template-columns: 1fr; gap: 4px; } }
+.settings-open-btn { margin-top: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.settings-open-btn:hover { color: var(--text); border-color: var(--border-bright); }
 .export-modal {
   width: 100%; max-width: 480px;
   background: var(--bg-panel);
@@ -2098,6 +2109,7 @@ html, body {
               <button class="preset-chip" data-preset="scientist"><span class="pc-glyph">🔬</span>Scientist</button>
             </div>
             <div class="preset-caption" id="preset-caption"></div>
+            <button class="settings-open-btn" id="settings-btn" type="button">⚙ Agent models &amp; providers</button>
           </div>
           <div class="continuation-picker" id="continuation-picker">
             <div class="preset-picker-title">Continue from a previous session</div>
@@ -2257,6 +2269,21 @@ html, body {
     <div class="export-submit-row">
       <button class="export-copy" id="export-copy" title="Copy export to clipboard">📋 Copy</button>
       <button class="export-submit" id="export-submit">⬇ Download</button>
+    </div>
+  </div>
+</div>
+
+<!-- HLB-336 — agent model + provider routing -->
+<div class="export-modal-overlay" id="settings-overlay">
+  <div class="export-modal settings-modal">
+    <div class="export-modal-header">
+      <div class="export-modal-title">⚙ Agent Models &amp; Providers</div>
+      <button class="export-modal-close" id="settings-close">✕</button>
+    </div>
+    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment.</div>
+    <div id="settings-agents"></div>
+    <div class="export-submit-row">
+      <button class="export-submit" id="settings-save">Save</button>
     </div>
   </div>
 </div>
@@ -4890,6 +4917,68 @@ document.getElementById('export-modal-close').addEventListener('click', closeExp
 document.getElementById('export-modal-overlay').addEventListener('click', e => { if (e.target === document.getElementById('export-modal-overlay')) closeExportModal(); });
 document.getElementById('export-submit').addEventListener('click', doExport);
 document.getElementById('export-copy').addEventListener('click', copyExportToClipboard);
+
+// ─── Settings: agent models & providers (HLB-336) ───────────
+const SETTINGS_ROUTE_LABELS = {
+  '': 'Default', 'anthropic-api': 'Anthropic API', 'openai-api': 'OpenAI API',
+  'openrouter': 'OpenRouter', 'subscription': 'Subscription', 'ollama-local': 'Ollama (local)',
+};
+let _settingsData = null;
+async function openSettings() {
+  try {
+    const res = await fetch(apiUrl('/api/settings/agent-routing'));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _settingsData = await res.json();
+    renderSettings();
+    document.getElementById('settings-overlay').classList.add('open');
+  } catch (e) { showToast('⚠️ Could not load settings: ' + e.message); }
+}
+function renderSettings() {
+  const host = document.getElementById('settings-agents');
+  const { agents, routes, available, routing, effective } = _settingsData;
+  host.innerHTML = (agents || []).map(a => {
+    const cur = routing[a.id] || {};
+    const eff = effective[a.id] || {};
+    const opts = ['', ...routes].map(r => {
+      const label = SETTINGS_ROUTE_LABELS[r] || r;
+      const noKey = r && available && available[r] === false;
+      const selected = (cur.route || '') === r ? ' selected' : '';
+      return `<option value="${r}"${selected}${noKey ? ' disabled' : ''}>${label}${noKey ? ' (no key)' : ''}</option>`;
+    }).join('');
+    return `<div class="settings-agent-row" data-aid="${a.id}">
+      <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
+      <select class="sa-route">${opts}</select>
+      <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false">
+    </div>`;
+  }).join('');
+}
+async function saveSettings() {
+  const routing = {};
+  document.querySelectorAll('#settings-agents .settings-agent-row').forEach(row => {
+    const id = row.getAttribute('data-aid');
+    const route = row.querySelector('.sa-route').value;
+    const model = row.querySelector('.sa-model').value.trim();
+    const entry = {};
+    if (route) entry.route = route;
+    if (model) entry.model = model;
+    if (Object.keys(entry).length) routing[id] = entry;
+  });
+  try {
+    const res = await fetch(apiUrl('/api/settings/agent-routing'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ routing }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
+    showToast('✓ Agent models saved');
+    closeSettings();
+  } catch (e) { showToast('⚠️ Save failed: ' + e.message); }
+}
+function closeSettings() { document.getElementById('settings-overlay').classList.remove('open'); }
+document.getElementById('settings-btn').addEventListener('click', openSettings);
+document.getElementById('settings-close').addEventListener('click', closeSettings);
+document.getElementById('settings-save').addEventListener('click', saveSettings);
+document.getElementById('settings-overlay').addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
 
 connect();
 </script>
