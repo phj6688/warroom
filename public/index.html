@@ -393,6 +393,10 @@ html, body {
 .file-chip .file-error { color: var(--danger); font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-chip .remove-file { cursor: pointer; color: var(--danger); font-size: 14px; min-width: 20px; min-height: 20px; display: flex; align-items: center; justify-content: center; }
 
+/* HLB-335 — per-session token usage display */
+.session-card .sc-tokens { color: var(--text-dim); white-space: nowrap; }
+#info-tokens, #bar-tokens { font-variant-numeric: tabular-nums; }
+
 .welcome-submit {
   margin-top: 16px;
   width: 100%;
@@ -2185,7 +2189,12 @@ html, body {
             <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Messages</span><span id="info-messages">0</span></div>
             <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Escalations</span><span id="info-escalations">0</span></div>
             <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Duration</span><span id="info-duration">—</span></div>
+            <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Tokens</span><span id="info-tokens">—</span></div>
           </div>
+        </div>
+        <div class="dr-section" id="dr-tokens" style="display:none">
+          <div class="dr-title">Token Usage</div>
+          <div id="token-breakdown"></div>
         </div>
       </div>
     </div>
@@ -2520,6 +2529,7 @@ function handleMessage(data) {
       clearFeed();
       addInitMessage(data.session.problem, false, data.session.files);
       startDurationTimer();
+      resetTokenStats();
       break;
 
     case 'phase-change':
@@ -2531,6 +2541,14 @@ function handleMessage(data) {
       updateAgentState(data.agentId, data.state);
       if (data.state === 'thinking') showThinking(data.agentId);
       else removeThinking(data.agentId);
+      break;
+
+    // HLB-335 — live token counter ("on the fly") plus the authoritative total at
+    // each completion boundary. Both events carry { totalTokens, breakdown }, so
+    // render them identically.
+    case 'token-tick':
+    case 'tokens-counted':
+      updateTokenStats(data.totalTokens, data.breakdown);
       break;
 
     case 'message':
@@ -2709,6 +2727,8 @@ function handleMessage(data) {
       document.getElementById('info-messages').textContent = messageCount;
       document.getElementById('info-escalations').textContent = escalationCount;
       updateBarStats();
+      if (data.session.totalTokens != null) updateTokenStats(data.session.totalTokens, data.session.tokenBreakdown);
+      else resetTokenStats();
       // Restore phase progress visual state
       if (data.session.phase != null) {
         const phaseIdx = data.session.active ? data.session.phase : phases.length;
@@ -2851,7 +2871,7 @@ function renderPhaseBar() {
     return (i > 0 ? '<span class="pb-arrow">›</span>' : '') +
       `<div class="pb-item" id="pbar-${i}"><div class="pb-dot"></div><span>${p.name}</span></div>`;
   }).join('') +
-    '<div class="pb-stats"><span id="bar-msgs"></span><span id="bar-esc"></span><span id="bar-dur">—</span></div>';
+    '<div class="pb-stats"><span id="bar-msgs"></span><span id="bar-esc"></span><span id="bar-tokens"></span><span id="bar-dur">—</span></div>';
   // The server re-broadcasts `phases` on every (re)connection, so this runs
   // mid-session and re-creates the stat nodes. Re-apply the live counts here
   // (single source: updateBarStats) so the bar never reverts to zero while the
@@ -2971,6 +2991,8 @@ function renderSessionList() {
         <span>${s.messageCount || 0} msgs</span>
         <span>·</span>
         <span>${s.escalationCount || 0} esc</span>
+        <span>·</span>
+        <span class="sc-tokens" title="Total tokens used in this session">${s.totalTokens != null ? s.totalTokens.toLocaleString() + ' tok' : '— tok'}</span>
         ${s.crashRecovered && !s.active ? '<span class="sc-interrupted-tag" title="Stopped mid-deliberation by a server restart — resume from the deliberation view">Interrupted</span>' : ''}
         ${simBadge}
       </div>
@@ -4153,6 +4175,52 @@ function updateBarStats() {
   const be = document.getElementById('bar-esc');
   if (bm) bm.textContent = `${messageCount} msgs`;
   if (be) be.textContent = `${escalationCount} esc`;
+  // HLB-335 — re-apply the token figure: renderPhaseBar re-creates .pb-stats on
+  // every `phases` re-broadcast, so without this the bar token count blanks out
+  // mid-session while the right panel still holds the real total.
+  const bt = document.getElementById('bar-tokens');
+  if (bt) bt.textContent = lastTokenTotal != null ? `${fmtTok(lastTokenTotal)} tok` : '';
+}
+
+// HLB-335 — per-session token usage display. The live counter is driven by
+// throttled token-tick events (server emits <= 1 per 1.5s). The per-category
+// breakdown rows are built once, then updated by textContent only, so nothing
+// does innerHTML churn inside the WS loop (UI no-flicker rule).
+const TOKEN_CATS = ['agent_turn', 'tool_call', 'quality', 'memory', 'embedding', 'meta'];
+const TOKEN_CAT_LABELS = { agent_turn: 'Agent turns', tool_call: 'Tool calls', quality: 'Quality', memory: 'Memory', embedding: 'Embeddings', meta: 'Meta' };
+let lastTokenTotal = null;
+let _tokenRowsBuilt = false;
+function fmtTok(n) { return n == null ? '—' : Number(n).toLocaleString(); }
+function buildTokenRows() {
+  if (_tokenRowsBuilt) return;
+  const host = document.getElementById('token-breakdown');
+  if (!host) return;
+  host.innerHTML = TOKEN_CATS.map(c =>
+    `<div class="tb-row" style="display:flex;justify-content:space-between;padding:2px 0;font-size:10px"><span style="color:var(--text-dimmer)">${TOKEN_CAT_LABELS[c]}</span><span id="tok-cat-${c}">—</span></div>`
+  ).join('');
+  _tokenRowsBuilt = true;
+}
+function updateTokenStats(total, breakdown) {
+  if (total != null) lastTokenTotal = total;
+  const it = document.getElementById('info-tokens');
+  if (it) it.textContent = fmtTok(total);
+  const bt = document.getElementById('bar-tokens');
+  if (bt) bt.textContent = total != null ? `${fmtTok(total)} tok` : '';
+  if (breakdown && typeof breakdown === 'object') {
+    const sec = document.getElementById('dr-tokens');
+    if (sec) sec.style.display = '';
+    buildTokenRows();
+    for (const c of TOKEN_CATS) {
+      const el = document.getElementById('tok-cat-' + c);
+      if (el) el.textContent = breakdown[c] ? fmtTok(breakdown[c].total_tokens) : '0';
+    }
+  }
+}
+function resetTokenStats() {
+  lastTokenTotal = 0;
+  const it = document.getElementById('info-tokens'); if (it) it.textContent = '0';
+  const bt = document.getElementById('bar-tokens'); if (bt) bt.textContent = '0 tok';
+  const sec = document.getElementById('dr-tokens'); if (sec) sec.style.display = 'none';
 }
 function startDurationTimer() {
   stopDurationTimer();
