@@ -13,6 +13,7 @@ services:
       # from .env. NEVER inline secrets here — docker-compose.yml is in git.
       - BASELINE_LOG=data/baseline-usage.jsonl
       - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
+      # Embedding via embed-gateway (OpenAI-compatible /v1/embeddings).
       - EMBED_GATEWAY_URL=${EMBED_GATEWAY_URL:-http://embed-gateway:8200}
       - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
       # Search provider: tavily (default), smart (SearXNG + DDG, no API cost),
@@ -43,8 +44,10 @@ services:
       - traefik.docker.network=platform-net
       - traefik.http.routers.war-room.entrypoints=web
       - traefik.http.routers.war-room.rule=Host(`${WARROOM_HOST:-warroom.localhost}`)
-      - traefik.http.routers.war-room.middlewares=forwardauth-zitadel@file
       - traefik.http.services.war-room.loadbalancer.server.port=8090
+      - traefik.http.routers.war-room-mcp.entrypoints=web
+      - traefik.http.routers.war-room-mcp.rule=Host(`${WARROOM_HOST:-warroom.localhost}`) && PathPrefix(`/mcp`)
+      - traefik.http.services.war-room-mcp.loadbalancer.server.port=8090
 
 networks:
   default:

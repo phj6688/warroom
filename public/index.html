@@ -67,6 +67,10 @@
   --warning: #D4A843;
   --error: #D71921;
   --info: #999999;
+  /* HLB-148: paused-countdown accent. The pause state reads as a hold (amber),
+     distinct from the running crimson accent. `-subtle` is the translucent fill. */
+  --amber: #ffa500;
+  --amber-subtle: rgba(255,165,0,0.08);
 
   --border: #222222;
   --border-bright: #333333;
@@ -389,6 +393,11 @@ html, body {
 .file-chip .file-error { color: var(--danger); font-size: 10px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-chip .remove-file { cursor: pointer; color: var(--danger); font-size: 14px; min-width: 20px; min-height: 20px; display: flex; align-items: center; justify-content: center; }
 
+/* HLB-335 — per-session token usage display */
+.session-card .sc-tokens { color: var(--text-dim); white-space: nowrap; }
+.session-card .sc-cost { color: var(--accent); white-space: nowrap; }
+#info-tokens, #bar-tokens, #info-cost { font-variant-numeric: tabular-nums; }
+
 .welcome-submit {
   margin-top: 16px;
   width: 100%;
@@ -664,6 +673,47 @@ html, body {
 }
 .preset-caption .pc-spec { color: var(--success); }
 
+/* ─── Session continuation picker ─────────────────────── */
+.continuation-picker { margin-top: 18px; width: 100%; }
+.cont-search-wrap { position: relative; display: flex; align-items: center; }
+.cont-search-input {
+  width: 100%; padding: 9px 32px 9px 14px; min-height: 40px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text);
+  font-family: var(--font); font-size: 13px;
+  transition: border-color 0.18s var(--transition);
+}
+.cont-search-input::placeholder { color: var(--text-dimmer); }
+.cont-search-input:focus { outline: none; border-color: var(--accent); }
+.cont-clear {
+  position: absolute; right: 8px; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-dimmer); font-size: 13px; border-radius: 6px;
+}
+.cont-clear:hover { color: var(--text); }
+.cont-results { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cont-result {
+  contain: layout style;
+  text-align: left; padding: 9px 12px; min-height: 40px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-dim); cursor: pointer;
+  font-family: var(--font); font-size: 12px; line-height: 1.4;
+  transition: border-color 0.16s var(--transition), color 0.16s var(--transition);
+}
+.cont-result:hover { border-color: var(--border-bright); color: var(--text); }
+.cont-result .cr-meta { display: block; margin-top: 2px; font-size: 10px; font-family: var(--font-mono); color: var(--text-tertiary); }
+.cont-selected {
+  margin-top: 8px; padding: 10px 12px;
+  background: var(--accent-subtle); border: 1px solid var(--accent);
+  border-radius: 8px; color: var(--text);
+  font-size: 12px; line-height: 1.4;
+}
+.cont-selected .cs-label {
+  display: block; font-family: var(--font-mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin-bottom: 3px;
+}
+
 /* ─── Escalation severity (intensity of the accent, not a new hue) ── */
 .esc-sev {
   display: inline-flex; align-items: center; gap: 4px;
@@ -685,6 +735,43 @@ html, body {
 }
 .esc-quick:hover { border-color: var(--border-bright); color: var(--text); }
 .esc-quick.reframe:hover { border-color: var(--accent); color: var(--accent); }
+/* HLB-148: Pause/Reset countdown controls. 44pt touch targets per the mobile
+   rules; share the .esc-quick visual family. */
+.esc-quick.esc-pause, .esc-quick.esc-reset {
+  min-height: 44px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+}
+.esc-quick.esc-pause:hover, .esc-quick.esc-reset:hover { border-color: var(--accent); color: var(--accent); }
+.esc-quick.esc-pause.active {
+  border-color: var(--amber); color: var(--amber);
+  background: var(--amber-subtle);
+}
+/* Inline countdown chip in the card header. Only its textContent changes on the
+   1s tick, the element itself is stable (no innerHTML churn). */
+.esc-countdown {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.5px; color: var(--accent);
+  padding: 2px 8px; border-radius: 6px;
+  border: 1px solid var(--accent); background: var(--accent-subtle);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.esc-countdown.paused {
+  color: var(--amber); border-color: var(--amber);
+  background: var(--amber-subtle);
+}
+/* Neutral chip: no live waiter, nothing will auto-proceed. Muted, not accented,
+   so it never reads as a running or paused countdown. */
+.esc-countdown.neutral, .se-countdown.neutral {
+  color: var(--text-tertiary); border-color: var(--border-bright);
+  background: transparent;
+}
+.escalation-card.esc-paused { border-left-color: var(--amber); }
+/* Compact countdown chip on each queue row. */
+.se-countdown {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10px;
+  font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 /* PENDING panel severity row + bulk action */
 .sheet-esc .se-sev { font-size: 9px; font-weight: 700; font-family: var(--font-mono); letter-spacing: 0.5px; }
@@ -1372,6 +1459,23 @@ html, body {
   -webkit-backdrop-filter: blur(6px);
 }
 .export-modal-overlay.open { display: flex; }
+
+/* HLB-336 — agent models & providers settings */
+.settings-modal { max-width: 640px; width: 92vw; max-height: 85vh; overflow-y: auto; }
+.settings-hint { font-size: 11px; color: var(--text-dimmer); line-height: 1.5; margin-bottom: 14px; }
+.settings-agent-row { display: grid; grid-template-columns: 1fr 140px 1.2fr; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.settings-agent-row .sa-name { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.settings-agent-row select, .settings-agent-row input { font-family: var(--font-mono); font-size: 11px; padding: 6px; background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 6px; width: 100%; }
+.settings-agent-row input::placeholder { color: var(--text-dimmer); }
+@media (max-width: 600px) { .settings-agent-row { grid-template-columns: 1fr; gap: 4px; } }
+.settings-open-btn { margin-top: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.settings-open-btn:hover { color: var(--text); border-color: var(--border-bright); }
+.settings-cost { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.settings-cost-title { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 8px; }
+.settings-cost-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.settings-cost-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-dimmer); }
+.settings-cost-grid input { font-family: var(--font-mono); font-size: 11px; padding: 6px; background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+@media (max-width: 600px) { .settings-cost-grid { grid-template-columns: 1fr; } }
 .export-modal {
   width: 100%; max-width: 480px;
   background: var(--bg-panel);
@@ -1750,6 +1854,9 @@ html, body {
   border-radius: 10px; margin-bottom: 8px;
   font-size: 11px; cursor: pointer;
   min-height: 44px; transition: all 0.2s;
+  /* HLB-148: this repeated queue row now carries the per-second .se-countdown
+     chip; isolate its layout so a tick can't ripple into sibling rows. */
+  contain: layout style;
 }
 .sheet-esc:active { transform: scale(0.97); }
 .sheet-esc.answered { border-color: rgba(74,222,128,0.2); opacity: 0.7; }
@@ -2009,6 +2116,16 @@ html, body {
               <button class="preset-chip" data-preset="scientist"><span class="pc-glyph">🔬</span>Scientist</button>
             </div>
             <div class="preset-caption" id="preset-caption"></div>
+            <button class="settings-open-btn" id="settings-btn" type="button">⚙ Agent models &amp; providers</button>
+          </div>
+          <div class="continuation-picker" id="continuation-picker">
+            <div class="preset-picker-title">Continue from a previous session</div>
+            <div class="cont-search-wrap">
+              <input type="text" class="cont-search-input" id="cont-search-input" placeholder="Search prior sessions to continue..." autocomplete="off" spellcheck="false">
+              <button type="button" class="cont-clear" id="cont-clear" style="display:none" title="Clear continuation">✕</button>
+            </div>
+            <div class="cont-results" id="cont-results"></div>
+            <div class="cont-selected" id="cont-selected" style="display:none"></div>
           </div>
           <div class="example-prompts" id="example-prompts">
             <div class="example-prompts-title">Try an example</div>
@@ -2091,7 +2208,13 @@ html, body {
             <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Messages</span><span id="info-messages">0</span></div>
             <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Escalations</span><span id="info-escalations">0</span></div>
             <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Duration</span><span id="info-duration">—</span></div>
+            <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Tokens</span><span id="info-tokens">—</span></div>
+            <div style="display:flex;justify-content:space-between;padding:3px 0;font-size:11px"><span style="color:var(--text-dimmer)">Est. cost</span><span id="info-cost">—</span></div>
           </div>
+        </div>
+        <div class="dr-section" id="dr-tokens" style="display:none">
+          <div class="dr-title">Token Usage</div>
+          <div id="token-breakdown"></div>
         </div>
       </div>
     </div>
@@ -2158,6 +2281,32 @@ html, body {
   </div>
 </div>
 
+<!-- HLB-336 — agent model + provider routing -->
+<div class="export-modal-overlay" id="settings-overlay">
+  <div class="export-modal settings-modal">
+    <div class="export-modal-header">
+      <div class="export-modal-title">⚙ Agent Models &amp; Providers</div>
+      <button class="export-modal-close" id="settings-close">✕</button>
+    </div>
+    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment.</div>
+    <div id="settings-agents"></div>
+    <div class="settings-cost">
+      <div class="settings-cost-title">Cost model</div>
+      <div class="settings-hint">API and OpenRouter routes use published per-model rates. The subscription route amortizes a flat plan price over its token allowance. Local (Ollama) uses an electricity estimate.</div>
+      <div class="settings-cost-grid">
+        <label>Subscription plan price (USD)<input id="cost-plan-price" type="number" step="any" min="0" spellcheck="false"></label>
+        <label>Plan token allowance / period<input id="cost-allowance" type="number" step="any" min="1" spellcheck="false"></label>
+        <label>Local GPU power (W)<input id="cost-power" type="number" step="any" min="0" spellcheck="false"></label>
+        <label>Local tokens / sec<input id="cost-tps" type="number" step="any" min="1" spellcheck="false"></label>
+        <label>Electricity price ($/kWh)<input id="cost-kwh" type="number" step="any" min="0" spellcheck="false"></label>
+      </div>
+    </div>
+    <div class="export-submit-row">
+      <button class="export-submit" id="settings-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -2166,6 +2315,11 @@ html, body {
 let ws = null;
 let agents = [];
 let phases = [];
+// Index of the phase currently active (or `phases.length` once every phase is
+// done). The server re-broadcasts `phases` on each (re)connection, which rebuilds
+// the phase nodes in their default "pending" state, so the live position must be
+// re-applied after every render. This module variable is its single source.
+let phaseActiveIdx = 0;
 let currentSession = null;
 let sessionsList = [];
 let messageCount = 0;
@@ -2173,11 +2327,25 @@ let escalationCount = 0;
 let pendingEscalations = 0;
 let sessionStart = null;
 let durationInterval = null;
+// HLB-148: per-escalation countdown state, keyed by escalation id:
+//   { deadlineAt:number, paused:boolean }. A single 1s tick (escTimerTick)
+//   updates every visible countdown via textContent only, no innerHTML in the
+//   loop, per the UI rendering rules.
+const escTimers = new Map();
+let escTimerInterval = null;
 let selectedPreset = null;        // 'engineer' | 'scientist' | null (generalist)
 let presetData = [];              // fetched /api/presets
+let selectedContinuationId = null; // prior session id to seed a continuation from
 let lastSynthesisMsg = null;      // captured for the Decision Record card
 let drQualitySent = false;        // one quality rating per completed session
 let drDismissed = false;          // user dismissed the answer card this session
+// Rendered agent-message ids, so a live `message` whose row was already drawn by
+// a session-state rebuild (the reconnect race) is dropped instead of duplicated.
+let renderedMsgIds = new Set();
+// Set true only while a reconnect-triggered join-session rebuild runs, so the
+// session-state handler preserves a dismissed Decision Record and the user's
+// scroll position instead of treating it like a fresh open.
+let isReconnectRebuild = false;
 let pendingFiles = [];  // [{ id, file, tokens, mime, name, status, error, extraction_error }]
 let fsConfig = null;
 let activeSheet = null;
@@ -2268,6 +2436,44 @@ function getWsUrl() {
 
 let wsFailCount = 0;
 let httpPollTimer = null;
+// Heartbeat: any inbound frame counts as liveness. If no traffic arrives within
+// SILENCE_WINDOW we treat the socket as half-open (TCP dead, readyState still
+// OPEN) and force a reconnect — no server pong is involved. 35s sits safely
+// above the live broadcast cadence so a busy deliberation never trips it.
+//
+// To tell "idle but healthy" from "dead", a single benign already-valid
+// {type:'get-sessions'} is sent once the socket nears the silence threshold: a
+// healthy socket answers (resetting the timer), a dead one stays silent and is
+// dropped. The poke is gated to fire at most ~once per SILENCE_WINDOW so the
+// `sessions` reply re-renders the session list no more often than ~35s, which
+// respects the "setInterval rebuilds >= 30s" UI rule and avoids needless churn.
+const SILENCE_WINDOW = 35000;
+const POKE_AFTER = 28000;           // start poking once silent this long
+const RECONNECT_DELAY = 5000;
+let hbTimer = null;
+let lastTrafficAt = 0;
+let lastPokeAt = 0;
+
+function startHeartbeat() {
+  stopHeartbeat();
+  lastTrafficAt = Date.now();
+  lastPokeAt = 0;
+  hbTimer = setInterval(() => {
+    if (!ws || ws.readyState !== 1) return;
+    const silent = Date.now() - lastTrafficAt;
+    if (silent > SILENCE_WINDOW) {
+      // Silent for too long — drop it so onclose drives the normal reconnect.
+      try { ws.close(); } catch (_) {}
+      return;
+    }
+    // Near the threshold and not poked this idle window: elicit one reply.
+    if (silent > POKE_AFTER && Date.now() - lastPokeAt > POKE_AFTER) {
+      lastPokeAt = Date.now();
+      try { ws.send(JSON.stringify({ type: 'get-sessions' })); } catch (_) {}
+    }
+  }, 5000);
+}
+function stopHeartbeat() { if (hbTimer) { clearInterval(hbTimer); hbTimer = null; } }
 
 function connect() {
   const url = getWsUrl();
@@ -2276,16 +2482,28 @@ function connect() {
     console.log('WS connected');
     wsFailCount = 0;
     if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; }
+    startHeartbeat();
+    // Re-subscribe to the open session after every (re)connect. A fresh socket
+    // starts with an empty server-side subscribedSessions set, so without this
+    // the live feed freezes until the user reopens the session. The server
+    // replies session-state, which rebuilds the feed authoritatively (and so
+    // also delivers any messages that landed during the gap, exactly once).
+    if (currentSession && currentSession.id && ws.readyState === 1) {
+      isReconnectRebuild = true;
+      ws.send(JSON.stringify({ type: 'join-session', sessionId: currentSession.id }));
+    }
     if (typeof updateChatReady === 'function') updateChatReady();
   };
   ws.onclose = () => {
     wsFailCount++;
+    stopHeartbeat();
     if (wsFailCount >= 2 && !httpPollTimer) { loadViaHttp(); httpPollTimer = setInterval(loadViaHttp, 15000); }
     if (typeof updateChatReady === 'function') updateChatReady();
-    setTimeout(connect, 5000);
+    const delay = (typeof window !== 'undefined' && window.__wsReconnectDelayMs) || RECONNECT_DELAY;
+    setTimeout(connect, delay);
   };
   ws.onerror = (e) => console.error('WS error:', e);
-  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+  ws.onmessage = (e) => { lastTrafficAt = Date.now(); handleMessage(JSON.parse(e.data)); };
 }
 
 function loadViaHttp() {
@@ -2298,6 +2516,15 @@ function loadViaHttp() {
   fetch(apiUrl('/api/phases')).then(r => r.ok ? r.json() : []).then(phases => {
     if (phases.length) handleMessage({ type: 'phases', phases });
   }).catch(() => {});
+  // Degraded mode must also advance the OPEN session's feed, not just the global
+  // lists. /api/sessions/:id returns the same shape as a WS session-state, so
+  // feed it through the identical handler (flagged as a rebuild so a dismissed
+  // Decision Record and the scroll position survive the re-render).
+  if (currentSession && currentSession.id) {
+    fetch(apiUrl('/api/sessions/' + currentSession.id)).then(r => r.ok ? r.json() : null).then(session => {
+      if (session) { isReconnectRebuild = true; handleMessage({ type: 'session-state', session }); }
+    }).catch(() => {});
+  }
 }
 
 function handleMessage(data) {
@@ -2334,6 +2561,9 @@ function handleMessage(data) {
       currentSession = data.session;
       sessionStart = Date.now();
       messageCount = 0; escalationCount = 0; pendingEscalations = 0;
+      // Reset the phase indicator so a fresh session starts at the first phase,
+      // even if a prior session left the panel further along.
+      updatePhases(0);
       if (typeof updateChatReady === 'function') updateChatReady();
       showView('view-deliberation');
       document.getElementById('problem-display').textContent = data.session.problem;
@@ -2345,6 +2575,7 @@ function handleMessage(data) {
       clearFeed();
       addInitMessage(data.session.problem, false, data.session.files);
       startDurationTimer();
+      resetTokenStats();
       break;
 
     case 'phase-change':
@@ -2358,7 +2589,19 @@ function handleMessage(data) {
       else removeThinking(data.agentId);
       break;
 
+    // HLB-335 — live token counter ("on the fly") plus the authoritative total at
+    // each completion boundary. Both events carry { totalTokens, breakdown }, so
+    // render them identically.
+    case 'token-tick':
+    case 'tokens-counted':
+      updateTokenStats(data.totalTokens, data.breakdown, data.totalCostUsd, data.costBreakdown);
+      break;
+
     case 'message':
+      // Drop a live broadcast whose row a session-state rebuild already drew
+      // (the reconnect race): the authoritative rebuild wins, only strictly-new
+      // ids append. Without this the post-reconnect feed grows a duplicate row.
+      if (data.id && renderedMsgIds.has(data.id)) break;
       removeThinking(data.agentId);
       addMessage(data);
       // Capture the orchestrator's synthesis for the Decision Record (no
@@ -2382,6 +2625,12 @@ function handleMessage(data) {
 
     case 'escalation-answered':
       markEscalationAnswered(data.escalationId, data.answer);
+      break;
+
+    case 'escalation-timer-updated':
+      // HLB-148: authoritative timing sync after a pause/reset (or when the
+      // blocking wait parks and the live deadline supersedes the optimistic one).
+      applyEscTimerUpdate(data);
       break;
 
     case 'waiting-for-human':
@@ -2463,7 +2712,16 @@ function handleMessage(data) {
       showToast(`▶ Resumed from phase ${(data.fromPhase ?? 0) + 1}`);
       break;
 
-    case 'session-state':
+    case 'session-state': {
+      // A reconnect (or HTTP-fallback) rebuild of the SAME session must not feel
+      // like reopening it: keep a dismissed Decision Record dismissed and keep
+      // the user where they were scrolled. Latch the flag locally and clear the
+      // module flag immediately so it never leaks into a later fresh open.
+      const _isRebuild = isReconnectRebuild;
+      isReconnectRebuild = false;
+      const _feedEl = document.getElementById('feed');
+      const _prevScrollTop = _feedEl.scrollTop;
+      const _wasAtBottom = _feedEl.scrollHeight - _feedEl.scrollTop - _feedEl.clientHeight < 80;
       currentSession = data.session;
       if (typeof updateChatReady === 'function') updateChatReady();
       showView('view-deliberation');
@@ -2488,7 +2746,7 @@ function handleMessage(data) {
         document.getElementById('btn-stop').style.display = '';
         document.getElementById('btn-resume').style.display = 'none';
       }
-      clearFeed();
+      clearFeed(_isRebuild);
       addInitMessage(data.session.problem, false, data.session.files);
       // Merge messages + human messages, sort by timestamp, interleave
       const allItems = [];
@@ -2515,6 +2773,8 @@ function handleMessage(data) {
       document.getElementById('info-messages').textContent = messageCount;
       document.getElementById('info-escalations').textContent = escalationCount;
       updateBarStats();
+      if (data.session.totalTokens != null) updateTokenStats(data.session.totalTokens, data.session.tokenBreakdown, data.session.totalCostUsd, data.session.costBreakdown);
+      else resetTokenStats();
       // Restore phase progress visual state
       if (data.session.phase != null) {
         const phaseIdx = data.session.active ? data.session.phase : phases.length;
@@ -2525,7 +2785,16 @@ function handleMessage(data) {
       if (!data.session.active && (data.session.messages || []).some(m => m.phase === 'Synthesis')) {
         renderDecisionRecord();
       }
+      // Scroll: a fresh open lands at the bottom (the default). A reconnect
+      // rebuild must not yank the user around — restore their prior offset,
+      // unless they were already pinned to the bottom (then keep following).
+      // addMessage()'s own rAF scroll-to-bottom runs first; this rAF is queued
+      // after it, so it wins for the restore case.
+      if (_isRebuild && !_wasAtBottom) {
+        requestAnimationFrame(() => { _feedEl.scrollTop = _prevScrollTop; });
+      }
       break;
+    }
 
     case 'session-deleted':
       sessionsList = sessionsList.filter(s => s.id !== data.sessionId);
@@ -2555,6 +2824,19 @@ function handleMessage(data) {
         }
       }
       break;
+
+    case 'continuation-injected': {
+      const feed = document.getElementById('feed');
+      if (feed) {
+        const note = document.createElement('div');
+        note.className = 'memory-note';
+        const src = (data.sourceProblem || '').slice(0, 80);
+        note.textContent = `🔗 Continued from prior session "${src}": its summary was injected into the council's context.`;
+        feed.appendChild(note);
+        note.scrollIntoView({ behavior: 'smooth' });
+      }
+      break;
+    }
 
     case 'error':
       showToast(`⚠️ ${data.message}`);
@@ -2621,6 +2903,11 @@ function renderPhases() {
   document.getElementById('sheet-phase-list').innerHTML = html;
   document.getElementById('desktop-phases').innerHTML = html.replace(/id="phase-/g, 'id="dphase-');
   renderPhaseBar();
+  // A `phases` (re)broadcast rebuilds every node back to "pending". Re-apply the
+  // live position (single source: updatePhases) so the right panel, phase bar,
+  // and mobile sheet keep the active/completed phase across a reconnect instead
+  // of snapping back to the first phase mid-deliberation.
+  updatePhases(phaseActiveIdx);
 }
 
 function renderPhaseBar() {
@@ -2630,10 +2917,18 @@ function renderPhaseBar() {
     return (i > 0 ? '<span class="pb-arrow">›</span>' : '') +
       `<div class="pb-item" id="pbar-${i}"><div class="pb-dot"></div><span>${p.name}</span></div>`;
   }).join('') +
-    '<div class="pb-stats"><span id="bar-msgs">0 msgs</span><span id="bar-esc">0 escalations</span><span id="bar-dur">—</span></div>';
+    '<div class="pb-stats"><span id="bar-msgs"></span><span id="bar-esc"></span><span id="bar-tokens"></span><span id="bar-dur">—</span></div>';
+  // The server re-broadcasts `phases` on every (re)connection, so this runs
+  // mid-session and re-creates the stat nodes. Re-apply the live counts here
+  // (single source: updateBarStats) so the bar never reverts to zero while the
+  // right-panel counters still hold the real totals.
+  updateBarStats();
 }
 
 function updatePhases(activeIdx) {
+  // Remember the live position so a later renderPhases() (a `phases` re-broadcast
+  // on reconnect) can restore it instead of reverting to the first phase.
+  phaseActiveIdx = activeIdx;
   phases.forEach((_, i) => {
     ['', 'd'].forEach(prefix => {
       const el = document.getElementById(`${prefix}phase-${i}`);
@@ -2742,6 +3037,10 @@ function renderSessionList() {
         <span>${s.messageCount || 0} msgs</span>
         <span>·</span>
         <span>${s.escalationCount || 0} esc</span>
+        <span>·</span>
+        <span class="sc-tokens" title="Total tokens used in this session">${s.totalTokens != null ? s.totalTokens.toLocaleString() + ' tok' : '— tok'}</span>
+        <span>·</span>
+        <span class="sc-cost" title="Estimated cost for this session">${s.totalCostUsd != null ? '$' + s.totalCostUsd.toFixed(2) : '$—'}</span>
         ${s.crashRecovered && !s.active ? '<span class="sc-interrupted-tag" title="Stopped mid-deliberation by a server restart — resume from the deliberation view">Interrupted</span>' : ''}
         ${simBadge}
       </div>
@@ -2918,14 +3217,23 @@ function loadHljs() {
 }
 
 // ─── Feed ────────────────────────────────────────────────
-function clearFeed() {
+function clearFeed(preserveDismissal) {
   document.getElementById('feed').innerHTML = '';
+  // The feed DOM is gone, so the rendered-id set must reset too — the upcoming
+  // rebuild re-registers every row it draws.
+  renderedMsgIds = new Set();
+  // HLB-148: drop any countdowns from the previous view so the shared 1s tick
+  // stops once nothing is pending (and no stale id leaks into the next session).
+  escTimers.clear();
+  if (escTimerInterval) { clearInterval(escTimerInterval); escTimerInterval = null; }
   // Reset per-session Decision Record state so a fresh session never shows a
   // stale answer card or a pre-locked quality tap, and a prior dismissal does
-  // not suppress the next session's answer.
+  // not suppress the next session's answer. A reconnect-driven rebuild of the
+  // SAME session must NOT un-dismiss a card the user already closed (HLB-140),
+  // so the caller passes preserveDismissal in that case.
   lastSynthesisMsg = null;
   drQualitySent = false;
-  drDismissed = false;
+  if (!preserveDismissal) drDismissed = false;
 }
 function scrollFeed() { const f = document.getElementById('feed'); requestAnimationFrame(() => f.scrollTop = f.scrollHeight); }
 
@@ -3145,11 +3453,15 @@ function agentAccent(agentId) {
 function addMessage(msg) {
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const isLong = (msg.content || '').length > 500;
+  // Track the rendered id so the live `message` handler can drop a duplicate
+  // that a session-state rebuild already drew after a reconnect.
+  if (msg.id) renderedMsgIds.add(msg.id);
 
   // Assemble the WRAPPER off-DOM in a DocumentFragment, single appendChild (AC5).
   const frag = document.createDocumentFragment();
   const d = document.createElement('div');
   d.className = 'message';
+  if (msg.id) d.dataset.msgId = msg.id;
 
   const header = document.createElement('div');
   header.className = 'message-header';
@@ -3263,10 +3575,28 @@ function addEscalationInline(data) {
     const sevBadge = `<span class="esc-sev ${sev}">${sev === 'blocking' ? '● blocking' : '○ optional'}</span>`;
     const defNote = data.defaultAction ? `<div class="esc-default-note">default if unanswered: ${escHtml(data.defaultAction)}</div>` : '';
     const useDefaultBtn = data.defaultAction ? `<button class="esc-quick use-default" data-id="${data.id}">Use default →</button>` : '';
+    // HLB-148: live countdown + Pause/Reset. The <span> is the only element the
+    // 1s tick mutates (textContent). Buttons send escalation-timer ops.
+    // When the server sends no deadline (no live waiter, e.g. an inactive or
+    // crash-recovered session that will never auto-resolve), show a NEUTRAL
+    // static chip instead of a fake ticking countdown, and the per-second tick
+    // never registers this card (registerEscTimer no-ops on a non-numeric
+    // deadline). Pause/Reset are also pointless without a live countdown.
+    const paused = !!data.paused;
+    const hasDeadline = typeof data.deadlineAt === 'number';
+    const pauseLabel = paused ? '▶ Resume' : '⏸ Pause';
+    const countdownChip = hasDeadline
+      ? `<span class="esc-countdown${paused ? ' paused' : ''}" id="esc-timer-${data.id}" title="Time until the agents proceed without you">⏳ —</span>`
+      : `<span class="esc-countdown neutral" id="esc-timer-${data.id}" title="No active countdown, waiting on you, nothing will auto-proceed">—</span>`;
+    const timerControls = hasDeadline
+      ? `<button class="esc-quick esc-pause${paused ? ' active' : ''}" id="esc-pause-${data.id}" data-id="${data.id}" title="Pause or resume the countdown">${pauseLabel}</button>
+        <button class="esc-quick esc-reset" data-id="${data.id}" title="Restart the countdown">↻ Reset</button>`
+      : '';
     d.innerHTML = `
       <div class="esc-header-row">
         <div class="esc-header">⚠️ Input Required — ${escHtml(agent ? agent.name : 'Agent')}</div>
         ${sevBadge}
+        ${countdownChip}
         <button class="esc-dismiss" data-id="${data.id}" title="Dismiss">✕</button>
       </div>
       <div class="esc-question">${escHtml(data.question)}</div>
@@ -3278,6 +3608,7 @@ function addEscalationInline(data) {
       <div class="esc-quick-row">
         ${useDefaultBtn}
         <button class="esc-quick reframe" data-id="${data.id}">⟲ Reframe</button>
+        ${timerControls}
       </div>
     `;
     d.querySelector(`#esc-in-${data.id}`).addEventListener('keydown', e => { if (e.key === 'Enter') respondEscalation(data.id); });
@@ -3289,6 +3620,12 @@ function addEscalationInline(data) {
       const inp = document.getElementById(`esc-in-${data.id}`);
       if (inp) { inp.placeholder = 'Reframe — the question that actually matters is…'; inp.focus(); }
     });
+    // Pause/Reset only exist when there is a live countdown to control.
+    const pauseEl = d.querySelector('.esc-pause');
+    if (pauseEl) pauseEl.addEventListener('click', () => toggleEscTimer(data.id));
+    const resetEl = d.querySelector('.esc-reset');
+    if (resetEl) resetEl.addEventListener('click', () => resetEscTimer(data.id));
+    if (paused) d.classList.add('esc-paused');
   }
   document.getElementById('feed').appendChild(d);
   // Single-pulse invariant: at most ONE unanswered card pulses at a time — the
@@ -3300,6 +3637,10 @@ function addEscalationInline(data) {
   if (!data.answered) {
     document.querySelectorAll('.escalation-card.pulsing').forEach(c => c.classList.remove('pulsing'));
     d.classList.add('pulsing');
+    // HLB-148: start (or refresh) this card's countdown from the deadline the
+    // server sent. registerEscTimer paints once immediately and the shared 1s
+    // tick keeps it current.
+    registerEscTimer(data.id, data.deadlineAt, data.paused);
   }
   scrollFeed();
 }
@@ -3325,7 +3666,17 @@ function addEscalationToQueue(data) {
     // can find both copies (mobile sheet + desktop sidebar) without
     // needing two unique IDs.
     d.className = `sheet-esc esc-queue-${data.id}${data.answered ? ' answered' : ''}`;
-    d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')} <span class="se-sev ${sev}" title="${sev}">${sev === 'blocking' ? '●' : '○'}</span></div><div class="se-question">${escHtml(data.question)}</div>`;
+    // HLB-148: a compact countdown chip on each queue row. The 1s tick targets
+    // it by the esc-queue-timer-<id> class (textContent only). Hidden once
+    // answered, and rendered as a neutral static dash (no hourglass) when the
+    // server sent no deadline (no live waiter, nothing will auto-proceed).
+    const queueHasDeadline = typeof data.deadlineAt === 'number';
+    const queueTimer = data.answered
+      ? ''
+      : (queueHasDeadline
+        ? `<span class="se-countdown esc-queue-timer-${data.id}" title="Time until the agents proceed">⏳ —</span>`
+        : `<span class="se-countdown neutral esc-queue-timer-${data.id}" title="No active countdown, waiting on you">—</span>`);
+    d.innerHTML = `<div class="se-agent">${agent ? agent.emoji : '❓'} ${escHtml(agent ? agent.name : 'Agent')} <span class="se-sev ${sev}" title="${sev}">${sev === 'blocking' ? '●' : '○'}</span>${queueTimer}</div><div class="se-question">${escHtml(data.question)}</div>`;
     d.addEventListener('click', () => {
       closeSheet();
       const el = document.getElementById(`esc-${data.id}`);
@@ -3333,6 +3684,10 @@ function addEscalationToQueue(data) {
     });
     container.appendChild(d);
   });
+  // HLB-148: ensure the countdown is tracked even when the queue row mounts
+  // independently of the inline card (e.g. session-state rehydration). Idempotent
+  // with the inline registration (same Map key).
+  if (!data.answered) registerEscTimer(data.id, data.deadlineAt, data.paused);
   updatePendingBulk();
 }
 
@@ -3398,6 +3753,8 @@ function respondEscalation(escId) {
 }
 
 function dismissEscalation(escId) {
+  // HLB-148: dismissing the card hides it; stop its countdown too.
+  clearEscTimer(escId);
   const el = document.getElementById(`esc-${escId}`);
   if (el) {
     const wasPulsing = el.classList.contains('pulsing');
@@ -3408,6 +3765,8 @@ function dismissEscalation(escId) {
 }
 
 function markEscalationAnswered(escId, answer) {
+  // HLB-148: stop the countdown the moment the escalation resolves.
+  clearEscTimer(escId);
   const el = document.getElementById(`esc-${escId}`);
   if (el) {
     const wasPulsing = el.classList.contains('pulsing');
@@ -3624,7 +3983,7 @@ async function submitFromWelcome() {
   }
 
   btn.textContent = '⚡ Deploying...';
-  const payload = { problem, file_ids: file_ids, preset_id: selectedPreset };
+  const payload = { problem, file_ids: file_ids, preset_id: selectedPreset, continuesFromSessionId: selectedContinuationId };
 
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'new-session', ...payload }));
@@ -3647,6 +4006,7 @@ async function submitFromWelcome() {
   textarea.value = '';
   pendingFiles = [];
   renderFileList();
+  clearContinuation();
   updateWelcomeReady();
   btn.disabled = false;
   btn.textContent = '⚡ Deploy War Room';
@@ -3863,6 +4223,56 @@ function updateBarStats() {
   const be = document.getElementById('bar-esc');
   if (bm) bm.textContent = `${messageCount} msgs`;
   if (be) be.textContent = `${escalationCount} esc`;
+  // HLB-335 — re-apply the token figure: renderPhaseBar re-creates .pb-stats on
+  // every `phases` re-broadcast, so without this the bar token count blanks out
+  // mid-session while the right panel still holds the real total.
+  const bt = document.getElementById('bar-tokens');
+  if (bt) bt.textContent = lastTokenTotal != null ? `${fmtTok(lastTokenTotal)} tok` : '';
+}
+
+// HLB-335 — per-session token usage display. The live counter is driven by
+// throttled token-tick events (server emits <= 1 per 1.5s). The per-category
+// breakdown rows are built once, then updated by textContent only, so nothing
+// does innerHTML churn inside the WS loop (UI no-flicker rule).
+const TOKEN_CATS = ['agent_turn', 'tool_call', 'quality', 'memory', 'embedding', 'meta'];
+const TOKEN_CAT_LABELS = { agent_turn: 'Agent turns', tool_call: 'Tool calls', quality: 'Quality', memory: 'Memory', embedding: 'Embeddings', meta: 'Meta' };
+let lastTokenTotal = null;
+let _tokenRowsBuilt = false;
+function fmtTok(n) { return n == null ? '—' : Number(n).toLocaleString(); }
+function fmtUsd(n) { return n == null ? '—' : '$' + (Number(n) < 1 ? Number(n).toFixed(4) : Number(n).toFixed(2)); }
+function buildTokenRows() {
+  if (_tokenRowsBuilt) return;
+  const host = document.getElementById('token-breakdown');
+  if (!host) return;
+  host.innerHTML = TOKEN_CATS.map(c =>
+    `<div class="tb-row" style="display:flex;justify-content:space-between;padding:2px 0;font-size:10px"><span style="color:var(--text-dimmer)">${TOKEN_CAT_LABELS[c]}</span><span id="tok-cat-${c}">—</span></div>`
+  ).join('');
+  _tokenRowsBuilt = true;
+}
+function updateTokenStats(total, breakdown, costUsd, costBreakdown) {
+  if (total != null) lastTokenTotal = total;
+  const it = document.getElementById('info-tokens');
+  if (it) it.textContent = fmtTok(total);
+  const bt = document.getElementById('bar-tokens');
+  if (bt) bt.textContent = total != null ? `${fmtTok(total)} tok` : '';
+  const ic = document.getElementById('info-cost');
+  if (ic) ic.textContent = fmtUsd(costUsd);
+  if (breakdown && typeof breakdown === 'object') {
+    const sec = document.getElementById('dr-tokens');
+    if (sec) sec.style.display = '';
+    buildTokenRows();
+    for (const c of TOKEN_CATS) {
+      const el = document.getElementById('tok-cat-' + c);
+      if (el) el.textContent = breakdown[c] ? fmtTok(breakdown[c].total_tokens) : '0';
+    }
+  }
+}
+function resetTokenStats() {
+  lastTokenTotal = 0;
+  const it = document.getElementById('info-tokens'); if (it) it.textContent = '0';
+  const bt = document.getElementById('bar-tokens'); if (bt) bt.textContent = '0 tok';
+  const ic = document.getElementById('info-cost'); if (ic) ic.textContent = '$0.00';
+  const sec = document.getElementById('dr-tokens'); if (sec) sec.style.display = 'none';
 }
 function startDurationTimer() {
   stopDurationTimer();
@@ -3876,6 +4286,84 @@ function startDurationTimer() {
   }, 1000);
 }
 function stopDurationTimer() { if (durationInterval) clearInterval(durationInterval); }
+
+// ─── HLB-148 escalation countdown ────────────────────────────
+// One 1s interval drives every pending card's countdown. The tick writes only
+// textContent (no innerHTML), matching the duration timer above and the UI
+// rendering rules (no innerHTML in a real-time loop).
+function fmtCountdown(ms) {
+  if (ms <= 0) return '0:00';
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+function renderEscCountdown(id) {
+  const t = escTimers.get(id);
+  if (!t) return;
+  // Two render targets per escalation: the inline feed card and the queue rows
+  // (mobile sheet + desktop sidebar). Both update via textContent only.
+  const inline = document.getElementById(`esc-timer-${id}`);
+  if (inline) {
+    // Only registered (numeric-deadline) timers reach here, so a chip that was
+    // neutral has become live, drop the neutral styling.
+    inline.classList.remove('neutral');
+    if (t.paused) {
+      inline.textContent = '⏸ Paused';
+      inline.classList.add('paused');
+    } else {
+      inline.textContent = `⏳ ${fmtCountdown(t.deadlineAt - Date.now())}`;
+      inline.classList.remove('paused');
+    }
+  }
+  document.querySelectorAll(`.esc-queue-timer-${CSS.escape(id)}`).forEach(el => {
+    el.classList.remove('neutral');
+    el.textContent = t.paused ? '⏸' : fmtCountdown(t.deadlineAt - Date.now());
+  });
+}
+function escTimerTick() {
+  if (escTimers.size === 0) return;
+  escTimers.forEach((_, id) => renderEscCountdown(id));
+}
+function ensureEscTimerRunning() {
+  if (escTimerInterval) return;
+  escTimerInterval = setInterval(escTimerTick, 1000);
+}
+function registerEscTimer(id, deadlineAt, paused) {
+  if (typeof deadlineAt !== 'number') return;
+  escTimers.set(id, { deadlineAt, paused: !!paused });
+  ensureEscTimerRunning();
+  renderEscCountdown(id); // paint immediately, don't wait up to 1s for the tick
+}
+function clearEscTimer(id) {
+  escTimers.delete(id);
+  if (escTimers.size === 0 && escTimerInterval) { clearInterval(escTimerInterval); escTimerInterval = null; }
+}
+// Pause/Resume/Reset controls send the matching op; the server replies with an
+// escalation-timer-updated broadcast that re-syncs escTimers (authoritative).
+// The Pause button TOGGLES: running -> pause, paused -> resume (continue from the
+// time left, NOT a fresh window, that is the separate Reset button).
+function toggleEscTimer(id) {
+  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected, reconnecting...'); return; }
+  const t = escTimers.get(id);
+  const op = t && t.paused ? 'resume' : 'pause';
+  ws.send(JSON.stringify({ type: 'escalation-timer', sessionId: currentSession.id, escalationId: id, op }));
+}
+function resetEscTimer(id) {
+  if (!currentSession || !ws || ws.readyState !== 1) { showToast('⚠️ Disconnected, reconnecting...'); return; }
+  ws.send(JSON.stringify({ type: 'escalation-timer', sessionId: currentSession.id, escalationId: id, op: 'reset' }));
+}
+function applyEscTimerUpdate(data) {
+  if (!data || !data.escalationId) return;
+  if (typeof data.deadlineAt !== 'number') { clearEscTimer(data.escalationId); return; }
+  registerEscTimer(data.escalationId, data.deadlineAt, !!data.paused);
+  // Reflect the paused state on the inline Pause/Reset button label.
+  const btn = document.getElementById(`esc-pause-${data.escalationId}`);
+  if (btn) {
+    btn.textContent = data.paused ? '▶ Resume' : '⏸ Pause';
+    btn.classList.toggle('active', !!data.paused);
+  }
+  const card = document.getElementById(`esc-${data.escalationId}`);
+  if (card) card.classList.toggle('esc-paused', !!data.paused);
+}
 
 // ─── Event Listeners ─────────────────────────────────────
 // Improver
@@ -4000,6 +4488,79 @@ document.querySelectorAll('.preset-chip').forEach(chip => {
 });
 // Snapshot generalist defaults so toggling a preset off can restore them.
 document.querySelectorAll('#example-prompts .example-chip').forEach(c => { c.dataset.default = c.textContent; });
+
+// ─── Session continuation picker ───────────────────────
+// Seed a new session from a chosen prior session's summary. The picker reuses
+// /api/search; rows are written with textContent so a prior problem can never
+// inject markup into the welcome form.
+const contSearchInput = document.getElementById('cont-search-input');
+const contResults = document.getElementById('cont-results');
+const contSelected = document.getElementById('cont-selected');
+const contClearBtn = document.getElementById('cont-clear');
+let contSearchTimeout = null;
+
+function truncateText(s, n) {
+  s = s || '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function clearContinuation() {
+  selectedContinuationId = null;
+  contSelected.style.display = 'none';
+  contSelected.textContent = '';
+  contClearBtn.style.display = 'none';
+  if (contSearchInput) contSearchInput.value = '';
+  contResults.replaceChildren();
+}
+
+function selectContinuation(session) {
+  selectedContinuationId = session.id;
+  contResults.replaceChildren();
+  contSelected.replaceChildren();
+  const label = document.createElement('span');
+  label.className = 'cs-label';
+  label.textContent = 'Continuing from';
+  const body = document.createElement('span');
+  body.textContent = truncateText(session.problem, 160);
+  contSelected.appendChild(label);
+  contSelected.appendChild(body);
+  contSelected.style.display = 'block';
+  contClearBtn.style.display = 'inline-flex';
+}
+
+async function searchContinuation(query) {
+  if (!query) { contResults.replaceChildren(); return; }
+  let sessions = [];
+  try {
+    const res = await fetch(apiUrl('/api/search?q=' + encodeURIComponent(query)));
+    if (res.ok) sessions = await res.json();
+  } catch (_) { /* search is best-effort; an empty list is fine */ }
+  contResults.replaceChildren();
+  sessions.slice(0, 6).forEach(s => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'cont-result';
+    const title = document.createElement('span');
+    title.textContent = truncateText(s.problem, 120);
+    const meta = document.createElement('span');
+    meta.className = 'cr-meta';
+    meta.textContent = (s.active ? 'active' : 'done') + ' · ' + (s.messageCount || 0) + ' msgs · phase ' + (s.phase || 0) + '/4';
+    row.appendChild(title);
+    row.appendChild(meta);
+    row.addEventListener('click', () => selectContinuation(s));
+    contResults.appendChild(row);
+  });
+}
+
+if (contSearchInput) {
+  contSearchInput.addEventListener('input', () => {
+    clearTimeout(contSearchTimeout);
+    const q = contSearchInput.value.trim();
+    contSearchTimeout = setTimeout(() => searchContinuation(q), 200);
+  });
+}
+if (contClearBtn) contClearBtn.addEventListener('click', clearContinuation);
+
 loadPresets();
 document.getElementById('welcome-submit').addEventListener('click', submitFromWelcome);
 document.getElementById('welcome-input').addEventListener('input', updateWelcomeReady);
@@ -4381,6 +4942,94 @@ document.getElementById('export-modal-close').addEventListener('click', closeExp
 document.getElementById('export-modal-overlay').addEventListener('click', e => { if (e.target === document.getElementById('export-modal-overlay')) closeExportModal(); });
 document.getElementById('export-submit').addEventListener('click', doExport);
 document.getElementById('export-copy').addEventListener('click', copyExportToClipboard);
+
+// ─── Settings: agent models & providers (HLB-336) ───────────
+const SETTINGS_ROUTE_LABELS = {
+  '': 'Default', 'anthropic-api': 'Anthropic API', 'openai-api': 'OpenAI API',
+  'openrouter': 'OpenRouter', 'subscription': 'Subscription', 'ollama-local': 'Ollama (local)',
+};
+let _settingsData = null;
+let _costData = null;
+async function openSettings() {
+  try {
+    const res = await fetch(apiUrl('/api/settings/agent-routing'));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _settingsData = await res.json();
+    renderSettings();
+    try {
+      const cres = await fetch(apiUrl('/api/settings/cost'));
+      if (cres.ok) { _costData = await cres.json(); populateCostInputs(); }
+    } catch (_) { /* cost settings are optional */ }
+    document.getElementById('settings-overlay').classList.add('open');
+  } catch (e) { showToast('⚠️ Could not load settings: ' + e.message); }
+}
+function populateCostInputs() {
+  if (!_costData) return;
+  const s = _costData.subscription || {};
+  const e = _costData.electricity || {};
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v != null ? v : ''); };
+  set('cost-plan-price', s.planPriceUsd);
+  set('cost-allowance', s.allowanceTokens);
+  set('cost-power', e.powerWatts);
+  set('cost-tps', e.tokensPerSec);
+  set('cost-kwh', e.pricePerKwh);
+}
+function renderSettings() {
+  const host = document.getElementById('settings-agents');
+  const { agents, routes, available, routing, effective } = _settingsData;
+  host.innerHTML = (agents || []).map(a => {
+    const cur = routing[a.id] || {};
+    const eff = effective[a.id] || {};
+    const opts = ['', ...routes].map(r => {
+      const label = SETTINGS_ROUTE_LABELS[r] || r;
+      const noKey = r && available && available[r] === false;
+      const selected = (cur.route || '') === r ? ' selected' : '';
+      return `<option value="${r}"${selected}${noKey ? ' disabled' : ''}>${label}${noKey ? ' (no key)' : ''}</option>`;
+    }).join('');
+    return `<div class="settings-agent-row" data-aid="${a.id}">
+      <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
+      <select class="sa-route">${opts}</select>
+      <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false">
+    </div>`;
+  }).join('');
+}
+async function saveSettings() {
+  const routing = {};
+  document.querySelectorAll('#settings-agents .settings-agent-row').forEach(row => {
+    const id = row.getAttribute('data-aid');
+    const route = row.querySelector('.sa-route').value;
+    const model = row.querySelector('.sa-model').value.trim();
+    const entry = {};
+    if (route) entry.route = route;
+    if (model) entry.model = model;
+    if (Object.keys(entry).length) routing[id] = entry;
+  });
+  try {
+    const res = await fetch(apiUrl('/api/settings/agent-routing'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ routing }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
+    const num = (id) => { const el = document.getElementById(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
+    const costBody = {};
+    const pp = num('cost-plan-price'), al = num('cost-allowance');
+    if (pp != null && al != null) costBody.subscription = { planPriceUsd: pp, allowanceTokens: al };
+    const pw = num('cost-power'), tps = num('cost-tps'), kwh = num('cost-kwh');
+    if (pw != null && tps != null && kwh != null) costBody.electricity = { powerWatts: pw, tokensPerSec: tps, pricePerKwh: kwh };
+    if (Object.keys(costBody).length) {
+      const cr = await fetch(apiUrl('/api/settings/cost'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(costBody) });
+      if (!cr.ok) { const e = await cr.json().catch(() => ({})); throw new Error(e.error || ('cost HTTP ' + cr.status)); }
+    }
+    showToast('✓ Settings saved');
+    closeSettings();
+  } catch (e) { showToast('⚠️ Save failed: ' + e.message); }
+}
+function closeSettings() { document.getElementById('settings-overlay').classList.remove('open'); }
+document.getElementById('settings-btn').addEventListener('click', openSettings);
+document.getElementById('settings-close').addEventListener('click', closeSettings);
+document.getElementById('settings-save').addEventListener('click', saveSettings);
+document.getElementById('settings-overlay').addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
 
 connect();
 </script>

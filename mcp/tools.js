@@ -22,7 +22,9 @@ function registerTools(server, ops) {
         const rows = sessions.map(s => {
           const date = new Date(s.createdAt).toISOString().slice(0, 16);
           const status = s.active ? 'ACTIVE' : 'Done';
-          return `[${s.id}] ${status} | Phase: ${s.phaseName || s.phase} | ${s.messageCount || 0} msgs | ${s.pendingCount || 0} pending | ${date}\n  ${s.problem.slice(0, 120)}`;
+          const tok = s.totalTokens != null ? `${s.totalTokens.toLocaleString()} tok` : '— tok';
+          const cost = s.totalCostUsd != null ? `$${s.totalCostUsd.toFixed(2)}` : '$—';
+          return `[${s.id}] ${status} | Phase: ${s.phaseName || s.phase} | ${s.messageCount || 0} msgs | ${s.pendingCount || 0} pending | ${tok} | ${cost} | ${date}\n  ${s.problem.slice(0, 120)}`;
         });
         return ok(`Sessions (${sessions.length}):\n\n${rows.join('\n\n')}`);
       } catch (e) { return err(e.message); }
@@ -43,6 +45,8 @@ function registerTools(server, ops) {
           `Problem: ${s.problem}`,
           `Status: ${s.active ? 'Active' : 'Complete'} | Phase: ${s.phaseName || s.phase}`,
           `Created: ${new Date(s.createdAt).toISOString()}`,
+          `Tokens: ${s.totalTokens != null ? s.totalTokens.toLocaleString() : '—'}`,
+          `Cost: ${s.totalCostUsd != null ? '$' + s.totalCostUsd.toFixed(2) : '—'}`,
           '',
         ];
         if (s.messages?.length) {
