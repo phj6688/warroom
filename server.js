@@ -6,10 +6,11 @@ const crypto = require('crypto');
 
 // ─── Modules ────────────────────────────────────────────────
 const { db, stmts, dbPath } = require('./db');
-require('./lib/app-config').init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
+const appConfig = require('./lib/app-config');
+appConfig.init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, resolveRoute, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
 const { runWithTools } = require('./lib/agents/tool-loop');
 const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
@@ -23,6 +24,7 @@ const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 const { createTokenLedger, persistSessionTokens, createTickThrottle } = require('./lib/token-usage');
+const { costFromSnapshot } = require('./lib/cost');
 const { estimateTokens } = require('./lib/embeddings');
 const { buildContext } = require('./lib/context');
 const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
@@ -141,11 +143,44 @@ function onTokenUsage(sessionId, category, usage, opts) {
   try {
     tokenLedger.add(sessionId, category, usage, opts);
     if (sessionId && tokenTick.shouldEmit(sessionId, Date.now())) {
-      const snap = tokenLedger.snapshot(sessionId);
-      broadcast(sessionId, { type: 'token-tick', sessionId, totalTokens: snap.total_tokens, breakdown: snap.token_breakdown });
+      broadcast(sessionId, { type: 'token-tick', sessionId, ...tokenCostSnapshot(sessionId) });
     }
   }
   catch (err) { log.warn({ sessionId, err: err && err.message }, 'token ledger add failed'); }
+}
+
+// HLB-337 — pricing / subscription / electricity config from the settings
+// store; cost.js applies sensible defaults for anything unset.
+function costConfig() {
+  return {
+    pricing: appConfig.get('pricing', null),
+    subscription: appConfig.get('subscription', null),
+    electricity: appConfig.get('electricity', null),
+  };
+}
+
+// Cost for a session's current tally. Agent turns and tool calls are attributed
+// to their actual per-agent route+model (the ledger's by_model); everything
+// else (quality, memory, embeddings, meta) is folded into the session's default
+// route+model so the dollar total covers every counted token.
+function costForSnapshot(snap) {
+  const def = resolveRoute(undefined);
+  const key = `${def.route || 'default'}::${def.model}`;
+  return costFromSnapshot(snap, key, costConfig());
+}
+
+// The token + cost payload broadcast on token-tick / tokens-counted and written
+// to the session row at completion.
+function tokenCostSnapshot(sessionId) {
+  const snap = tokenLedger.snapshot(sessionId);
+  const cost = costForSnapshot(snap);
+  return {
+    totalTokens: snap.total_tokens,
+    breakdown: snap.token_breakdown,
+    totalCostUsd: cost.total_cost_usd,
+    costBreakdown: cost.cost_breakdown,
+    costModes: cost.modes,
+  };
 }
 
 const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES, onTokenUsage });
@@ -499,7 +534,7 @@ async function runAgentTurn(session, agentId, phase) {
       // Usage from the tool-loop is the sum across every round-trip in this
       // turn. Attribute it to the tool-call bucket since this is the search-
       // enabled path.
-      onTokenUsage(session.id, 'tool_call', loopOut.usage);
+      onTokenUsage(session.id, 'tool_call', loopOut.usage, { model: loopOut.model, route: loopOut.route });
 
       // Aggregate per-invocation search numbers for the turn-complete row.
       // Truncation is a property of any individual invocation, so truncated
@@ -522,7 +557,7 @@ async function runAgentTurn(session, agentId, phase) {
       // Prose-marker path (pre-Session-4 default; stays canonical until canary flips SCOUT_USE_TOOL).
       let primary;
       ({ text: response, toolCalls, ...primary } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
-      onTokenUsage(session.id, 'agent_turn', primary.usage);
+      onTokenUsage(session.id, 'agent_turn', primary.usage, { model: primary.model, route: primary.route });
 
       if (isResearchScout && searchAvailable) {
         const searchQueries = searchProvider.extractQueriesFromText(response);
@@ -547,7 +582,7 @@ async function runAgentTurn(session, agentId, phase) {
           const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
           response = follow.text;
           toolCalls = [...toolCalls, ...follow.toolCalls];
-          onTokenUsage(session.id, 'agent_turn', follow.usage);
+          onTokenUsage(session.id, 'agent_turn', follow.usage, { model: follow.model, route: follow.route });
         } else {
           turnQueriesExecuted = 0;
         }
@@ -801,12 +836,13 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // the post-deliberation jobs above (async); each of those re-persists the
   // cumulative snapshot when it finishes, so this write captures the synchronous
   // portion and the jobs top it up.
-  let tokenSnap = { total_tokens: 0, token_breakdown: {} };
+  let costSnap = { totalTokens: 0, breakdown: {}, totalCostUsd: 0, costBreakdown: {}, costModes: {} };
   try {
-    tokenSnap = persistSessionTokens(db, session.id, tokenLedger);
+    costSnap = tokenCostSnapshot(session.id);
+    persistSessionTokens(db, session.id, tokenLedger, { cost: { total_cost_usd: costSnap.totalCostUsd, cost_breakdown: costSnap.costBreakdown } });
     tokenTick.reset(session.id);
-    broadcast(session.id, { type: 'tokens-counted', sessionId: session.id, totalTokens: tokenSnap.total_tokens, breakdown: tokenSnap.token_breakdown });
-    sLog.info({ totalTokens: tokenSnap.total_tokens }, 'session token total persisted');
+    broadcast(session.id, { type: 'tokens-counted', sessionId: session.id, ...costSnap });
+    sLog.info({ totalTokens: costSnap.totalTokens, totalCostUsd: costSnap.totalCostUsd }, 'session token + cost persisted');
   } catch (err) {
     sLog.warn({ err: err && err.message }, 'token persistence failed');
   }
@@ -816,7 +852,8 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   const totalMsgs = session.messages.length;
   broadcast(session.id, {
     type: 'deliberation-complete', sessionId: session.id,
-    totalTokens: tokenSnap.total_tokens,
+    totalTokens: costSnap.totalTokens,
+    totalCostUsd: costSnap.totalCostUsd,
     export: {
       available: true,
       modes: [
@@ -848,8 +885,9 @@ async function runFollowUp(sessionId, session, question) {
       (u) => onTokenUsage(sessionId, 'agent_turn', u));
     // A follow-up adds to the session's running total after completion.
     try {
-      const snap = persistSessionTokens(db, sessionId, tokenLedger);
-      broadcast(sessionId, { type: 'tokens-counted', sessionId, totalTokens: snap.total_tokens, breakdown: snap.token_breakdown });
+      const cs = tokenCostSnapshot(sessionId);
+      persistSessionTokens(db, sessionId, tokenLedger, { cost: { total_cost_usd: cs.totalCostUsd, cost_breakdown: cs.costBreakdown } });
+      broadcast(sessionId, { type: 'tokens-counted', sessionId, ...cs });
     } catch (_) { /* non-fatal */ }
 
     broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'speaking', sessionId });
@@ -883,8 +921,9 @@ setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberat
 // tally) and never throws into the job worker.
 function persistTokenSnapshot(sessionId) {
   try {
-    const snap = persistSessionTokens(db, sessionId, tokenLedger);
-    broadcast(sessionId, { type: 'tokens-counted', sessionId, totalTokens: snap.total_tokens, breakdown: snap.token_breakdown });
+    const cs = tokenCostSnapshot(sessionId);
+    persistSessionTokens(db, sessionId, tokenLedger, { cost: { total_cost_usd: cs.totalCostUsd, cost_breakdown: cs.costBreakdown } });
+    broadcast(sessionId, { type: 'tokens-counted', sessionId, ...cs });
   } catch (err) {
     log.warn({ sessionId, err: err && err.message }, 'token re-persist failed');
   }

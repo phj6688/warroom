@@ -64,6 +64,7 @@ function setupMCPServer(app, deps) {
           active: !!s.active, messageCount: msgs.length, pendingCount: pending.length,
           createdAt: s.created_at,
           totalTokens: s.total_tokens ?? null,
+          totalCostUsd: s.total_cost_usd ?? null,
         };
       });
     },
@@ -78,6 +79,7 @@ function setupMCPServer(app, deps) {
         phaseName: PHASES[s.phase]?.name || String(s.phase),
         active: !!s.active, createdAt: s.created_at,
         totalTokens: s.total_tokens ?? null,
+        totalCostUsd: s.total_cost_usd ?? null,
         tokenBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.token_breakdown),
         messages: messages.map(m => ({ agentEmoji: m.agent_emoji, agentName: m.agent_name, phase: m.phase, content: m.content })),
         escalations: escalations.map(e => ({ id: e.id, agentName: e.agent_name, question: e.question, answer: e.answer, answered: e.status === 'answered' })),
