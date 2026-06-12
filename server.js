@@ -6,9 +6,11 @@ const crypto = require('crypto');
 
 // ─── Modules ────────────────────────────────────────────────
 const { db, stmts, dbPath } = require('./db');
+const appConfig = require('./lib/app-config');
+appConfig.init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, resolveRoute, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
 const { runWithTools } = require('./lib/agents/tool-loop');
 const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
@@ -21,13 +23,16 @@ const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
 const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
+const { createTokenLedger, persistSessionTokens, createTickThrottle } = require('./lib/token-usage');
+const { costFromSnapshot } = require('./lib/cost');
+const { estimateTokens } = require('./lib/embeddings');
 const { buildContext } = require('./lib/context');
 const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
 const { createFilesServiceClient } = require('./lib/clients/files-service');
 const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
-const { waitForEscalation, abortSessionWaits } = require('./lib/escalation');
+const { waitForEscalation, abortSessionWaits, getDeadline, pauseEscalation, DEFAULT_TIMEOUT_MS } = require('./lib/escalation');
 const { createSearchProvider } = require('./lib/search');
 const { getSearchConfigForAgent, makeSessionBudget, SESSION_QUERY_BUDGET, AGENT_SEARCH_EXPANSION } = require('./lib/agents/search-config');
 const { createMetricsSink, tierForAgent } = require('./lib/metrics/search-metrics');
@@ -51,7 +56,7 @@ const PORT = process.env.PORT || 8090;
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || null;
-const MODEL = process.env.MODEL || 'anthropic/claude-sonnet-4-5';
+const MODEL = process.env.MODEL || 'anthropic/claude-opus-4-8';
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || null;
 const SEARCH_MAX_RESULTS = parseInt(process.env.SEARCH_MAX_RESULTS || '5');
 const SEARCH_PROVIDER = (process.env.SEARCH_PROVIDER || 'tavily').toLowerCase();
@@ -120,9 +125,67 @@ if (FILES_SERVICE_URL && FILES_SERVICE_TOKEN) {
 
 // ─── Shared State ───────────────────────────────────────────
 const activeSessions = new Map();
-const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES });
-const quality = createQualityManager({ db, stmts, callAnthropic, PHASES });
-const fingerprint = createFingerprintClassifier({ callAnthropic, db, stmts });
+
+// HLB-152 — per-session token ledger. Every LLM/embedding call routed through a
+// session-aware caller adds its normalized usage here; the deliberation-
+// complete path snapshots and persists it to the sessions row. onTokenUsage is
+// the seam the memory/quality/fingerprint managers use to attribute the usage
+// of the callAnthropic calls they own.
+const tokenLedger = createTokenLedger();
+// HLB-335 — live "on the fly" token counter. Every accrual can push a snapshot
+// to the session's subscribers, throttled to one broadcast per TOKEN_TICK_MS so
+// a busy phase does not spam the socket (UI no-flicker rule: render <= 1/1-2s).
+// The authoritative tokens-counted still fires at each completion boundary, so a
+// dropped intermediate tick never loses the final number.
+const TOKEN_TICK_MS = 1500;
+const tokenTick = createTickThrottle(TOKEN_TICK_MS);
+function onTokenUsage(sessionId, category, usage, opts) {
+  try {
+    tokenLedger.add(sessionId, category, usage, opts);
+    if (sessionId && tokenTick.shouldEmit(sessionId, Date.now())) {
+      broadcast(sessionId, { type: 'token-tick', sessionId, ...tokenCostSnapshot(sessionId) });
+    }
+  }
+  catch (err) { log.warn({ sessionId, err: err && err.message }, 'token ledger add failed'); }
+}
+
+// HLB-337 — pricing / subscription / electricity config from the settings
+// store; cost.js applies sensible defaults for anything unset.
+function costConfig() {
+  return {
+    pricing: appConfig.get('pricing', null),
+    subscription: appConfig.get('subscription', null),
+    electricity: appConfig.get('electricity', null),
+  };
+}
+
+// Cost for a session's current tally. Agent turns and tool calls are attributed
+// to their actual per-agent route+model (the ledger's by_model); everything
+// else (quality, memory, embeddings, meta) is folded into the session's default
+// route+model so the dollar total covers every counted token.
+function costForSnapshot(snap) {
+  const def = resolveRoute(undefined);
+  const key = `${def.route || 'default'}::${def.model}`;
+  return costFromSnapshot(snap, key, costConfig());
+}
+
+// The token + cost payload broadcast on token-tick / tokens-counted and written
+// to the session row at completion.
+function tokenCostSnapshot(sessionId) {
+  const snap = tokenLedger.snapshot(sessionId);
+  const cost = costForSnapshot(snap);
+  return {
+    totalTokens: snap.total_tokens,
+    breakdown: snap.token_breakdown,
+    totalCostUsd: cost.total_cost_usd,
+    costBreakdown: cost.cost_breakdown,
+    costModes: cost.modes,
+  };
+}
+
+const memory = createMemoryManager({ db, stmts, callAnthropic, AGENTS, PHASES, onTokenUsage });
+const quality = createQualityManager({ db, stmts, callAnthropic, PHASES, onTokenUsage });
+const fingerprint = createFingerprintClassifier({ callAnthropic, db, stmts, onTokenUsage });
 const specialist = createSpecialistSpawner({ db, stmts });
 
 function genId() { return crypto.randomUUID(); }
@@ -168,13 +231,15 @@ async function attachFiles(sessionId, fileIds) {
   return attached;
 }
 
-async function createSession(problem, fileIds = [], presetId = null) {
+async function createSession(problem, fileIds = [], presetId = null, continuesFromSessionId = null) {
   const id = genId();
   const now = Date.now();
   stmts.insertSession.run(id, problem, now, now);
 
   const preset = getPreset(presetId);
   if (preset) stmts.updateSessionPreset.run(preset.id, now, id);
+
+  if (continuesFromSessionId) stmts.updateSessionContinuation.run(continuesFromSessionId, now, id);
 
   let files = [];
   if (fileIds.length > 0) {
@@ -188,6 +253,7 @@ async function createSession(problem, fileIds = [], presetId = null) {
     _hasFiles: files.length > 0,
     _preset: preset,
     presetId: preset ? preset.id : null,
+    continuesFromSessionId: continuesFromSessionId || null,
     searchCache: new Map(),
     searchBudget: makeSessionBudget(),
   };
@@ -202,6 +268,39 @@ async function createSession(problem, fileIds = [], presetId = null) {
   return session;
 }
 
+// HLB-148: the per-escalation countdown the client renders. A live blocking
+// wait owns a mutable deadline (pause/reset/resume mutate it); getDeadline()
+// reads it. When no live waiter exists, the deadline is only meaningful if the
+// session is still ACTIVE (its escalation will get a waiter once the phase gate
+// opens). For an INACTIVE session there is nothing left to auto-resolve, so we
+// return deadlineAt:null instead of fabricating a past `created_at + window`
+// timestamp that would render a false 0:00. Answered escalations carry no
+// countdown.
+//   esc: { id, sessionId, answered, createdAt }
+//   isActive: whether the owning session is active (live deliberation)
+// Returns { deadlineAt, paused } merged onto the escalation object.
+function escalationTiming(esc, isActive = false) {
+  if (esc.answered) return { deadlineAt: null, paused: false };
+  const live = getDeadline(esc.sessionId, esc.id);
+  if (live) return { deadlineAt: live.deadlineAt, paused: live.paused };
+  // No live waiter. Honor any pause/reset/resume the human already applied
+  // (mirrored onto the in-memory escalation by the escalation-timer handler),
+  // that is a deliberate human action regardless of active state.
+  if (esc.paused === true && typeof esc.deadlineAt === 'number') {
+    return { deadlineAt: esc.deadlineAt, paused: true };
+  }
+  if (typeof esc.deadlineAt === 'number') {
+    return { deadlineAt: esc.deadlineAt, paused: false };
+  }
+  // No waiter, no human-applied deadline. Only an ACTIVE session's escalation
+  // (created before its phase gate) will acquire a waiter and auto-resolve, so
+  // give it a fallback window. An inactive escalation will never auto-resolve,
+  // render a neutral state, no ticking countdown.
+  if (!isActive) return { deadlineAt: null, paused: false };
+  const base = (typeof esc.createdAt === 'number' ? esc.createdAt : Date.now());
+  return { deadlineAt: base + DEFAULT_TIMEOUT_MS, paused: false };
+}
+
 function loadSession(id) {
   const row = stmts.getSession.get(id);
   if (!row) return null;
@@ -210,12 +309,15 @@ function loadSession(id) {
     agentEmoji: m.agent_emoji, agentColor: m.agent_color,
     content: m.content, phase: m.phase, timestamp: m.created_at
   }));
-  const escalations = stmts.getSessionEscalations.all(id).map(e => ({
-    id: e.id, agentId: e.agent_id, agentName: e.agent_name, agentEmoji: e.agent_emoji,
-    question: e.question, sessionId: id, answered: e.status === 'answered',
-    answer: e.answer, createdAt: e.created_at,
-    severity: e.severity || 'blocking', defaultAction: e.default_action || null,
-  }));
+  const escalations = stmts.getSessionEscalations.all(id).map(e => {
+    const esc = {
+      id: e.id, agentId: e.agent_id, agentName: e.agent_name, agentEmoji: e.agent_emoji,
+      question: e.question, sessionId: id, answered: e.status === 'answered',
+      answer: e.answer, createdAt: e.created_at,
+      severity: e.severity || 'blocking', defaultAction: e.default_action || null,
+    };
+    return { ...esc, ...escalationTiming(esc, !!row.active) };
+  });
   const humanMessages = stmts.getSessionHumanMessages.all(id).map(h => ({
     id: h.id, content: h.content, timestamp: h.created_at
   }));
@@ -238,6 +340,9 @@ function loadSession(id) {
     _hasFiles: files.length > 0,
     _preset: getPreset(row.preset_id),
     presetId: row.preset_id || null,
+    continuesFromSessionId: row.continues_from_session_id || null,
+    totalTokens: row.total_tokens ?? null,
+    tokenBreakdown: (() => { try { return row.token_breakdown ? JSON.parse(row.token_breakdown) : null; } catch (_) { return null; } })(),
   };
 }
 
@@ -426,6 +531,11 @@ async function runAgentTurn(session, agentId, phase) {
         .filter(inv => inv.toolName === 'escalate_to_human')
         .map(inv => ({ name: 'escalate_to_human', input: inv.input || {} }));
 
+      // Usage from the tool-loop is the sum across every round-trip in this
+      // turn. Attribute it to the tool-call bucket since this is the search-
+      // enabled path.
+      onTokenUsage(session.id, 'tool_call', loopOut.usage, { model: loopOut.model, route: loopOut.route });
+
       // Aggregate per-invocation search numbers for the turn-complete row.
       // Truncation is a property of any individual invocation, so truncated
       // at the turn level is "any call was truncated".
@@ -445,7 +555,9 @@ async function runAgentTurn(session, agentId, phase) {
       turnBudgetExhausted = !!loopOut.budgetExhausted;
     } else {
       // Prose-marker path (pre-Session-4 default; stays canonical until canary flips SCOUT_USE_TOOL).
-      ({ text: response, toolCalls } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
+      let primary;
+      ({ text: response, toolCalls, ...primary } = await callAnthropicWithTools(agent.systemPrompt, messages, agentId, [ESCALATE_TOOL], maxTokens));
+      onTokenUsage(session.id, 'agent_turn', primary.usage, { model: primary.model, route: primary.route });
 
       if (isResearchScout && searchAvailable) {
         const searchQueries = searchProvider.extractQueriesFromText(response);
@@ -470,6 +582,7 @@ async function runAgentTurn(session, agentId, phase) {
           const follow = await callAnthropicWithTools(agent.systemPrompt, synthesisMessages, agentId, [ESCALATE_TOOL]);
           response = follow.text;
           toolCalls = [...toolCalls, ...follow.toolCalls];
+          onTokenUsage(session.id, 'agent_turn', follow.usage, { model: follow.model, route: follow.route });
         } else {
           turnQueriesExecuted = 0;
         }
@@ -492,7 +605,11 @@ async function runAgentTurn(session, agentId, phase) {
     escalations.forEach(esc => {
       session.escalations.push(esc);
       stmts.insertEscalation.run(esc.id, session.id, agentId, agent.name, agent.emoji, esc.question, esc.severity, esc.defaultAction, esc.createdAt);
-      broadcast(session.id, { type: 'escalation', ...esc, agentName: agent.name, agentEmoji: agent.emoji });
+      // HLB-148: send the countdown deadline with the escalation so the inline
+      // card and queue can render time-remaining from the first frame. The
+      // blocking wait that owns the live deadline starts at the next phase
+      // gate; until then the client shows the created_at + default window.
+      broadcast(session.id, { type: 'escalation', ...esc, ...escalationTiming(esc, session.active !== false), agentName: agent.name, agentEmoji: agent.emoji });
     });
 
     session.agentStates[agentId] = 'idle';
@@ -543,7 +660,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // The classifier still runs for archetype tagging and to top up domains.
   let recommendedSpecialists = [];
   try {
-    const classification = await fingerprint.classify(session.problem);
+    const classification = await fingerprint.classify(session.problem, { sessionId: session.id });
     if (classification.archetype && classification.confidence >= fingerprint.MIN_CONFIDENCE) {
       sLog.info({
         archetype: classification.archetype,
@@ -583,8 +700,32 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     sLog.warn({ err: err.message }, 'specialist spawn error (proceeding with core 8)');
   }
 
-  // Retrieve relevant prior sessions for memory injection
+  // Seed from a chosen prior session (HLB-147). This block is injected ahead
+  // of the similarity-based memory block below so the council reads "where we
+  // left off" before "what looks similar". A missing/deleted source is not
+  // fatal: the session proceeds as a fresh one.
+  if (session.continuesFromSessionId) {
+    try {
+      const summary = memory.buildSessionSummary(session.continuesFromSessionId);
+      const src = stmts.getSession.get(session.continuesFromSessionId);
+      if (summary && src) {
+        // buildSessionSummary already opens with a (capped) `Problem:` line, so
+        // the summary body carries the prior problem; no separate Problem line.
+        session._continuationText =
+          `=== CONTINUED FROM PRIOR SESSION ===\nSource session: ${src.id}\n\n${summary}\n=== END CONTINUED FROM PRIOR SESSION ===\n\n`;
+        broadcast(session.id, { type: 'continuation-injected', sessionId: session.id, sourceId: src.id, sourceProblem: src.problem });
+        sLog.info({ sourceId: src.id }, 'continuation injected from prior session');
+      }
+    } catch (err) {
+      sLog.warn({ err: err.message }, 'continuation source unavailable (proceeding without)');
+    }
+  }
+
+  // Retrieve relevant prior sessions for memory injection. The query embedding
+  // spends tokens against the embedding provider; attribute the estimate to
+  // this session (HLB-152).
   try {
+    onTokenUsage(session.id, 'embedding', { input_tokens: estimateTokens(session.problem || ''), output_tokens: 0 }, { estimated: true });
     const memories = await memory.retrieveSimilar(session.problem, 3);
     if (memories.length > 0) {
       session._memories = memories;
@@ -637,11 +778,23 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         // F13 — event-driven wait. Each pending escalation gets its own
         // promise resolved by the WS escalation-response handler. Wakeup is
         // immediate (sub-100ms) instead of the prior 2 s polling tick.
-        const waits = pending.map(e =>
-          waitForEscalation(session.id, e.id, { timeoutMs: 300_000 })
+        // HLB-148: the live waiter owns the mutable countdown. If the human
+        // already paused the card before this phase gate opened, carry that
+        // pause onto the fresh waiter so it holds. Then push the authoritative
+        // (live) deadline to the client so the card counts down to the real one.
+        const waits = pending.map(e => {
+          const p = waitForEscalation(session.id, e.id, { timeoutMs: DEFAULT_TIMEOUT_MS });
+          if (e.paused === true) pauseEscalation(session.id, e.id);
+          const live = getDeadline(session.id, e.id);
+          if (live) {
+            e.deadlineAt = live.deadlineAt;
+            e.paused = live.paused;
+            broadcast(session.id, { type: 'escalation-timer-updated', sessionId: session.id, escalationId: e.id, paused: live.paused, deadlineAt: live.deadlineAt });
+          }
+          return p
             .then(() => ({ id: e.id, status: 'answered' }))
-            .catch((err) => ({ id: e.id, status: 'timeout', err }))
-        );
+            .catch((err) => ({ id: e.id, status: 'timeout', err }));
+        });
         const results = await Promise.all(waits);
         const timedOut = results.filter(r => r.status === 'timeout');
         if (timedOut.length > 0) {
@@ -678,11 +831,29 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   jobs.enqueue('memory.extractArchivalFacts', { sessionId: session.id });
   jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
 
+  // HLB-152 — persist the per-session token tally accumulated across all agent
+  // turns and tool round-trips. Embedding/memory/quality tokens are added by
+  // the post-deliberation jobs above (async); each of those re-persists the
+  // cumulative snapshot when it finishes, so this write captures the synchronous
+  // portion and the jobs top it up.
+  let costSnap = { totalTokens: 0, breakdown: {}, totalCostUsd: 0, costBreakdown: {}, costModes: {} };
+  try {
+    costSnap = tokenCostSnapshot(session.id);
+    persistSessionTokens(db, session.id, tokenLedger, { cost: { total_cost_usd: costSnap.totalCostUsd, cost_breakdown: costSnap.costBreakdown } });
+    tokenTick.reset(session.id);
+    broadcast(session.id, { type: 'tokens-counted', sessionId: session.id, ...costSnap });
+    sLog.info({ totalTokens: costSnap.totalTokens, totalCostUsd: costSnap.totalCostUsd }, 'session token + cost persisted');
+  } catch (err) {
+    sLog.warn({ err: err && err.message }, 'token persistence failed');
+  }
+
   const synthCount = stmts.synthCountForSession.get(session.id).c;
   const qaCount = stmts.escalationCountForSession.get(session.id).c;
   const totalMsgs = session.messages.length;
   broadcast(session.id, {
     type: 'deliberation-complete', sessionId: session.id,
+    totalTokens: costSnap.totalTokens,
+    totalCostUsd: costSnap.totalCostUsd,
     export: {
       available: true,
       modes: [
@@ -710,7 +881,14 @@ async function runFollowUp(sessionId, session, question) {
     const humanHistory = (session.humanMessages || []).map(h => `[Human]: ${h.content}`).join('\n');
     const systemPrompt = `You are the Process Architect responding to a follow-up question after a completed War Room deliberation.\n\nYou have access to the full deliberation history. Answer the human's question directly, drawing on the insights and analysis from all 8 agents' contributions. Be concise, specific, and actionable.\n\nIf the question requires information that wasn't covered in the deliberation, say so and suggest what additional research would help.`;
     const userContent = `ORIGINAL PROBLEM: ${session.problem}\n\nDELIBERATION SUMMARY (all agents' contributions):\n${priorMessages}\n\n${humanHistory ? `HUMAN MESSAGES:\n${humanHistory}\n\n` : ''}FOLLOW-UP QUESTION: ${question}\n\nAnswer this question based on the deliberation above. Be direct and specific.`;
-    const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId);
+    const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId, 1500,
+      (u) => onTokenUsage(sessionId, 'agent_turn', u));
+    // A follow-up adds to the session's running total after completion.
+    try {
+      const cs = tokenCostSnapshot(sessionId);
+      persistSessionTokens(db, sessionId, tokenLedger, { cost: { total_cost_usd: cs.totalCostUsd, cost_breakdown: cs.costBreakdown } });
+      broadcast(sessionId, { type: 'tokens-counted', sessionId, ...cs });
+    } catch (_) { /* non-fatal */ }
 
     broadcast(sessionId, { type: 'agent-state', agentId: responderId, state: 'speaking', sessionId });
     const now = Date.now();
@@ -727,7 +905,7 @@ async function runFollowUp(sessionId, session, question) {
 }
 
 // ─── Wire Modules ───────────────────────────────────────────
-const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession, attachFiles, filesServiceClient };
+const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createSession, loadSession, runDeliberation, runFollowUp, broadcast, broadcastGlobal, memory, quality, fingerprint, specialist, getAgentsForSession, attachFiles, filesServiceClient, escalationTiming };
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
@@ -736,13 +914,37 @@ setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberat
 // ─── Background Job Handlers (F11) ──────────────────────────
 // Replace the three fire-and-forget post-deliberation calls. The worker
 // drains these from the background_jobs table, retrying with backoff.
-jobs.register('memory.storeSessionMemory', ({ sessionId }) => memory.storeSessionMemory(sessionId));
-jobs.register('memory.extractArchivalFacts', ({ sessionId }) => memory.extractArchivalFacts(sessionId));
+// HLB-152 — these post-deliberation jobs spend embedding/memory/quality tokens
+// after deliberation-complete has already fired. Each re-persists the cumulative
+// token snapshot so the sessions row converges on the true grand total once all
+// async work has drained. persistSnapshot is overwrite-safe (full cumulative
+// tally) and never throws into the job worker.
+function persistTokenSnapshot(sessionId) {
+  try {
+    const cs = tokenCostSnapshot(sessionId);
+    persistSessionTokens(db, sessionId, tokenLedger, { cost: { total_cost_usd: cs.totalCostUsd, cost_breakdown: cs.costBreakdown } });
+    broadcast(sessionId, { type: 'tokens-counted', sessionId, ...cs });
+  } catch (err) {
+    log.warn({ sessionId, err: err && err.message }, 'token re-persist failed');
+  }
+}
+
+jobs.register('memory.storeSessionMemory', async ({ sessionId }) => {
+  const r = await memory.storeSessionMemory(sessionId);
+  persistTokenSnapshot(sessionId);
+  return r;
+});
+jobs.register('memory.extractArchivalFacts', async ({ sessionId }) => {
+  const r = await memory.extractArchivalFacts(sessionId);
+  persistTokenSnapshot(sessionId);
+  return r;
+});
 jobs.register('quality.evaluateSession', async ({ sessionId }) => {
   const result = await quality.evaluateSession(sessionId);
   if (result) {
     broadcast(sessionId, { type: 'quality-scored', sessionId, score: result.score, breakdown: result.breakdown });
   }
+  persistTokenSnapshot(sessionId);
   return result;
 });
 
