@@ -120,6 +120,10 @@ const stmts = {
   getEmbeddingMetaBySession: db.prepare('SELECT * FROM embedding_meta WHERE session_id = ?'),
   deleteEmbeddingsBySession: db.prepare('DELETE FROM session_embeddings WHERE rowid IN (SELECT rowid FROM embedding_meta WHERE session_id = ?)'),
   deleteEmbeddingMetaBySession: db.prepare('DELETE FROM embedding_meta WHERE session_id = ?'),
+  // HLB-336 — runtime-editable settings (agent routing, later pricing).
+  getSetting: db.prepare('SELECT value FROM app_settings WHERE key = ?'),
+  getAllSettings: db.prepare('SELECT key, value FROM app_settings'),
+  upsertSetting: db.prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at'),
 };
 
 module.exports = { db, stmts, dbPath };
