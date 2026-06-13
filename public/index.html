@@ -3040,7 +3040,7 @@ function renderSessionList() {
         <span>·</span>
         <span class="sc-tokens" title="Total tokens used in this session">${s.totalTokens != null ? s.totalTokens.toLocaleString() + ' tok' : '— tok'}</span>
         <span>·</span>
-        <span class="sc-cost" title="Estimated cost for this session">${s.totalCostUsd != null ? '$' + s.totalCostUsd.toFixed(2) : '$—'}</span>
+        <span class="sc-cost" title="Estimated cost for this session">${s.totalCostUsd != null ? fmtUsd(s.totalCostUsd) : '$—'}</span>
         ${s.crashRecovered && !s.active ? '<span class="sc-interrupted-tag" title="Stopped mid-deliberation by a server restart — resume from the deliberation view">Interrupted</span>' : ''}
         ${simBadge}
       </div>

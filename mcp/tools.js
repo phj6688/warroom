@@ -10,6 +10,15 @@ function registerTools(server, ops) {
   function ok(text) { return { content: [{ type: 'text', text }] }; }
   function err(text) { return { content: [{ type: 'text', text }], isError: true }; }
 
+  // One absent-cost token across list and detail. Sub-dollar costs keep 4
+  // decimals so a fraction-of-a-cent session does not round to $0.00 (the live
+  // panel shows the real value via the same precision rule).
+  function fmtCost(n) {
+    if (n == null) return '$—';
+    const v = Number(n);
+    return '$' + (v < 1 ? v.toFixed(4) : v.toFixed(2));
+  }
+
   // 1. warroom_list_sessions
   server.tool(
     'warroom_list_sessions',
@@ -23,7 +32,7 @@ function registerTools(server, ops) {
           const date = new Date(s.createdAt).toISOString().slice(0, 16);
           const status = s.active ? 'ACTIVE' : 'Done';
           const tok = s.totalTokens != null ? `${s.totalTokens.toLocaleString()} tok` : '— tok';
-          const cost = s.totalCostUsd != null ? `$${s.totalCostUsd.toFixed(2)}` : '$—';
+          const cost = fmtCost(s.totalCostUsd);
           return `[${s.id}] ${status} | Phase: ${s.phaseName || s.phase} | ${s.messageCount || 0} msgs | ${s.pendingCount || 0} pending | ${tok} | ${cost} | ${date}\n  ${s.problem.slice(0, 120)}`;
         });
         return ok(`Sessions (${sessions.length}):\n\n${rows.join('\n\n')}`);
@@ -46,9 +55,13 @@ function registerTools(server, ops) {
           `Status: ${s.active ? 'Active' : 'Complete'} | Phase: ${s.phaseName || s.phase}`,
           `Created: ${new Date(s.createdAt).toISOString()}`,
           `Tokens: ${s.totalTokens != null ? s.totalTokens.toLocaleString() : '—'}`,
-          `Cost: ${s.totalCostUsd != null ? '$' + s.totalCostUsd.toFixed(2) : '—'}`,
-          '',
+          `Cost: ${fmtCost(s.totalCostUsd)}`,
         ];
+        if (s.costBreakdown && typeof s.costBreakdown === 'object') {
+          const parts = Object.entries(s.costBreakdown).map(([route, amt]) => `${route} ${fmtCost(amt)}`);
+          if (parts.length) lines.push(`  by route: ${parts.join(', ')}`);
+        }
+        lines.push('');
         if (s.messages?.length) {
           lines.push(`--- Messages (${s.messages.length}) ---\n`);
           for (const m of s.messages) {
