@@ -16,6 +16,9 @@ function registerTools(server, ops) {
   function fmtCost(n) {
     if (n == null) return '$—';
     const v = Number(n);
+    // A malformed costBreakdown value (non-numeric, NaN, Infinity) must not
+    // render as $NaN/$Infinity; fall back to the same absent-cost token.
+    if (!Number.isFinite(v)) return '$—';
     return '$' + (v < 1 ? v.toFixed(4) : v.toFixed(2));
   }
 
