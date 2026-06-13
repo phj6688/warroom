@@ -5012,6 +5012,19 @@ async function saveSettings() {
     if (Object.keys(entry).length) routing[id] = entry;
   });
   if (missingModelFor) { showToast('⚠️ ' + missingModelFor + ': a non-default route needs a model'); return; }
+
+  // Snapshot the cost form synchronously, before any await, so a later DOM edit
+  // (or a re-entrant save) can never change what the cost PUT sends. The frozen
+  // body is the form state at the moment Save was clicked.
+  const num = (id) => { const el = document.getElementById(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
+  const costBody = {};
+  const pp = num('cost-plan-price'), al = num('cost-allowance');
+  if (pp != null && al != null) costBody.subscription = { planPriceUsd: pp, allowanceTokens: al };
+  const pw = num('cost-power'), tps = num('cost-tps'), kwh = num('cost-kwh');
+  if (pw != null && tps != null && kwh != null) costBody.electricity = { powerWatts: pw, tokensPerSec: tps, pricePerKwh: kwh };
+  const costPayload = Object.keys(costBody).length ? JSON.stringify(costBody) : null;
+
+  // Routing first. A routing failure is total: nothing was persisted.
   try {
     const res = await fetch(apiUrl('/api/settings/agent-routing'), {
       method: 'PUT',
@@ -5019,19 +5032,19 @@ async function saveSettings() {
       body: JSON.stringify({ routing }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
-    const num = (id) => { const el = document.getElementById(id); const v = el ? parseFloat(el.value) : NaN; return Number.isFinite(v) ? v : null; };
-    const costBody = {};
-    const pp = num('cost-plan-price'), al = num('cost-allowance');
-    if (pp != null && al != null) costBody.subscription = { planPriceUsd: pp, allowanceTokens: al };
-    const pw = num('cost-power'), tps = num('cost-tps'), kwh = num('cost-kwh');
-    if (pw != null && tps != null && kwh != null) costBody.electricity = { powerWatts: pw, tokensPerSec: tps, pricePerKwh: kwh };
-    if (Object.keys(costBody).length) {
-      const cr = await fetch(apiUrl('/api/settings/cost'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(costBody) });
+  } catch (e) { showToast('⚠️ Save failed: ' + e.message); return; }
+
+  // Cost second, in its own scope: if it fails, routing is already saved, so
+  // report partial success rather than a misleading "Save failed".
+  if (costPayload) {
+    try {
+      const cr = await fetch(apiUrl('/api/settings/cost'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: costPayload });
       if (!cr.ok) { const e = await cr.json().catch(() => ({})); throw new Error(e.error || ('cost HTTP ' + cr.status)); }
-    }
-    showToast('✓ Settings saved');
-    closeSettings();
-  } catch (e) { showToast('⚠️ Save failed: ' + e.message); }
+    } catch (e) { showToast('⚠️ Routing saved, but cost failed: ' + e.message); return; }
+  }
+
+  showToast('✓ Settings saved');
+  closeSettings();
 }
 function closeSettings() { document.getElementById('settings-overlay').classList.remove('open'); }
 document.getElementById('settings-btn').addEventListener('click', openSettings);
