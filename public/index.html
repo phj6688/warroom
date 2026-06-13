@@ -4995,6 +4995,7 @@ function renderSettings() {
 }
 async function saveSettings() {
   const routing = {};
+  let missingModelFor = null;
   document.querySelectorAll('#settings-agents .settings-agent-row').forEach(row => {
     const id = row.getAttribute('data-aid');
     const route = row.querySelector('.sa-route').value;
@@ -5002,8 +5003,15 @@ async function saveSettings() {
     const entry = {};
     if (route) entry.route = route;
     if (model) entry.model = model;
+    // A non-default route needs a model; the server rejects the pair otherwise,
+    // and an Anthropic default id would break a non-Anthropic endpoint.
+    if (route && !model && !missingModelFor) {
+      const name = row.querySelector('.sa-name')?.textContent?.trim() || id;
+      missingModelFor = name;
+    }
     if (Object.keys(entry).length) routing[id] = entry;
   });
+  if (missingModelFor) { showToast('⚠️ ' + missingModelFor + ': a non-default route needs a model'); return; }
   try {
     const res = await fetch(apiUrl('/api/settings/agent-routing'), {
       method: 'PUT',
