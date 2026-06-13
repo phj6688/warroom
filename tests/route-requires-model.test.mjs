@@ -82,6 +82,27 @@ test('PUT /api/settings/agent-routing rejects a non-default route with no model 
     const badBody = await bad.json();
     assert.match(badBody.error, /model/i, 'error explains a model is required');
 
+    // A whitespace-only model is the same as no model. On a non-default route
+    // it must be rejected (a real model is mandatory there)...
+    const wsRoute = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ routing: { [agentId]: { route: 'openai-api', model: '   ' } } }),
+    });
+    assert.equal(wsRoute.status, 400, 'whitespace-only model on a non-default route is rejected');
+    const wsRouteBody = await wsRoute.json();
+    assert.match(wsRouteBody.error, /model/i, 'error explains a model is required');
+
+    // ...and on the default route it must be dropped, never persisted as an
+    // empty model. The old code stored { model: '' } here, an inconsistent
+    // entry that also let a route-less whitespace model slip through.
+    const wsDefault = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ routing: { [agentId]: { model: '   ' } } }),
+    });
+    assert.equal(wsDefault.status, 200, 'whitespace-only model on the default route is accepted');
+    const wsDefaultBody = await wsDefault.json();
+    assert.ok(!(agentId in wsDefaultBody.routing), 'an all-whitespace model entry is dropped, not persisted as { model: "" }');
+
     // The default route never requires a model.
     const okDefault = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
       method: 'PUT', headers,
