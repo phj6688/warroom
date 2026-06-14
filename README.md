@@ -218,7 +218,6 @@ War Room is one node in a broader homelab AI swarm:
 | Service | Purpose |
 |---------|---------|
 | **War Room** | Multi-agent deliberation engine |
-| **Cortex** | Project and task management |
 | **IRIS** | Video intelligence platform |
 | **Squad Monitor** | Agent message bus and event backbone |
 | **ER Bridge** | Circuit breaker and approval gate |
