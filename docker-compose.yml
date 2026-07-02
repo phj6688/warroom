@@ -4,7 +4,7 @@ services:
     container_name: war-room
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     env_file:
       - .env
     environment:
