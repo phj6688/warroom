@@ -4,7 +4,7 @@ services:
     container_name: war-room
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     environment:
       # Secrets (OPENAI_API_KEY, WAR_ROOM_TOKEN, MCP_API_KEY, etc.)
       # are injected at runtime by the Infisical CLI in entrypoint.sh.
