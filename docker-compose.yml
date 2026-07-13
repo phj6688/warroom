@@ -4,33 +4,36 @@ services:
     container_name: war-room
     restart: unless-stopped
     ports:
-      - "8090:8090"
-    env_file:
-      - .env
+      - "127.0.0.1:8090:8090"
     environment:
-      # OPENAI_API_KEY / OPENAI_BASE_URL (or ANTHROPIC_API_KEY) are loaded from .env
-      # via env_file above. WAR_ROOM_TOKEN, MCP_API_KEY, etc. also come
-      # from .env. NEVER inline secrets here — docker-compose.yml is in git.
-      - BASELINE_LOG=data/baseline-usage.jsonl
-      - IMPROVER_SYSTEM_PROMPT=${IMPROVER_SYSTEM_PROMPT:-}
-      # Embedding via embed-gateway (OpenAI-compatible /v1/embeddings).
-      - EMBED_GATEWAY_URL=${EMBED_GATEWAY_URL:-http://embed-gateway:8200}
-      - EMBED_MODEL=${EMBED_MODEL:-nomic-embed-text}
+      # Secrets (OPENAI_API_KEY, WAR_ROOM_TOKEN, MCP_API_KEY, etc.)
+      # are injected at runtime by the Infisical CLI in entrypoint.sh.
+      # NEVER inline secrets here, docker-compose.yml is in git.
+      INFISICAL_DOMAIN: http://infisical:8080
+      INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID}
+      INFISICAL_ENV: prod
+      BASELINE_LOG: data/baseline-usage.jsonl
+      IMPROVER_SYSTEM_PROMPT: ${IMPROVER_SYSTEM_PROMPT:-}
+      EMBED_GATEWAY_URL: ${EMBED_GATEWAY_URL:-http://embed-gateway:8200}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
       # Search provider: tavily (default), smart (SearXNG + DDG, no API cost),
       # or coexist (smart first, tavily fallback on empty/error).
-      - SEARCH_PROVIDER=${SEARCH_PROVIDER:-tavily}
-      # SearXNG URL for smart / coexist. SearXNG is on `librechat-net` which
-      # war-room is not attached to — the simplest wire is host-gateway via
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-tavily}
+      # SearXNG URL for smart / coexist. SearXNG is on librechat-net which
+      # war-room is not attached to, the simplest wire is host-gateway via
       # extra_hosts below. Override if you attach war-room to librechat-net.
-      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:9090}
+      SEARXNG_URL: ${SEARXNG_URL:-http://host.docker.internal:9090}
       # Scout search transport. false = legacy prose markers (default).
       # true  = Anthropic tool_use via lib/agents/tool-loop.js.
-      - SCOUT_USE_TOOL=${SCOUT_USE_TOOL:-false}
+      SCOUT_USE_TOOL: ${SCOUT_USE_TOOL:-false}
       # Expand web_search to tier-B / tier-C agents. Independent of
       # SCOUT_USE_TOOL so scout can canary alone.
-      - AGENT_SEARCH_EXPANSION=${AGENT_SEARCH_EXPANSION:-false}
+      AGENT_SEARCH_EXPANSION: ${AGENT_SEARCH_EXPANSION:-false}
       # Per-deliberation cross-agent search quota.
-      - SESSION_QUERY_BUDGET=${SESSION_QUERY_BUDGET:-30}
+      SESSION_QUERY_BUDGET: ${SESSION_QUERY_BUDGET:-30}
+    secrets:
+      - infisical_client_id
+      - infisical_client_secret
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -44,12 +47,16 @@ services:
       - traefik.docker.network=platform-net
       - traefik.http.routers.war-room.entrypoints=web
       - traefik.http.routers.war-room.rule=Host(`${WARROOM_HOST:-warroom.localhost}`)
+      - traefik.http.routers.war-room.middlewares=forwardauth-zitadel@file
       - traefik.http.services.war-room.loadbalancer.server.port=8090
-      - traefik.http.routers.war-room-mcp.entrypoints=web
-      - traefik.http.routers.war-room-mcp.rule=Host(`${WARROOM_HOST:-warroom.localhost}`) && PathPrefix(`/mcp`)
-      - traefik.http.services.war-room-mcp.loadbalancer.server.port=8090
 
 networks:
   default:
   platform-net:
     external: true
+
+secrets:
+  infisical_client_id:
+    file: ./secrets/infisical_client_id
+  infisical_client_secret:
+    file: ./secrets/infisical_client_secret
