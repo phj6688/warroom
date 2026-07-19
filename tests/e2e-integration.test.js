@@ -12,8 +12,9 @@ describe.skipIf(!E2E_REAL)('e2e: real services roundtrip', () => {
     const res = await fetch(`${warroomBaseUrl}/api/files-service-config`);
     expect(res.ok).toBe(true);
     fsConfig = await res.json();
+    // The config endpoint confirms files-service is configured but never
+    // returns the token (HLB-796); uploads go through the war-room proxy below.
     expect(fsConfig.url).toBeTruthy();
-    expect(fsConfig.token).toBeTruthy();
   });
 
   it('uploads a file to files-service and gets metadata back', async () => {
@@ -23,9 +24,8 @@ describe.skipIf(!E2E_REAL)('e2e: real services roundtrip', () => {
     const form = new FormData();
     form.append('files', new Blob([sampleContent], { type: 'text/plain' }), 'sample.txt');
 
-    const upRes = await fetch(`${fsConfig.url}/v1/files`, {
+    const upRes = await fetch(`${warroomBaseUrl}/api/files/upload`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${fsConfig.token}` },
       body: form,
     });
     expect(upRes.ok).toBe(true);
@@ -41,9 +41,8 @@ describe.skipIf(!E2E_REAL)('e2e: real services roundtrip', () => {
     const form = new FormData();
     form.append('files', new Blob(['Test content for e2e'], { type: 'text/plain' }), 'e2e-test.txt');
 
-    const upRes = await fetch(`${fsConfig.url}/v1/files`, {
+    const upRes = await fetch(`${warroomBaseUrl}/api/files/upload`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${fsConfig.token}` },
       body: form,
     });
     expect(upRes.ok).toBe(true);
