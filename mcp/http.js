@@ -17,7 +17,7 @@ function keysMatch(provided, expected) {
 }
 
 function setupMCPServer(app, deps) {
-  const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles } = deps;
+  const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits } = deps;
 
   function inferMime(name) {
     const ext = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
@@ -120,8 +120,15 @@ function setupMCPServer(app, deps) {
     async deleteSession(sessionId) {
       const s = stmts.getSession.get(sessionId);
       if (!s) throw new Error(`Session ${sessionId} not found`);
+      // Stop a running deliberation before deleting so its next insertMessage
+      // does not violate the foreign key against the now-deleted row.
+      const running = activeSessions.get(sessionId);
+      if (running) {
+        running.active = false;
+        activeSessions.delete(sessionId);
+        abortSessionWaits(sessionId, 'session deleted');
+      }
       stmts.deleteSession.run(sessionId);
-      activeSessions.delete(sessionId);
     },
     async stopSession(sessionId) {
       const session = activeSessions.get(sessionId);
@@ -129,6 +136,9 @@ function setupMCPServer(app, deps) {
         session.active = false;
         stmts.updateSessionActive.run(0, Date.now(), sessionId);
         activeSessions.delete(sessionId);
+        // Release any deliberation parked on an escalation wait so the loop
+        // can fall through and exit (parity with the WS stop path).
+        abortSessionWaits(sessionId, 'session stopped via MCP');
       }
     },
     async sendMessage(sessionId, message) {

@@ -909,7 +909,7 @@ const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createS
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
-setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles });
+setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits });
 
 // ─── Background Job Handlers (F11) ──────────────────────────
 // Replace the three fire-and-forget post-deliberation calls. The worker
