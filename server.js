@@ -22,7 +22,6 @@ const { createQualityManager } = require('./lib/quality');
 const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
-const { countTokens, trimContext, contextBudget } = require('./lib/tokens');
 const { createTokenLedger, persistSessionTokens, createTickThrottle } = require('./lib/token-usage');
 const { costFromSnapshot } = require('./lib/cost');
 const { estimateTokens } = require('./lib/embeddings');
