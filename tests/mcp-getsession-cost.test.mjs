@@ -13,13 +13,11 @@ import { spawnServer } from './_helpers.mjs';
 test('warroom_get_session payload exposes costBreakdown (HLB-342)', async () => {
   // No WAR_ROOM_TOKEN: the server runs in unauth mode so only the MCP ?key=
   // gate applies, keeping the client wiring to the one protocol under test.
-  const server = await spawnServer({ env: { WAR_ROOM_TOKEN: '' } });
+  // Pass a known MCP key rather than scraping it from the boot log (the log no
+  // longer prints the key, HLB-881).
+  const mcpKey = 'test-mcp-key-hlb342-cost';
+  const server = await spawnServer({ env: { WAR_ROOM_TOKEN: '', MCP_API_KEY: mcpKey } });
   try {
-    // The MCP key the server minted; spawnServer doesn't pass one, so the
-    // server generated a random key and logged the /mcp?key=... line.
-    const keyLine = await waitForLog(server, /\/mcp\?key=([a-f0-9]+)/, 6000);
-    const mcpKey = keyLine.match(/\/mcp\?key=([a-f0-9]+)/)[1];
-
     // Seed a completed session with a known cost + per-route breakdown.
     const db = new Database(server.dbPath);
     const sid = 'sess-cost-test';
@@ -46,16 +44,3 @@ test('warroom_get_session payload exposes costBreakdown (HLB-342)', async () => 
     await server.dispose();
   }
 });
-
-function waitForLog(server, re, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + timeoutMs;
-    const tick = () => {
-      const joined = server.logs.join('');
-      if (re.test(joined)) return resolve(joined.match(re)[0]);
-      if (Date.now() > deadline) return reject(new Error(`log not seen: ${re}`));
-      setTimeout(tick, 50);
-    };
-    tick();
-  });
-}
