@@ -802,6 +802,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
           broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
         }
       }
+      // A stop or delete during the escalation wait releases the wait (surfaced
+      // as a timeout above) but leaves the loop mid-iteration. Recheck before
+      // the turn so a stopped or deleted session never runs another agent, and
+      // its insertMessage never lands on a row deleteSession already removed.
+      if (!session.active) break;
       await runAgentTurn(session, agentId, phaseIdx);
     }
 
@@ -909,7 +914,7 @@ const deps = { db, stmts, AGENTS, PHASES, activeSessions, callAnthropic, createS
 
 setupRoutes(app, deps);
 setupWebSocket(wss, deps);
-setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles });
+setupMCPServer(app, { stmts, callLLM: callAnthropic, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits });
 
 // ─── Background Job Handlers (F11) ──────────────────────────
 // Replace the three fire-and-forget post-deliberation calls. The worker
