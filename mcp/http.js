@@ -6,6 +6,16 @@ const { registerTools } = require('./tools.js');
 const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('hex');
 process.env.MCP_API_KEY = MCP_API_KEY;
 
+// Constant-time key comparison. crypto.timingSafeEqual requires equal-length
+// buffers, so guard on length first (a length mismatch is trivially unequal and
+// leaks only the length, not the contents).
+function keysMatch(provided, expected) {
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 function setupMCPServer(app, deps) {
   const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles } = deps;
 
@@ -207,7 +217,7 @@ function setupMCPServer(app, deps) {
   // ─── Auth middleware ──────────────────────────────────────────
   function checkAuth(req, res) {
     const key = req.query.key || (req.headers.authorization || '').replace('Bearer ', '');
-    if (key !== MCP_API_KEY) {
+    if (!keysMatch(key, MCP_API_KEY)) {
       res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null });
       return false;
     }
@@ -269,7 +279,8 @@ function setupMCPServer(app, deps) {
     }
   });
 
-  console.log(`MCP server mounted at /mcp?key=${MCP_API_KEY}`);
+  // Never print the key: this line lands in docker logs on a public-repo app.
+  console.log('MCP server mounted at /mcp (auth required: MCP_API_KEY via ?key= or Authorization: Bearer)');
   return { MCP_API_KEY };
 }
 
