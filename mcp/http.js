@@ -16,6 +16,17 @@ function keysMatch(provided, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// Format post-migration-013 session_files rows for a prompt. After migration
+// 013 these rows hold file_id references plus denormalized metadata, not inline
+// content (the content lives in files-service); surface honest metadata rather
+// than the old "FILE: undefined\n[binary]" placeholder produced by reading the
+// pre-013 columns f.name / f.content.
+function formatAttachedFiles(files) {
+  return (files || [])
+    .map(f => `FILE: ${f.file_name} (${f.file_tokens} tokens, ${f.file_mime})`)
+    .join('\n\n');
+}
+
 function setupMCPServer(app, deps) {
   const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits } = deps;
 
@@ -178,7 +189,7 @@ function setupMCPServer(app, deps) {
       const systemPrompt = architect.systemPrompt + '\n\nYou are in Q&A mode. Answer the human\'s follow-up question based on the full deliberation context.';
       let userContent = `ORIGINAL PROBLEM:\n${s.problem}\n\n`;
       if (files.length) {
-        userContent += files.map(f => `FILE: ${f.name}\n${f.content || '[binary]'}`).join('\n\n') + '\n\n';
+        userContent += formatAttachedFiles(files) + '\n\n';
       }
       userContent += `FULL DELIBERATION:\n${context}\n\nHUMAN QUESTION:\n${question}\n\nProvide a comprehensive answer.`;
       return await callLLM(systemPrompt, [{ role: 'user', content: userContent }], 'process-architect');
@@ -294,4 +305,4 @@ function setupMCPServer(app, deps) {
   return { MCP_API_KEY };
 }
 
-module.exports = { setupMCPServer };
+module.exports = { setupMCPServer, formatAttachedFiles };
