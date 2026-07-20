@@ -17,29 +17,29 @@ test('MCP key is redacted from the boot log and compared in constant time (HLB-8
 
     const mcpUrl = `${server.baseUrl}/mcp`;
     const headers = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
-    const body = JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: {} });
+    const initBody = JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: {} });
 
-    // Wrong key of the same order of length: rejected with 401.
-    const wrong = await fetch(`${mcpUrl}?key=mcp-test-key-WRONGWRONGWRONG000`, { method: 'POST', headers, body });
-    assert.equal(wrong.status, 401, 'a wrong key returns 401');
+    // A wrong key of the SAME length as the real key exercises the constant-time
+    // compare (timingSafeEqual), not merely the length guard: still 401.
+    const wrongSameLen = 'mcp-test-key-ZZZZZZ0123456789';
+    assert.equal(wrongSameLen.length, MCP_KEY.length, 'wrong key must match the real key length');
+    const wrong = await fetch(`${mcpUrl}?key=${wrongSameLen}`, { method: 'POST', headers, body: initBody });
+    assert.equal(wrong.status, 401, 'an equal-length wrong key returns 401');
 
-    // Short key (length mismatch): still 401, and the length guard must not throw
-    // (the server stays alive and answers /health afterward).
-    const short = await fetch(`${mcpUrl}?key=x`, { method: 'POST', headers, body });
+    // A shorter key exercises the length guard, which must return false without
+    // throwing: still 401, and the server stays alive afterward.
+    const short = await fetch(`${mcpUrl}?key=x`, { method: 'POST', headers, body: initBody });
     assert.equal(short.status, 401, 'a length-mismatched key returns 401, not a 500 crash');
     const health = await fetch(`${server.baseUrl}/health`);
     assert.equal(health.status, 200, 'server stays alive after a length-mismatched key');
 
-    // Correct key: auth passes (not 401). The transport may 400/406 or open a
-    // stream; a timeout also means the stream opened, i.e. auth passed.
-    try {
-      const ok = await fetch(`${mcpUrl}?key=${MCP_KEY}`, {
-        method: 'POST', headers, body, signal: AbortSignal.timeout(2000),
-      });
-      assert.notEqual(ok.status, 401, 'the correct key must not be rejected as unauthorized');
-    } catch (e) {
-      assert.ok(e.name === 'TimeoutError' || e.name === 'AbortError', `unexpected error: ${e.message}`);
-    }
+    // The correct key passes auth: not rejected with 401. A non-initialize
+    // request with no session id makes the transport return a deterministic 4xx
+    // (bad request) rather than opening a long-lived stream, so no timeout is
+    // needed and a hang would fail the test rather than pass it.
+    const noSession = JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 2, params: {} });
+    const ok = await fetch(`${mcpUrl}?key=${MCP_KEY}`, { method: 'POST', headers, body: noSession });
+    assert.notEqual(ok.status, 401, 'the correct key must not be rejected as unauthorized');
   } finally {
     await server.dispose();
   }
