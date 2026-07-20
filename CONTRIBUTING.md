@@ -55,6 +55,20 @@ main              ← stable, tagged releases only
 - Branch off `main` (or `develop`) for features: `feat/<name>`
 - Squash-merge into `main` via PR — keep history clean
 
+### Branch discipline: `feat/markets-room`
+
+`feat/markets-room` is a long-lived, intentionally-unmerged fork (the markets
+roster instance). It was branched from an older `master` and carries stale
+`docker-compose.yml`, `Dockerfile`, and `lib/embeddings.js` (the pre-embed-gateway,
+pre-Infisical versions). A naive merge or fast-forward of that branch would
+silently revert `master`'s embed-gateway rewrite and Infisical secret hardening
+in production.
+
+- Base every new working branch on `origin/master`, never on `feat/markets-room`.
+- Never fast-forward-merge `feat/markets-room` into `master` or `dev`.
+- If the markets instance needs a change from `master`, cherry-pick onto the
+  markets branch; do not merge the markets branch back.
+
 ---
 
 ## Versioning
