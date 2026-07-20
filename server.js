@@ -802,6 +802,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
           broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
         }
       }
+      // A stop or delete during the escalation wait releases the wait (surfaced
+      // as a timeout above) but leaves the loop mid-iteration. Recheck before
+      // the turn so a stopped or deleted session never runs another agent, and
+      // its insertMessage never lands on a row deleteSession already removed.
+      if (!session.active) break;
       await runAgentTurn(session, agentId, phaseIdx);
     }
 
