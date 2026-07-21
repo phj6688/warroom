@@ -59,6 +59,7 @@ function registerTools(server, ops) {
           `Created: ${new Date(s.createdAt).toISOString()}`,
           `Tokens: ${s.totalTokens != null ? s.totalTokens.toLocaleString() : '—'}`,
           `Cost: ${fmtCost(s.totalCostUsd)}`,
+          `Outcome: ${s.outcome || (s.active ? 'running' : 'complete')} | Quality: ${s.qualityScore != null ? s.qualityScore.toFixed(3) : '(none)'}`,
         ];
         if (s.costBreakdown && typeof s.costBreakdown === 'object') {
           const parts = Object.entries(s.costBreakdown).map(([route, amt]) => `${route} ${fmtCost(amt)}`);

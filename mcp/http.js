@@ -90,6 +90,7 @@ function setupMCPServer(app, deps) {
           createdAt: s.created_at,
           totalTokens: s.total_tokens ?? null,
           totalCostUsd: s.total_cost_usd ?? null,
+          outcome: s.outcome ?? null,
         };
       });
     },
@@ -105,6 +106,8 @@ function setupMCPServer(app, deps) {
         active: !!s.active, createdAt: s.created_at,
         totalTokens: s.total_tokens ?? null,
         totalCostUsd: s.total_cost_usd ?? null,
+        outcome: s.outcome ?? null,
+        qualityScore: s.quality_score ?? null,
         costBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.cost_breakdown),
         tokenBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.token_breakdown),
         messages: messages.map(m => ({ agentEmoji: m.agent_emoji, agentName: m.agent_name, phase: m.phase, content: m.content })),
