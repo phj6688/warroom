@@ -201,11 +201,27 @@ function setupMCPServer(app, deps) {
       userContent += `FULL DELIBERATION:\n${context}\n\nHUMAN QUESTION:\n${question}\n\nProvide a comprehensive answer.`;
       return await callLLM(systemPrompt, [{ role: 'user', content: userContent }], 'process-architect');
     },
-    async exportSession(sessionId) {
+    async exportSession(sessionId, mode = 'full_transcript') {
       const s = stmts.getSession.get(sessionId);
       if (!s) throw new Error(`Session ${sessionId} not found`);
       const messages = stmts.getSessionMessages.all(sessionId);
       const escalations = stmts.getSessionEscalations.all(sessionId);
+      // Additive: an omitted / unknown mode falls through to the full transcript
+      // below, byte-for-byte unchanged. end_result surfaces just the verdict.
+      if (mode === 'end_result' || mode === 'end_result_with_qa') {
+        const synthesis = messages.filter(m => m.phase === 'Synthesis');
+        let out = `# War Room Research Session\n\n**ID:** ${s.id}\n\n## Final Synthesis\n\n`;
+        if (synthesis.length === 0) out += `_The synthesis phase has not completed yet._\n\n`;
+        else for (const m of synthesis) out += `#### ${m.agent_emoji} ${m.agent_name}\n\n${m.content}\n\n`;
+        if (mode === 'end_result_with_qa' && escalations.length) {
+          out += `## Escalations\n\n`;
+          for (const e of escalations) {
+            out += `**Q:** ${e.question}\n`;
+            out += e.status === 'answered' ? `**A:** ${e.answer}\n\n` : `*[Pending]*\n\n`;
+          }
+        }
+        return out;
+      }
       let md = `# War Room Research Session\n\n`;
       md += `**ID:** ${s.id}\n`;
       md += `**Created:** ${new Date(s.created_at).toISOString()}\n`;
