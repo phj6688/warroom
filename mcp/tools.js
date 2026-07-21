@@ -90,6 +90,20 @@ function registerTools(server, ops) {
     }
   );
 
+  // warroom_get_decision_record
+  server.tool(
+    'warroom_get_decision_record',
+    'Get the verbatim Decision Record (the Synthesis-phase verdict) for a session as JSON, without the full transcript and with no extra LLM call. Returns available:false for a failed or synthesis-less session.',
+    { sessionId: z.string().describe('Session ID') },
+    async ({ sessionId }) => {
+      try {
+        const rec = await ops.getDecisionRecord(sessionId);
+        if (!rec) return err(`Session ${sessionId} not found`);
+        return ok(JSON.stringify(rec, null, 2));
+      } catch (e) { return err(e.message); }
+    }
+  );
+
   // 3. warroom_create_session
   server.tool(
     'warroom_create_session',

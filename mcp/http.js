@@ -2,6 +2,7 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const crypto = require('crypto');
 const { registerTools } = require('./tools.js');
+const { buildDecisionRecord } = require('../lib/decision-record');
 
 const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('hex');
 process.env.MCP_API_KEY = MCP_API_KEY;
@@ -75,6 +76,9 @@ function setupMCPServer(app, deps) {
 
   // ─── Ops adapter: direct DB access ────────────────────────
   const ops = {
+    async getDecisionRecord(sessionId) {
+      return buildDecisionRecord(stmts, sessionId);
+    },
     async listSessions() {
       return stmts.getSessions.all().map(s => {
         const msgs = stmts.getSessionMessages.all(s.id);
