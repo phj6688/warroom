@@ -61,6 +61,7 @@ const stmts = {
   getSessions: db.prepare('SELECT * FROM sessions ORDER BY created_at DESC'),
   getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
   getSessionMessages: db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC'),
+  getSynthesisMessages: db.prepare("SELECT agent_name, agent_emoji, content, created_at FROM messages WHERE session_id = ? AND phase = 'Synthesis' ORDER BY created_at ASC"),
   getSessionEscalations: db.prepare('SELECT * FROM escalations WHERE session_id = ? ORDER BY created_at ASC'),
   getSessionHumanMessages: db.prepare('SELECT * FROM human_messages WHERE session_id = ? ORDER BY created_at ASC'),
   getSessionFiles: db.prepare('SELECT * FROM session_files WHERE session_id = ? ORDER BY attached_at ASC'),
