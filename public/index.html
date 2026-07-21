@@ -3551,7 +3551,7 @@ function addSearchIndicator(queries) {
   d.innerHTML = `
     <div class="message-badge" style="border-color:rgba(65,160,255,0.3)"><span class="emoji">🔍</span><span style="color:#41a0ff">Research Scout</span></div>
     <div class="thinking-dots"><span style="background:#41a0ff"></span><span style="background:#41a0ff"></span><span style="background:#41a0ff"></span></div>
-    <span class="thinking-label" style="color:rgba(65,160,255,0.7)">searching: ${queries.map(q => '"' + q.slice(0,40) + '"').join(', ')}</span>
+    <span class="thinking-label" style="color:rgba(65,160,255,0.7)">searching: ${queries.map(q => '"' + escHtml(q.slice(0,40)) + '"').join(', ')}</span>
   `;
   document.getElementById('feed').appendChild(d);
   scrollFeed();
