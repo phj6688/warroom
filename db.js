@@ -47,6 +47,7 @@ const stmts = {
   insertSession: db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 0, 1, ?, ?)'),
   updateSessionPhase: db.prepare('UPDATE sessions SET phase = ?, updated_at = ? WHERE id = ?'),
   updateSessionActive: db.prepare('UPDATE sessions SET active = ?, updated_at = ? WHERE id = ?'),
+  updateSessionOutcome: db.prepare('UPDATE sessions SET outcome = ?, failed_at = ?, updated_at = ? WHERE id = ?'),
   markCrashRecovered: db.prepare('UPDATE sessions SET active = 0, crash_recovered_at = ?, updated_at = ? WHERE id = ?'),
   getActiveSessions: db.prepare('SELECT id FROM sessions WHERE active = 1'),
   insertFile: db.prepare('INSERT OR IGNORE INTO session_files (session_id, file_id, file_sha256, file_name, file_tokens, file_mime, attached_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
