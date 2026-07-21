@@ -22,6 +22,7 @@ const { createQualityManager } = require('./lib/quality');
 const { createFingerprintClassifier } = require('./lib/fingerprint');
 const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
+const { deliberationOutcome } = require('./lib/outcome');
 const { createTokenLedger, persistSessionTokens, createTickThrottle } = require('./lib/token-usage');
 const { costFromSnapshot } = require('./lib/cost');
 const { estimateTokens } = require('./lib/embeddings');
@@ -825,7 +826,9 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   }
 
   session.active = false;
+  const outcome = deliberationOutcome(session.messages.length);
   stmts.updateSessionActive.run(0, Date.now(), session.id);
+  stmts.updateSessionOutcome.run(outcome, outcome === 'failed' ? Date.now() : null, Date.now(), session.id);
   activeSessions.delete(session.id);
 
   // F11 — Post-synthesis work goes through the durable job table so a
@@ -833,7 +836,10 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // not crash the request path.
   jobs.enqueue('memory.storeSessionMemory', { sessionId: session.id });
   jobs.enqueue('memory.extractArchivalFacts', { sessionId: session.id });
-  jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
+  // A failed run (no agent produced a message, e.g. a provider cooldown storm)
+  // is not scored: scoring it would pollute the quality metric with
+  // infrastructure failures (B7 / HLB-797).
+  if (outcome !== 'failed') jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
 
   // HLB-152 — persist the per-session token tally accumulated across all agent
   // turns and tool round-trips. Embedding/memory/quality tokens are added by
@@ -856,6 +862,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   const totalMsgs = session.messages.length;
   broadcast(session.id, {
     type: 'deliberation-complete', sessionId: session.id,
+    outcome,
     totalTokens: costSnap.totalTokens,
     totalCostUsd: costSnap.totalCostUsd,
     export: {
