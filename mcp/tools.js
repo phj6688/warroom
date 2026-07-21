@@ -263,11 +263,11 @@ function registerTools(server, ops) {
   // 11. warroom_export_session
   server.tool(
     'warroom_export_session',
-    'Export a session as formatted Markdown',
-    { sessionId: z.string().describe('Session ID') },
-    async ({ sessionId }) => {
+    'Export a session as formatted Markdown. mode: full_transcript (default), end_result (final synthesis only), or end_result_with_qa (synthesis plus escalation Q&A).',
+    { sessionId: z.string().describe('Session ID'), mode: z.enum(['full_transcript', 'end_result', 'end_result_with_qa']).optional().describe('Export scope; default full_transcript') },
+    async ({ sessionId, mode }) => {
       try {
-        const md = await ops.exportSession(sessionId);
+        const md = await ops.exportSession(sessionId, mode);
         return ok(md);
       } catch (e) { return err(e.message); }
     }
