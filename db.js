@@ -92,6 +92,7 @@ const stmts = {
   // lib/routes.js so prepared-statement caching works and the "all queries
   // in one place" pattern db.js was aiming for actually holds.
   countAllSessions: db.prepare('SELECT COUNT(*) as count FROM sessions'),
+  countFailedSessions: db.prepare("SELECT COUNT(*) as count FROM sessions WHERE outcome = 'failed'"),
   synthCountForSession: db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ? AND phase = 'Synthesis'"),
   escalationCountForSession: db.prepare('SELECT COUNT(*) as c FROM escalations WHERE session_id = ?'),
   messageCountForSession: db.prepare('SELECT COUNT(*) as c FROM messages WHERE session_id = ?'),
