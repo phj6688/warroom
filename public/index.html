@@ -2051,6 +2051,9 @@ html, body {
   onload="window.hasMarkdownIt = typeof window.markdownit === 'function'"
   onerror="this.onerror=null;var s=document.createElement('script');s.src='vendor/markdown-it.min.js';s.onload=function(){window.hasMarkdownIt=typeof window.markdownit==='function'};document.head.appendChild(s)"
 ></script>
+<!-- Leaf helpers (escHtml, byte-size + markdown text utils) extracted to util.js (HLB-895).
+     Classic script: defines the window globals before the main inline script runs. -->
+<script src="/util.js"></script>
 </head>
 <body>
 <div class="app">
@@ -3106,11 +3109,7 @@ function showSessionId(id) {
   el.style.display = '';
 }
 
-function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-}
+// escHtml moved to public/util.js (HLB-895)
 
 // ─── Renderer libs (HLB-96) ──────────────────────────────
 // markdown-it is loaded eagerly via the <head> <script> (CDN + vendored onerror
@@ -3295,11 +3294,7 @@ function fileIcon(typeOrName) {
   return '📎';
 }
 
-function formatFileSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
+// formatFileSize moved to public/util.js (HLB-895)
 
 function addPhaseSeparator(name) {
   const d = document.createElement('div');
@@ -3815,26 +3810,11 @@ function addHumanMessage(data) {
 
 // Parse the Synthesis markdown into {label, body} sections by its "## HEADER"
 // lines (the synthesis prompt emits these verbatim per preset).
-function parseSynthesisSections(text) {
-  if (!text) return [];
-  const re = /^##\s+(.+?)\s*$/gm;
-  const idx = []; let m;
-  while ((m = re.exec(text)) !== null) idx.push({ label: m[1].trim(), contentStart: re.lastIndex, start: m.index });
-  if (idx.length === 0) return [{ label: 'SUMMARY', body: text.trim() }];
-  return idx.map((it, i) => ({
-    label: it.label,
-    body: text.slice(it.contentStart, i + 1 < idx.length ? idx[i + 1].start : text.length).trim(),
-  }));
-}
+// parseSynthesisSections moved to public/util.js (HLB-895)
 
 // Light markdown→text so the card stays clean and is injected as textContent
 // (no HTML from model output in the sticky card).
-function mdToText(s) {
-  return (s || '')
-    .replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1')
-    .replace(/`(.+?)`/g, '$1').replace(/^#{1,6}\s+/gm, '')
-    .replace(/^\s*[-*]\s+/gm, '• ').trim();
-}
+// mdToText moved to public/util.js (HLB-895)
 
 // Build the sticky "THE ANSWER" / Decision Record card from the captured
 // Synthesis message. Single-mount, zero new LLM calls, chrome only.
@@ -4081,11 +4061,7 @@ function fileExt(name) {
   const i = (name || '').lastIndexOf('.');
   return i >= 0 ? name.slice(i).toLowerCase() : '';
 }
-function fmtSize(bytes) {
-  if (bytes < 1024) return bytes + 'B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
-}
+// fmtSize moved to public/util.js (HLB-895)
 
 async function loadFilesServiceConfig() {
   if (fsConfig) return fsConfig;
