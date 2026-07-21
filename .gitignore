@@ -8,3 +8,6 @@ forge/
 *.backup
 test-results/
 playwright-report/
+archive/
+*_warroom_next_*.md
+codestory.html
