@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-07-21
+
 ### Added
 - Files-service integration: War Room no longer processes files locally. Upload, extraction, tokenization, and RAG are handled by a standalone files-service container at `:9100`. Frontend uploads directly to files-service via CORS and passes `file_ids` when creating sessions.
 - `lib/clients/files-service.js` — HTTP client for files-service health check, file metadata, and content retrieval.

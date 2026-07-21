@@ -2,6 +2,7 @@
 
 ## Purpose
 
+War Room runs a structured multi-agent deliberation (8 specialist agents across 5 phases) to pressure-test a high-stakes decision and emit one decision record.
 
 ## Deploy
 #1 [internal] load local bake definitions

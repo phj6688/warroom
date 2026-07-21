@@ -1,6 +1,6 @@
 {
   "name": "ai-research-war-room",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "AI Research War Room - 8 cognitive agents collaborate to solve problems",
   "main": "server.js",
   "scripts": {
