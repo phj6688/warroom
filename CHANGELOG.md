@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Apply-to-all master row in the Agent Models & Providers panel: pick a route + model once and fill every agent row in one click, then tweak individuals before Save. Clearing both fields resets every row to the deployment default. Covered by a static wiring test plus a Playwright E2E (`tests/e2e/apply-all.e2e.mjs`) asserting the fill, the per-agent tweak surviving Save, the API roundtrip, and the clear-all path. (#44)
+
 ### Fixed
 - Every session in Session History rendered as "— Unclassified" / ❓ regardless of whether `fingerprint-classifier` nominally succeeded: `parseClassification()` stored whatever free text followed `ARCHETYPE:` verbatim, with no check against the 10-id closed list `ARCHETYPE_CONFIG` (public/index.html) actually knows. `lib/fingerprint.js` now discards (`archetype: null`, warn-logged) any parsed id outside `VALID_ARCHETYPES` instead of persisting it. (#40)
 - `npm audit --audit-level=high` failing on `fast-uri`'s host-confusion advisory (GHSA-v2hh-gcrm-f6hx), blocking the CI `test` gate for every PR regardless of diff content. `npm audit fix`, lockfile-only. (#41)
