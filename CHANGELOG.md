@@ -10,6 +10,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Per-row connection test in the Agent Models & Providers panel: every row (master + per-agent) gets a Test button that fires a 1-token completion at that row's route+model pair via `POST /api/settings/test-connection`, proving the typed model id resolves and the provider answers before Save. Verdict in the button (green with latency, red with the provider's error in tooltip and toast); provider failures return as `200 {ok:false, error}` with the error capped at 300 chars. Also fixes the pre-existing specificity bug where `.export-modal`'s 480px max-width silently overrode `.settings-modal`'s 640px, crushing the settings grid. (#46)
 - Apply-to-all master row in the Agent Models & Providers panel: pick a route + model once and fill every agent row in one click, then tweak individuals before Save. Clearing both fields resets every row to the deployment default. Covered by a static wiring test plus a Playwright E2E (`tests/e2e/apply-all.e2e.mjs`) asserting the fill, the per-agent tweak surviving Save, the API roundtrip, and the clear-all path. (#44)
 
 ### Fixed
