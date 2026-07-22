@@ -9,6 +9,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Every session in Session History rendered as "— Unclassified" / ❓ regardless of whether `fingerprint-classifier` nominally succeeded: `parseClassification()` stored whatever free text followed `ARCHETYPE:` verbatim, with no check against the 10-id closed list `ARCHETYPE_CONFIG` (public/index.html) actually knows. `lib/fingerprint.js` now discards (`archetype: null`, warn-logged) any parsed id outside `VALID_ARCHETYPES` instead of persisting it. (#40)
+- `npm audit --audit-level=high` failing on `fast-uri`'s host-confusion advisory (GHSA-v2hh-gcrm-f6hx), blocking the CI `test` gate for every PR regardless of diff content. `npm audit fix`, lockfile-only. (#41)
+
+### Changed
+- Prod pinned to `QUALITY_MODEL=anthropic/claude-haiku-4-5` so all 4 `HAIKU_AGENTS` (including `fingerprint-classifier`) actually run on a haiku-class model instead of silently falling through to the opus-4-8 default. `AGENT_MODEL_<agentId>` per-agent overrides do not currently work in this deployment for any hyphenated agent id (i.e. all of them) — `infisical run` (docker/entrypoint.sh) drops hyphenated env var names from the child process env before `node server.js` ever sees them, confirmed via `/proc/<pid>/environ` on the live process. `.env.example` documents the limitation. (#42)
+
 ## [3.2.0] - 2026-07-21
 
 ### Added
