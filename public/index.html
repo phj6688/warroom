@@ -2937,6 +2937,7 @@ function renderSettings() {
       <select class="sa-route" id="settings-all-route">${routeOpts('')}</select>
       <input class="sa-model" id="settings-all-model" type="text" placeholder="model for every agent" spellcheck="false">
       <button class="settings-all-apply" id="settings-all-apply" type="button">Apply to all</button>
+      <button class="sa-test" type="button" title="Fire a 1-token call at this route + model">Test</button>
     </div>`;
   host.innerHTML = allRow + (agents || []).map(a => {
     const cur = routing[a.id] || {};
@@ -2945,10 +2946,54 @@ function renderSettings() {
       <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
       <select class="sa-route">${routeOpts(cur.route)}</select>
       <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false">
+      <button class="sa-test" type="button" title="Fire a 1-token call at this route + model">Test</button>
     </div>`;
   }).join('');
   document.getElementById('settings-all-apply').addEventListener('click', applyAllRouting);
 }
+// Prove a row's route+model pair actually answers before saving it: 1-token
+// call through POST /api/settings/test-connection. The verdict lands in the
+// button itself (textContent only) and stays until the next click or render.
+// An empty route + empty model tests the deployment default end to end.
+async function testRowConnection(btn) {
+  const row = btn.closest('.settings-all-row, .settings-agent-row');
+  if (!row) return;
+  const route = row.querySelector('.sa-route').value;
+  const model = row.querySelector('.sa-model').value.trim();
+  if (route && !model) { showToast('⚠️ A non-default route needs a model to test'); return; }
+  btn.disabled = true;
+  btn.classList.remove('ok', 'fail');
+  btn.textContent = '…';
+  try {
+    const res = await fetch(apiUrl('/api/settings/test-connection'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route, model }),
+    });
+    const r = await res.json();
+    if (res.ok && r.ok) {
+      btn.classList.add('ok');
+      btn.textContent = '✓ ' + r.latencyMs + 'ms';
+      btn.title = r.route + ' · ' + r.model;
+    } else {
+      btn.classList.add('fail');
+      btn.textContent = '✗ failed';
+      const detail = r.error || 'connection failed';
+      btn.title = detail;
+      showToast('✗ ' + (r.model ? r.model + ': ' : '') + detail.slice(0, 160));
+    }
+  } catch (e) {
+    btn.classList.add('fail');
+    btn.textContent = '✗ failed';
+    btn.title = e.message;
+    showToast('✗ test failed: ' + e.message);
+  }
+  btn.disabled = false;
+}
+document.getElementById('settings-agents').addEventListener('click', (e) => {
+  const btn = e.target.closest('.sa-test');
+  if (btn) testRowConnection(btn);
+});
 // Copy the master route+model into every agent row. Nothing persists until
 // Save, and individual rows stay editable after the fill. Empty route with an
 // empty model resets every row to the deployment default.
