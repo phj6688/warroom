@@ -262,7 +262,7 @@
       <div class="export-modal-title">⚙ Agent Models &amp; Providers</div>
       <button class="export-modal-close" id="settings-close">✕</button>
     </div>
-    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment.</div>
+    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save.</div>
     <div id="settings-agents"></div>
     <div class="settings-cost">
       <div class="settings-cost-title">Cost model</div>
@@ -2924,21 +2924,43 @@ function populateCostInputs() {
 function renderSettings() {
   const host = document.getElementById('settings-agents');
   const { agents, routes, available, routing, effective } = _settingsData;
-  host.innerHTML = (agents || []).map(a => {
+  const routeOpts = (sel) => ['', ...routes].map(r => {
+    const label = SETTINGS_ROUTE_LABELS[r] || r;
+    const noKey = r && available && available[r] === false;
+    const selected = (sel || '') === r ? ' selected' : '';
+    return `<option value="${r}"${selected}${noKey ? ' disabled' : ''}>${label}${noKey ? ' (no key)' : ''}</option>`;
+  }).join('');
+  // Master row: fills every agent row below in one click. Not a
+  // .settings-agent-row on purpose, so saveSettings() never collects it.
+  const allRow = `<div class="settings-all-row">
+      <span class="sa-name">⚡ Set every agent</span>
+      <select class="sa-route" id="settings-all-route">${routeOpts('')}</select>
+      <input class="sa-model" id="settings-all-model" type="text" placeholder="model for every agent" spellcheck="false">
+      <button class="settings-all-apply" id="settings-all-apply" type="button">Apply to all</button>
+    </div>`;
+  host.innerHTML = allRow + (agents || []).map(a => {
     const cur = routing[a.id] || {};
     const eff = effective[a.id] || {};
-    const opts = ['', ...routes].map(r => {
-      const label = SETTINGS_ROUTE_LABELS[r] || r;
-      const noKey = r && available && available[r] === false;
-      const selected = (cur.route || '') === r ? ' selected' : '';
-      return `<option value="${r}"${selected}${noKey ? ' disabled' : ''}>${label}${noKey ? ' (no key)' : ''}</option>`;
-    }).join('');
     return `<div class="settings-agent-row" data-aid="${a.id}">
       <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
-      <select class="sa-route">${opts}</select>
+      <select class="sa-route">${routeOpts(cur.route)}</select>
       <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false">
     </div>`;
   }).join('');
+  document.getElementById('settings-all-apply').addEventListener('click', applyAllRouting);
+}
+// Copy the master route+model into every agent row. Nothing persists until
+// Save, and individual rows stay editable after the fill. Empty route with an
+// empty model resets every row to the deployment default.
+function applyAllRouting() {
+  const route = document.getElementById('settings-all-route').value;
+  const model = document.getElementById('settings-all-model').value.trim();
+  if (route && !model) { showToast('⚠️ A non-default route needs a model'); return; }
+  document.querySelectorAll('#settings-agents .settings-agent-row').forEach(row => {
+    row.querySelector('.sa-route').value = route;
+    row.querySelector('.sa-model').value = model;
+  });
+  showToast(route || model ? '✓ Applied to every agent. Review, then Save.' : '✓ Cleared every override. Save to persist.');
 }
 async function saveSettings() {
   const routing = {};
