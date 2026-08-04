@@ -7,42 +7,68 @@
 // agents. Measured on claude-opus-5 via CLIProxy: 1024 and 1500 return empty,
 // 4096 and above return text.
 //
-// Run in an isolated child process so the env llm.js reads at module load is
-// fully controlled.
+// These assert the EFFECTIVE runtime budget, not the source text: a test that
+// greps the implementation can pass while the feature is broken.
+//
+// Each case runs in an isolated child process because llm.js reads the env once
+// at module load. `runNodeScript` merges process.env, so any case that needs the
+// variable absent must delete it inside the child.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runNodeScript } from './_helpers.mjs';
 
-// The default must clear the reasoning phase with real headroom.
-test('agent turns default to a budget a reasoning model can clear', async () => {
+const readBudget = `
+  delete process.env.AGENT_MAX_TOKENS;
+  if (RAW !== null) process.env.AGENT_MAX_TOKENS = RAW;
+  const { AGENT_MAX_TOKENS } = require('./lib/llm');
+  console.log('BUDGET=' + AGENT_MAX_TOKENS);
+`;
+
+async function effectiveBudget(raw) {
+  const res = await runNodeScript(
+    `const RAW = ${raw === null ? 'null' : JSON.stringify(raw)};\n${readBudget}`,
+    {},
+  );
+  assert.equal(res.code, 0, res.stderr);
+  const m = res.stdout.match(/BUDGET=(\d+)/);
+  assert.ok(m, `no budget printed, got: ${res.stdout} ${res.stderr}`);
+  return Number(m[1]);
+}
+
+test('unset AGENT_MAX_TOKENS gives a budget clear of the reasoning dead zone', async () => {
+  const budget = await effectiveBudget(null);
+  assert.equal(budget, 8000);
+  assert.ok(budget >= 4096, `default ${budget} is inside the dead zone`);
+});
+
+test('a valid AGENT_MAX_TOKENS is honoured', async () => {
+  assert.equal(await effectiveBudget('4096'), 4096);
+  assert.equal(await effectiveBudget('16000'), 16000);
+});
+
+// The whole point of the fix is that 1500 must never come back by accident.
+// parseInt would turn each of these into a dead-zone budget.
+test('malformed AGENT_MAX_TOKENS falls back instead of silently restoring the dead zone', async () => {
+  for (const bad of ['1500oops', 'abc', '0', '-1', '', '  ', '12.5', '0x1f4']) {
+    const budget = await effectiveBudget(bad);
+    assert.equal(budget, 8000, `AGENT_MAX_TOKENS=${JSON.stringify(bad)} should fall back to 8000`);
+    assert.notEqual(budget, 1500, `AGENT_MAX_TOKENS=${JSON.stringify(bad)} restored the dead zone`);
+  }
+});
+
+// Both agent call paths must actually use the budget, not just define it.
+test('both agent call paths default to the effective budget', async () => {
   const res = await runNodeScript(`
     const assert = require('assert');
-    const { callAnthropic, callAnthropicWithTools } = require('./lib/llm');
-    // Read the default off the function signature: no network, no mocks.
-    const sig = callAnthropic.toString();
-    const sigTools = callAnthropicWithTools.toString();
-    assert.ok(!/maxTokens = 1500/.test(sig), 'callAnthropic still hardcodes the 1500 dead-zone default');
-    assert.ok(!/maxTokens = 1500/.test(sigTools), 'callAnthropicWithTools still hardcodes 1500');
-    assert.ok(/maxTokens = AGENT_MAX_TOKENS/.test(sig), 'callAnthropic should default to AGENT_MAX_TOKENS');
-    assert.ok(/maxTokens = AGENT_MAX_TOKENS/.test(sigTools), 'callAnthropicWithTools should default to AGENT_MAX_TOKENS');
+    delete process.env.AGENT_MAX_TOKENS;
+    const { callAnthropic, callAnthropicWithTools, AGENT_MAX_TOKENS } = require('./lib/llm');
+    for (const [name, fn] of [['callAnthropic', callAnthropic], ['callAnthropicWithTools', callAnthropicWithTools]]) {
+      const src = fn.toString();
+      assert.ok(/maxTokens = AGENT_MAX_TOKENS/.test(src), name + ' does not default to AGENT_MAX_TOKENS');
+    }
+    assert.ok(AGENT_MAX_TOKENS >= 4096, 'exported budget is inside the dead zone');
     console.log('OK');
   `, {});
   assert.equal(res.code, 0, res.stderr);
   assert.match(res.stdout, /OK/);
-});
-
-// AGENT_MAX_TOKENS is the operator escape hatch; it must actually be read.
-test('AGENT_MAX_TOKENS overrides the default budget', async () => {
-  const res = await runNodeScript(`
-    const assert = require('assert');
-    const src = require('fs').readFileSync('./lib/llm.js', 'utf8');
-    assert.ok(/process\\.env\\.AGENT_MAX_TOKENS/.test(src), 'AGENT_MAX_TOKENS must be read from env');
-    const m = src.match(/AGENT_MAX_TOKENS \\|\\| '(\\d+)'/);
-    assert.ok(m, 'AGENT_MAX_TOKENS needs a numeric string default');
-    const fallback = parseInt(m[1], 10);
-    assert.ok(fallback >= 4096, 'default budget ' + fallback + ' is inside the reasoning dead zone (<4096)');
-    console.log('OK fallback=' + fallback);
-  `, { AGENT_MAX_TOKENS: '4096' });
-  assert.equal(res.code, 0, res.stderr);
-  assert.match(res.stdout, /OK fallback=\d+/);
 });
