@@ -4,7 +4,7 @@
 // ARCHETYPE_CONFIG in public/index.html and renders as permanently unclassified.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFingerprintClassifier, buildClassifierUserTurn, VALID_ARCHETYPES } from '../lib/fingerprint.js';
+import { createFingerprintClassifier, buildClassifierUserTurn, ARCHETYPE_IDS } from '../lib/fingerprint.js';
 
 const PROBLEM = 'Should we migrate the ingest pipeline from polling to a message queue?';
 
@@ -60,7 +60,7 @@ test('classify() is case-sensitive and whitespace-tolerant against the closed li
 // enforces has to be reachable from that turn alone.
 test('the user turn alone carries every id the guard accepts', () => {
   const turn = buildClassifierUserTurn(PROBLEM);
-  for (const id of VALID_ARCHETYPES) {
+  for (const id of ARCHETYPE_IDS) {
     assert.ok(turn.includes(id), `closed list is missing ${id} on the user turn`);
   }
 });
@@ -74,7 +74,7 @@ test('the user turn alone names all four output labels', () => {
 
 test('the user turn says ARCHETYPE is a category, not an answer to the problem', () => {
   // The observed failure was a model answering the brief: "ARCHETYPE: NO-GO".
-  assert.match(buildClassifierUserTurn(PROBLEM), /NOT your answer/);
+  assert.match(buildClassifierUserTurn(PROBLEM), /not (your|the) (answer|verdict)/i);
 });
 
 test('classify() sends the closed list on the user turn, not only the system prompt', async () => {
@@ -83,7 +83,7 @@ test('classify() sends the closed list on the user turn, not only the system pro
   assert.equal(c.calls.length, 1);
   const userTurn = c.calls[0].messages[0].content;
   assert.equal(c.calls[0].messages[0].role, 'user');
-  for (const id of VALID_ARCHETYPES) assert.ok(userTurn.includes(id), `${id} missing from the wire`);
+  for (const id of ARCHETYPE_IDS) assert.ok(userTurn.includes(id), `${id} missing from the wire`);
   assert.ok(userTurn.includes(PROBLEM), 'problem statement missing from the wire');
 });
 
@@ -97,6 +97,7 @@ test('classify() leaves enough token budget for all four lines', async () => {
 test('the problem statement is still truncated before it goes on the wire', () => {
   const huge = 'x'.repeat(9000);
   const turn = buildClassifierUserTurn(huge);
+  assert.ok(turn.includes('x'.repeat(5000)), 'problem statement was cut short of the 5000-char budget');
   assert.ok(!turn.includes('x'.repeat(5001)), 'problem statement was not truncated to 5000 chars');
 });
 
@@ -107,4 +108,31 @@ test('the user turn alone carries the specialist vocabulary', () => {
   for (const domain of ['legal', 'security', 'engineering-infra', 'ux-design', 'research-methods']) {
     assert.ok(turn.includes(domain), `specialist domain ${domain} missing from the user turn`);
   }
+});
+
+// The behavioural version of the test above: this fake stands in for a gateway
+// that discards the system prompt, so it never looks at `system` at all and can
+// only answer by reading the closed list out of the user turn. It fails on any
+// revision where the list lives solely in the system prompt — which is exactly
+// the state that classified 0 of 52 sessions in production.
+test('a model that never sees the system prompt can still answer from the user turn', async () => {
+  const gatewayThatDropsSystemPrompts = async (_system, messages) => {
+    const turn = messages[0].content;
+    const offered = [...turn.matchAll(/^- ([a-z-]+)$/gm)].map((m) => m[1]);
+    if (offered.length === 0) return 'I am not sure what an ARCHETYPE is.\nARCHETYPE: NO-GO\nCONFIDENCE: 0.95';
+    const problemIsInfra = /queue|pipeline|infrastructure/i.test(turn);
+    const pick = problemIsInfra ? offered.find((o) => o === 'technical-architecture') : offered[0];
+    return `ARCHETYPE: ${pick}\nCONFIDENCE: 0.9\nSPECIALISTS: none\nREASONING: derived from the user turn alone`;
+  };
+  const { classify } = createFingerprintClassifier({
+    callAnthropic: gatewayThatDropsSystemPrompts, db: null, stmts: null, onTokenUsage: null,
+  });
+  const result = await classify(PROBLEM);
+  assert.equal(result.archetype, 'technical-architecture');
+  assert.equal(result.confidence, 0.9);
+});
+
+test('the exported archetype list cannot be widened by an importer', () => {
+  assert.throws(() => { ARCHETYPE_IDS.push('anything-goes'); }, TypeError);
+  assert.equal(ARCHETYPE_IDS.length, 10);
 });
