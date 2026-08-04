@@ -99,3 +99,12 @@ test('the problem statement is still truncated before it goes on the wire', () =
   const turn = buildClassifierUserTurn(huge);
   assert.ok(!turn.includes('x'.repeat(5001)), 'problem statement was not truncated to 5000 chars');
 });
+
+test('the user turn alone carries the specialist vocabulary', () => {
+  // spawnSpecialists() skips domains it cannot find in agent_templates, so a
+  // model guessing names yields no specialists rather than wrong ones.
+  const turn = buildClassifierUserTurn(PROBLEM);
+  for (const domain of ['legal', 'security', 'engineering-infra', 'ux-design', 'research-methods']) {
+    assert.ok(turn.includes(domain), `specialist domain ${domain} missing from the user turn`);
+  }
+});
