@@ -4,13 +4,23 @@
 // ARCHETYPE_CONFIG in public/index.html and renders as permanently unclassified.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createFingerprintClassifier } from '../lib/fingerprint.js';
+import { createFingerprintClassifier, buildClassifierUserTurn, VALID_ARCHETYPES } from '../lib/fingerprint.js';
 
 const PROBLEM = 'Should we migrate the ingest pipeline from polling to a message queue?';
 
 function classifierWithResponse(responseText) {
   const callAnthropic = async () => responseText;
   return createFingerprintClassifier({ callAnthropic, db: null, stmts: null, onTokenUsage: null });
+}
+
+// Captures what classify() actually puts on the wire.
+function classifierCapturing(responseText = 'ARCHETYPE: technical-architecture\nCONFIDENCE: 0.9\nSPECIALISTS: none\nREASONING: x') {
+  const calls = [];
+  const callAnthropic = async (system, messages, agentId, maxTokens) => {
+    calls.push({ system, messages, agentId, maxTokens });
+    return responseText;
+  };
+  return { calls, ...createFingerprintClassifier({ callAnthropic, db: null, stmts: null, onTokenUsage: null }) };
 }
 
 test('classify() keeps an archetype id that is on the closed list', async () => {
@@ -43,4 +53,49 @@ test('classify() is case-sensitive and whitespace-tolerant against the closed li
   );
   const result2 = await classify2(PROBLEM);
   assert.equal(result2.archetype, null, 'wrong-case id is not silently normalized');
+});
+
+// A gateway that fronts Claude Max replaces the caller's system prompt with its
+// own, so the model can only ever act on the user turn. Everything the parser
+// enforces has to be reachable from that turn alone.
+test('the user turn alone carries every id the guard accepts', () => {
+  const turn = buildClassifierUserTurn(PROBLEM);
+  for (const id of VALID_ARCHETYPES) {
+    assert.ok(turn.includes(id), `closed list is missing ${id} on the user turn`);
+  }
+});
+
+test('the user turn alone names all four output labels', () => {
+  const turn = buildClassifierUserTurn(PROBLEM);
+  for (const label of ['ARCHETYPE:', 'CONFIDENCE:', 'SPECIALISTS:', 'REASONING:']) {
+    assert.ok(turn.includes(label), `user turn is missing ${label}`);
+  }
+});
+
+test('the user turn says ARCHETYPE is a category, not an answer to the problem', () => {
+  // The observed failure was a model answering the brief: "ARCHETYPE: NO-GO".
+  assert.match(buildClassifierUserTurn(PROBLEM), /NOT your answer/);
+});
+
+test('classify() sends the closed list on the user turn, not only the system prompt', async () => {
+  const c = classifierCapturing();
+  await c.classify(PROBLEM);
+  assert.equal(c.calls.length, 1);
+  const userTurn = c.calls[0].messages[0].content;
+  assert.equal(c.calls[0].messages[0].role, 'user');
+  for (const id of VALID_ARCHETYPES) assert.ok(userTurn.includes(id), `${id} missing from the wire`);
+  assert.ok(userTurn.includes(PROBLEM), 'problem statement missing from the wire');
+});
+
+test('classify() leaves enough token budget for all four lines', async () => {
+  // Every live call came back at exactly 200 completion tokens, i.e. clipped.
+  const c = classifierCapturing();
+  await c.classify(PROBLEM);
+  assert.ok(c.calls[0].maxTokens >= 300, `token budget too tight: ${c.calls[0].maxTokens}`);
+});
+
+test('the problem statement is still truncated before it goes on the wire', () => {
+  const huge = 'x'.repeat(9000);
+  const turn = buildClassifierUserTurn(huge);
+  assert.ok(!turn.includes('x'.repeat(5001)), 'problem statement was not truncated to 5000 chars');
 });
