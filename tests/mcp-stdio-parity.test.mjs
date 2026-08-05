@@ -68,10 +68,25 @@ test('stdio transport: every tool has an op, and the model tools reach the same 
     assert.deepEqual(merged.routing['red-teamer'], { route: 'openrouter', model: 'x-ai/grok-2' }, 'first override survives over stdio too');
     assert.deepEqual(merged.routing['divergent-generator'], { model: 'gpt-4o-mini' });
 
-    // The same guard as the HTTP transport, enforced before the PUT.
+    // The same guards as the HTTP transport, from the same shared validator,
+    // enforced locally before the PUT rather than as a raw HTTP error.
     const bad = await call('warroom_set_model', { agentId: 'process-architect', route: 'openrouter' });
     assert.equal(bad.isError, true);
     assert.match(textOf(bad), /non-default route requires an explicit model/);
+
+    const badRoute = await call('warroom_set_model', { agentId: 'red-teamer', model: 'm', route: 'not-a-route' });
+    assert.equal(badRoute.isError, true);
+    assert.match(textOf(badRoute), /unknown route: not-a-route/, 'route list is validated locally, not as an HTTP 400');
+
+    // Continuation targets are checked, so a typo cannot report a link that is
+    // not real: POST /api/sessions accepts any string for this field.
+    const badPrior = await call('warroom_create_session', { problem: 'x', continuesFromSessionId: 'nosuchprior' });
+    assert.equal(badPrior.isError, true);
+    assert.match(textOf(badPrior), /prior session nosuchprior not found/);
+
+    const badPreset = await call('warroom_create_session', { problem: 'x', presetId: 'enginer' });
+    assert.equal(badPreset.isError, true);
+    assert.match(textOf(badPreset), /unknown preset: enginer/);
 
     // Newly wired read tools answer over REST.
     assert.match(textOf(await call('warroom_list_presets')), /\[engineer\]/);

@@ -158,9 +158,22 @@ test('warroom_resume_session continues at the first unfinished phase and refuses
     for (const [i, agent] of [['process-architect', 'Process Architect'], ['research-scout', 'Research Scout'], ['systems-synthesizer', 'Systems Synthesizer']].entries()) {
       insM.run(`wr${i}`, 'wiredres01', agent[0], agent[1], '', '', 'framing done', 'Problem Framing', now + i);
     }
-    // A session with every phase covered has nothing to resume.
+    // A session with every phase covered has nothing to resume. "Covered" means
+    // every agent listed for a phase produced a message in it, so a bare row
+    // with no messages resumes at phase 0 like any other unstarted session.
     db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 4, 0, ?, ?)')
       .run('wireddone1', 'already done', now, now);
+    const COVERED = [
+      ['Problem Framing', ['process-architect', 'research-scout', 'systems-synthesizer']],
+      ['Divergence', ['divergent-generator', 'systems-synthesizer', 'quantitative-expert', 'qualitative-expert']],
+      ['Convergence', ['convergent-evaluator', 'quantitative-expert', 'qualitative-expert', 'research-scout']],
+      ['Red Team', ['red-teamer', 'convergent-evaluator', 'process-architect']],
+      ['Synthesis', ['process-architect']],
+    ];
+    let n = 0;
+    for (const [phase, agents] of COVERED) {
+      for (const agent of agents) insM.run(`wd${n}`, 'wireddone1', agent, agent, '', '', 'done', phase, now + n++);
+    }
     db.close();
 
     await withClient(server, async (client) => {
@@ -172,6 +185,11 @@ test('warroom_resume_session continues at the first unfinished phase and refuses
       const again = await client.callTool({ name: 'warroom_resume_session', arguments: { sessionId: 'wiredres01' } });
       assert.equal(again.isError, true);
       assert.match(textOf(again), /already running/);
+
+      // Every phase already covered: there is nothing to resume.
+      const done = await client.callTool({ name: 'warroom_resume_session', arguments: { sessionId: 'wireddone1' } });
+      assert.equal(done.isError, true);
+      assert.match(textOf(done), /already complete/);
 
       const missing = await client.callTool({ name: 'warroom_resume_session', arguments: { sessionId: 'nosuchsession' } });
       assert.equal(missing.isError, true);
