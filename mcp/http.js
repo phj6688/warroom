@@ -3,6 +3,14 @@ const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/ser
 const crypto = require('crypto');
 const { registerTools } = require('./tools.js');
 const { buildDecisionRecord } = require('../lib/decision-record');
+const appConfig = require('../lib/app-config');
+const { mergeRouting } = require('../lib/agent-routing');
+const { availableRoutes, resolveRoute, testConnection } = require('../lib/llm');
+const { listPresets, getPreset } = require('../lib/presets');
+const { resumeSession } = require('../lib/resume');
+const { improverSystemPrompt, improverUserMessage } = require('../lib/improve');
+const { buildJsonExport } = require('../lib/export');
+const { embed } = require('../lib/embeddings');
 
 const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('hex');
 process.env.MCP_API_KEY = MCP_API_KEY;
@@ -29,7 +37,7 @@ function formatAttachedFiles(files) {
 }
 
 function setupMCPServer(app, deps) {
-  const { db, stmts, callLLM, createSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits } = deps;
+  const { db, stmts, callLLM, createSession, loadSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits, quality, memory, specialist, getAgentsForSession, broadcast, broadcastGlobal, log } = deps;
 
   function inferMime(name) {
     const ext = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
@@ -115,15 +123,39 @@ function setupMCPServer(app, deps) {
         humanMessages: humanMsgs.map(h => ({ content: h.content })),
       };
     },
-    async createSession(problem, files, fileIds) {
+    async createSession(problem, files, fileIds, presetId, continuesFromSessionId) {
       const ids = Array.isArray(fileIds) ? [...fileIds] : [];
       if (files && files.length) {
         const uploaded = await uploadInlineFiles(files);
         ids.push(...uploaded);
       }
-      const session = await createSession(problem, ids);
+      // createSession() treats an unknown preset id as "no preset". Rejecting it
+      // here instead means a typo comes back as an error rather than silently
+      // producing a generalist run the caller did not ask for.
+      if (presetId && !getPreset(presetId)) {
+        throw new Error(`unknown preset: ${presetId} (known: ${listPresets().map(p => p.id).join(', ')})`);
+      }
+      if (continuesFromSessionId && !stmts.getSession.get(continuesFromSessionId)) {
+        throw new Error(`prior session ${continuesFromSessionId} not found`);
+      }
+      const session = await createSession(problem, ids, presetId || null, continuesFromSessionId || null);
       runDeliberation(session).catch(e => console.error('MCP deliberation error:', e.message));
-      return { id: session.id, problem: session.problem, fileIds: ids };
+      return {
+        id: session.id, problem: session.problem, fileIds: ids,
+        presetId: session.presetId || null,
+        continuesFromSessionId: session.continuesFromSessionId || null,
+      };
+    },
+    async listPresets() {
+      return listPresets();
+    },
+    async resumeSession(sessionId) {
+      const result = resumeSession(
+        { stmts, AGENTS, PHASES, activeSessions, loadSession, runDeliberation, specialist, getAgentsForSession, broadcast, broadcastGlobal, log },
+        sessionId,
+      );
+      if (result.error) throw new Error(result.error);
+      return { sessionId: result.session.id, resumedFromPhase: result.resumePhase };
     },
     async attachFiles(sessionId, files, fileIds) {
       const ids = Array.isArray(fileIds) ? [...fileIds] : [];
@@ -201,9 +233,19 @@ function setupMCPServer(app, deps) {
       userContent += `FULL DELIBERATION:\n${context}\n\nHUMAN QUESTION:\n${question}\n\nProvide a comprehensive answer.`;
       return await callLLM(systemPrompt, [{ role: 'user', content: userContent }], 'process-architect');
     },
-    async exportSession(sessionId, mode = 'full_transcript') {
+    async exportSession(sessionId, mode = 'full_transcript', format = 'md') {
       const s = stmts.getSession.get(sessionId);
       if (!s) throw new Error(`Session ${sessionId} not found`);
+      // json reuses the HTTP export's shape so a programmatic caller gets the
+      // same object over either transport. The markdown path below is MCP's own
+      // and stays byte-identical to what callers already parse.
+      if (format === 'json') {
+        const session = loadSession(sessionId);
+        if (!session) throw new Error(`Session ${sessionId} not found`);
+        const createdAt = new Date(session.createdAt).toISOString();
+        const finishedAt = s.active ? null : new Date(s.updated_at || session.createdAt).toISOString();
+        return JSON.stringify(buildJsonExport(session, mode, createdAt, finishedAt, PHASES.length), null, 2);
+      }
       const messages = stmts.getSessionMessages.all(sessionId);
       const escalations = stmts.getSessionEscalations.all(sessionId);
       // Additive: an omitted / unknown mode falls through to the full transcript
@@ -248,7 +290,133 @@ function setupMCPServer(app, deps) {
       }));
     },
     async listAgents() {
-      return AGENTS.map(a => ({ emoji: a.emoji, name: a.name, role: a.role, hat: a.hat }));
+      return AGENTS.map(a => ({ id: a.id, emoji: a.emoji, name: a.name, role: a.role, hat: a.hat }));
+    },
+
+    // ─── Model / provider routing (server-wide, same store as the UI) ────
+    async getModelConfig() {
+      const configured = appConfig.getAgentRouting();
+      const agents = AGENTS.map(a => {
+        const eff = resolveRoute(a.id);
+        return {
+          id: a.id, name: a.name, emoji: a.emoji, role: a.role,
+          configured: configured[a.id] || null,
+          effective: { route: eff.route, model: eff.model },
+        };
+      });
+      return { routes: appConfig.ROUTES, available: availableRoutes(), agents };
+    },
+
+    // agentId 'all' writes the same pair to every agent, mirroring the Settings
+    // panel's Apply-to-all. clear drops the override so the agent falls back to
+    // the deployment's env default.
+    async setModel({ agentId, route, model, clear }) {
+      const validIds = new Set(AGENTS.map(a => a.id));
+      const targets = agentId === 'all' ? [...validIds] : [agentId];
+      for (const id of targets) {
+        if (!validIds.has(id)) throw new Error(`unknown agent: ${id} (use warroom_list_agents for valid ids, or "all")`);
+      }
+      const patch = {};
+      for (const id of targets) patch[id] = clear ? null : { route, model };
+      const { clean, error } = mergeRouting(appConfig.getAgentRouting(), patch, validIds, appConfig.ROUTES);
+      if (error) throw new Error(error);
+      appConfig.set('agent_routing', clean);
+      return { routing: clean, changed: targets };
+    },
+
+    async testModel({ route, model }) {
+      if (route && !model) throw new Error('a non-default route requires an explicit model');
+      return testConnection({ route: route || '', model: model || '' });
+    },
+
+    // ─── Quality, memory, intake ─────────────────────────────────────────
+    async rateSession(sessionId, rating) {
+      if (!['USEFUL', 'PARTIAL', 'MISLEADING'].includes(rating)) {
+        throw new Error('rating must be USEFUL, PARTIAL, or MISLEADING');
+      }
+      if (!stmts.getSession.get(sessionId)) throw new Error(`Session ${sessionId} not found`);
+      stmts.updateSessionSynthesisQuality.run(rating, Date.now(), sessionId);
+      return { sessionId, rating };
+    },
+
+    async getQuality(sessionId) {
+      const s = stmts.getSession.get(sessionId);
+      if (!s) throw new Error(`Session ${sessionId} not found`);
+      const score = quality ? quality.getQualityScore(sessionId) : null;
+      const messages = stmts.getSessionMessages.all(sessionId);
+      const synthesis = messages.filter(m => m.phase === 'Synthesis').map(m => m.content).join('\n\n');
+      return {
+        sessionId,
+        score: score ? score.score : null,
+        breakdown: score ? score.breakdown : null,
+        evaluatorModel: score ? score.evaluator_model : null,
+        humanRating: s.synthesis_quality || null,
+        shadowAnswer: s.shadow_answer || null,
+        hasSynthesis: !!synthesis,
+      };
+    },
+
+    async getAnalytics() {
+      if (!quality) throw new Error('quality analytics unavailable on this server');
+      return quality.getAnalytics();
+    },
+
+    async semanticSearch(query, limit) {
+      const k = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 20);
+      const vec = await embed(query);
+      // Embeddings are optional infrastructure (Ollama). Say so rather than
+      // returning an empty list a caller would read as "no similar sessions".
+      if (!vec) throw new Error('semantic search unavailable — the embedding backend is not reachable; use warroom_search_sessions for keyword search');
+      const rows = db.prepare('SELECT rowid, distance FROM session_embeddings WHERE embedding MATCH ? AND k = ?').all(vec, k * 2);
+      const seen = new Map();
+      for (const row of rows) {
+        const meta = stmts.getEmbeddingMetaByRowid.get(row.rowid);
+        if (meta && !seen.has(meta.session_id)) seen.set(meta.session_id, 1 / (1 + row.distance));
+      }
+      const results = [];
+      for (const [sessionId, similarity] of seen) {
+        const s = stmts.getSession.get(sessionId);
+        if (s) results.push({ id: s.id, problem: s.problem, active: !!s.active, createdAt: s.created_at, similarity });
+        if (results.length >= k) break;
+      }
+      results.sort((a, b) => b.similarity - a.similarity);
+      return results;
+    },
+
+    async recallSimilar(query, limit) {
+      if (!memory) throw new Error('memory unavailable on this server');
+      const k = Math.min(Math.max(parseInt(limit, 10) || 3, 1), 10);
+      return memory.retrieveSimilar(query, k);
+    },
+
+    async improveProblem(problem) {
+      const systemPrompt = improverSystemPrompt();
+      if (!systemPrompt) throw new Error('Improver not configured on this server');
+      return callLLM(systemPrompt, [{ role: 'user', content: improverUserMessage(problem) }], 'improver', 1000);
+    },
+
+    async listSpecialists() {
+      if (!specialist) return [];
+      return specialist.listTemplates();
+    },
+
+    async getSessionAgents(sessionId) {
+      const session = stmts.getSession.get(sessionId);
+      if (!session) throw new Error(`Session ${sessionId} not found`);
+      const agents = AGENTS.map(a => ({ id: a.id, name: a.name, emoji: a.emoji, role: a.role, hat: a.hat, isSpecialist: false }));
+      if (session.specialist_agents) {
+        try {
+          for (const id of JSON.parse(session.specialist_agents)) {
+            const t = stmts.getAgentTemplateById.get(id);
+            if (t) agents.push({ id: t.id, name: t.name, emoji: t.emoji, role: t.role, hat: t.hat, domain: t.domain, isSpecialist: true });
+          }
+        } catch (_) { /* invalid JSON, core agents only */ }
+      }
+      return agents;
+    },
+
+    async getPhases() {
+      return PHASES.map((p, i) => ({ index: i, id: p.id, name: p.name, agents: p.agents }));
     },
     async getStatus() {
       const sessions = stmts.getSessions.all();
