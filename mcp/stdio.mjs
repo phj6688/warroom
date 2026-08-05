@@ -16,24 +16,81 @@ import WebSocket from 'ws';
 
 const require = createRequire(import.meta.url);
 const { registerTools } = require('./tools.js');
+const { mergeRouting } = require('../lib/agent-routing.js');
 
 const BASE_URL = process.env.WAR_ROOM_URL || 'http://localhost:8090';
+// Deployments with WAR_ROOM_TOKEN set gate every /api/* route. Without this the
+// stdio transport only ever worked against an unauthenticated server.
+const WAR_ROOM_TOKEN = process.env.WAR_ROOM_TOKEN || '';
+
+function authHeaders(extra) {
+  return {
+    ...(WAR_ROOM_TOKEN ? { Authorization: `Bearer ${WAR_ROOM_TOKEN}` } : {}),
+    ...(extra || {}),
+  };
+}
 
 // ─── HTTP helpers ────────────────────────────────────────────
+// Every outbound call is bounded. The WS command path this transport used for
+// session creation carried a 30s timeout; an un-timed fetch would instead hang
+// the tool call forever against an unresponsive server.
+const REQUEST_TIMEOUT_MS = 30_000;
+
+// Carries the status so callers can tell "not found" from "unauthorized"
+// instead of swallowing every failure as an absent record.
+class ApiError extends Error {
+  constructor(status, body) {
+    super(`HTTP ${status}: ${body}`);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function api(path) {
-  const res = await fetch(`${BASE_URL}${path}`, { headers: { 'Content-Type': 'application/json' } });
-  if (!res.ok) { const text = await res.text(); throw new Error(`HTTP ${res.status}: ${text}`); }
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
 }
 
-async function apiPost(path, body) {
+async function apiSend(method, path, body) {
   const res = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    method,
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  if (!res.ok) { const text = await res.text(); throw new Error(`HTTP ${res.status}: ${text}`); }
+  if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json();
+}
+
+const apiPost = (path, body) => apiSend('POST', path, body);
+const apiPut = (path, body) => apiSend('PUT', path, body);
+
+function inferMime(name) {
+  const ext = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  const map = { md: 'text/markdown', txt: 'text/plain', json: 'application/json', csv: 'text/csv', html: 'text/html', xml: 'application/xml', yml: 'text/yaml', yaml: 'text/yaml', js: 'text/javascript', ts: 'text/typescript', py: 'text/x-python', sql: 'text/x-sql', log: 'text/plain' };
+  return map[ext] || 'text/plain';
+}
+
+// Upload inline text through war-room's files-service proxy, so the stdio
+// transport does not need direct network access to files-service.
+async function uploadInlineFiles(files) {
+  const form = new FormData();
+  for (const f of files) {
+    form.append('files', new Blob([f.content], { type: inferMime(f.name) }), f.name || 'unnamed');
+  }
+  const res = await fetch(`${BASE_URL}/api/files/upload`, {
+    method: 'POST', headers: authHeaders(), body: form,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) { const text = await res.text(); throw new Error(`file upload failed: HTTP ${res.status}: ${text}`); }
+  const data = await res.json();
+  const items = Array.isArray(data) ? data : (data?.files || data?.items || []);
+  if (!items.length) throw new Error('files-service upload returned no items');
+  return items.map(it => it.id || it.file_id);
 }
 
 // ─── WebSocket command helper ────────────────────────────────
@@ -100,13 +157,134 @@ const ops = {
       humanMessages: s.humanMessages || [],
     };
   },
-  async createSession(problem, files) {
-    const fileObjs = files.map((f, i) => ({
-      id: `file-${Date.now()}-${i}`, name: f.name, size: f.content.length, type: 'text/plain', content: f.content,
+  async createSession(problem, files, fileIds, presetId, continuesFromSessionId) {
+    const ids = Array.isArray(fileIds) ? [...fileIds] : [];
+    if (files && files.length) ids.push(...await uploadInlineFiles(files));
+    // Same guards the HTTP transport applies. POST /api/sessions echoes back
+    // neither field, and it accepts any string as a continuation target, so
+    // without these a typo returns a session reporting a link that is not real.
+    if (presetId) {
+      const known = (await api('/api/presets')).map(p => p.id);
+      if (!known.includes(presetId)) throw new Error(`unknown preset: ${presetId} (known: ${known.join(', ')})`);
+    }
+    if (continuesFromSessionId) {
+      try {
+        await api(`/api/sessions/${continuesFromSessionId}`);
+      } catch (err) {
+        if (err.status === 404) throw new Error(`prior session ${continuesFromSessionId} not found`);
+        throw err;
+      }
+    }
+    const session = await apiPost('/api/sessions', {
+      problem,
+      ...(ids.length ? { file_ids: ids } : {}),
+      ...(presetId ? { preset_id: presetId } : {}),
+      ...(continuesFromSessionId ? { continuesFromSessionId } : {}),
+    });
+    return { id: session.id, problem: session.problem, fileIds: ids, presetId: presetId || null, continuesFromSessionId: continuesFromSessionId || null };
+  },
+  async attachFiles(sessionId, files, fileIds) {
+    const ids = Array.isArray(fileIds) ? [...fileIds] : [];
+    if (files && files.length) ids.push(...await uploadInlineFiles(files));
+    if (!ids.length) throw new Error('No files or file_ids provided');
+    const result = await apiPost(`/api/sessions/${sessionId}/files`, { file_ids: ids });
+    return { sessionId, fileIds: ids, attached: result.files };
+  },
+  async getDecisionRecord(sessionId) {
+    return api(`/api/sessions/${sessionId}/decision-record`);
+  },
+  async listPresets() {
+    return api('/api/presets');
+  },
+  async resumeSession(sessionId) {
+    const r = await apiPost(`/api/sessions/${sessionId}/resume`);
+    return { sessionId: r.sessionId, resumedFromPhase: r.resumedFromPhase };
+  },
+  async rateSession(sessionId, rating) {
+    const r = await apiPost(`/api/sessions/${sessionId}/quality`, { rating });
+    return { sessionId, rating: r.rating };
+  },
+  async getQuality(sessionId) {
+    const shadow = await api(`/api/sessions/${sessionId}/shadow`);
+    let score = null;
+    try {
+      score = await api(`/api/sessions/${sessionId}/quality`);
+    } catch (err) {
+      // Only 404 means "not scored yet", which is a normal state. An auth or
+      // server error must not be reported as an unscored session.
+      if (err.status !== 404) throw err;
+    }
+    return {
+      sessionId,
+      score: score ? score.score : null,
+      breakdown: score ? score.breakdown : null,
+      evaluatorModel: score ? score.evaluator_model : null,
+      // No REST route exposes sessions.synthesis_quality, so the human rating is
+      // unavailable over this transport; the HTTP transport reads it directly.
+      humanRating: null,
+      shadowAnswer: shadow.naive_answer || null,
+      hasSynthesis: !!shadow.synthesis,
+    };
+  },
+  async getAnalytics() {
+    return api('/api/analytics/quality');
+  },
+  async semanticSearch(query, limit) {
+    const k = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 20);
+    const rows = await api(`/api/sessions/search/semantic?q=${encodeURIComponent(query)}&limit=${k}`);
+    return rows.map(s => ({ id: s.id, problem: s.problem, active: !!s.active, createdAt: s.createdAt, similarity: s.similarity }));
+  },
+  async recallSimilar(query, limit) {
+    const k = Math.min(Math.max(parseInt(limit, 10) || 3, 1), 10);
+    return api(`/api/memory/similar?q=${encodeURIComponent(query)}&limit=${k}`);
+  },
+  async improveProblem(problem) {
+    const r = await apiPost('/api/improve', { problem });
+    return r.improved;
+  },
+  async listSpecialists() {
+    return api('/api/specialists');
+  },
+  async getSessionAgents(sessionId) {
+    return api(`/api/sessions/${sessionId}/agents`);
+  },
+  async getPhases() {
+    const phases = await api('/api/phases');
+    return phases.map((p, i) => ({ index: i, id: p.id, name: p.name, agents: p.agents }));
+  },
+  async getModelConfig() {
+    const cfg = await api('/api/settings/agent-routing');
+    const agents = (cfg.agents || []).map(a => ({
+      ...a,
+      configured: (cfg.routing || {})[a.id] || null,
+      effective: (cfg.effective || {})[a.id] || { route: null, model: null },
     }));
-    const result = await wsCmd({ type: 'new-session', problem, files: fileObjs });
-    if (result.type === 'error') throw new Error(result.message);
-    return { id: result.session.id, problem: result.session.problem };
+    return { routes: cfg.routes, available: cfg.available, agents };
+  },
+  // Read-modify-write: the PUT replaces the whole map, so a one-agent change
+  // must merge into what is already stored or it wipes every other override.
+  // The merge and its rules come from lib/agent-routing.js, the same module the
+  // HTTP transport and the Settings PUT use, so the two adapters cannot drift.
+  // Not atomic: a Settings-panel or second-client write landing between the GET
+  // and the PUT is overwritten, last-write-wins. Bounding that needs a
+  // conditional write on the settings endpoint, which is a separate change.
+  async setModel({ agentId, route, model, clear }) {
+    const cfg = await api('/api/settings/agent-routing');
+    const validIds = new Set((cfg.agents || []).map(a => a.id));
+    const targets = agentId === 'all' ? [...validIds] : [agentId];
+    for (const id of targets) {
+      if (!validIds.has(id)) throw new Error(`unknown agent: ${id} (use warroom_list_agents for valid ids, or "all")`);
+    }
+    const patch = {};
+    for (const id of targets) patch[id] = clear ? null : { route, model };
+    const { clean, error } = mergeRouting(cfg.routing || {}, patch, validIds, cfg.routes || []);
+    if (error) throw new Error(error);
+    const r = await apiPut('/api/settings/agent-routing', { routing: clean });
+    return { routing: r.routing, changed: targets };
+  },
+  async testModel({ route, model }) {
+    if (route && !model) throw new Error('a non-default route requires an explicit model');
+    return apiPost('/api/settings/test-connection', { route: route || '', model: model || '' });
   },
   async deleteSession(sessionId) {
     await wsCmd({ type: 'delete-session', sessionId });
@@ -173,8 +351,11 @@ const ops = {
     if (followUps.length) return followUps[followUps.length - 1].content;
     return 'Follow-up response pending. Check session for updates.';
   },
-  async exportSession(sessionId) {
-    const res = await fetch(`${BASE_URL}/api/sessions/${sessionId}/export?mode=full_transcript&format=md`);
+  async exportSession(sessionId, mode = 'full_transcript', format = 'md') {
+    const res = await fetch(
+      `${BASE_URL}/api/sessions/${sessionId}/export?mode=${encodeURIComponent(mode)}&format=${encodeURIComponent(format)}`,
+      { headers: authHeaders(), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
+    );
     if (!res.ok) throw new Error(`Export failed: ${res.status}`);
     return await res.text();
   },
