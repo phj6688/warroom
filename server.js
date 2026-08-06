@@ -10,7 +10,7 @@ const appConfig = require('./lib/app-config');
 appConfig.init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, resolveRoute, anyLLMInFlight, inFlightLLMCount } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, resolveRoute, anyLLMInFlight, inFlightLLMCount, AGENT_MAX_TOKENS, parseAgentMaxTokens } = require('./lib/llm');
 const { runWithTools } = require('./lib/agents/tool-loop');
 const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
@@ -468,7 +468,9 @@ async function runAgentTurn(session, agentId, phase) {
     }
 
     const isFinalSynthesis = (phase === PHASES.length - 1) && (agentId === 'process-architect');
-    const maxTokens = isFinalSynthesis ? parseInt(process.env.SYNTHESIS_MAX_TOKENS || '8000') : undefined;
+    // Synthesis is the longest turn in the room, so it is the last place that
+    // wants a ceiling. Uncapped unless a deployment sets SYNTHESIS_MAX_TOKENS.
+    const maxTokens = isFinalSynthesis ? parseAgentMaxTokens(process.env.SYNTHESIS_MAX_TOKENS) : AGENT_MAX_TOKENS;
 
     const searchAvailable = SEARCH_PROVIDER === 'smart'
       || SEARCH_PROVIDER === 'coexist'
@@ -892,7 +894,7 @@ async function runFollowUp(sessionId, session, question) {
     const humanHistory = (session.humanMessages || []).map(h => `[Human]: ${h.content}`).join('\n');
     const systemPrompt = `You are the Process Architect responding to a follow-up question after a completed War Room deliberation.\n\nYou have access to the full deliberation history. Answer the human's question directly, drawing on the insights and analysis from all 8 agents' contributions. Be concise, specific, and actionable.\n\nIf the question requires information that wasn't covered in the deliberation, say so and suggest what additional research would help.`;
     const userContent = `ORIGINAL PROBLEM: ${session.problem}\n\nDELIBERATION SUMMARY (all agents' contributions):\n${priorMessages}\n\n${humanHistory ? `HUMAN MESSAGES:\n${humanHistory}\n\n` : ''}FOLLOW-UP QUESTION: ${question}\n\nAnswer this question based on the deliberation above. Be direct and specific.`;
-    const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId, 1500,
+    const response = await callAnthropic(systemPrompt, [{ role: 'user', content: userContent }], responderId, AGENT_MAX_TOKENS,
       (u) => onTokenUsage(sessionId, 'agent_turn', u));
     // A follow-up adds to the session's running total after completion.
     try {
