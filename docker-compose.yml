@@ -17,6 +17,10 @@ services:
       INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID}
       INFISICAL_ENV: prod
       BASELINE_LOG: data/baseline-usage.jsonl
+      # Commit this container is running. Injected into the served document so a
+      # screenshot harness can prove which build painted the page it captured.
+      # Deploy with: BUILD_SHA=$(git rev-parse HEAD) docker compose up -d --build
+      BUILD_SHA: ${BUILD_SHA:-}
       IMPROVER_SYSTEM_PROMPT: ${IMPROVER_SYSTEM_PROMPT:-}
       EMBED_GATEWAY_URL: ${EMBED_GATEWAY_URL:-http://embed-gateway:8200}
       EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
