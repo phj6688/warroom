@@ -286,6 +286,9 @@ const ops = {
     if (route && !model) throw new Error('a non-default route requires an explicit model');
     return apiPost('/api/settings/test-connection', { route: route || '', model: model || '' });
   },
+  async listModels({ route }) {
+    return api(`/api/settings/models${route ? `?route=${encodeURIComponent(route)}` : ''}`);
+  },
   async deleteSession(sessionId) {
     await wsCmd({ type: 'delete-session', sessionId });
   },

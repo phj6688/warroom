@@ -408,9 +408,25 @@ function registerTools(server, rawOps) {
     }
   );
 
+  // 17. warroom_list_models
+  server.tool(
+    'warroom_list_models',
+    'List the model ids a provider route actually serves, fetched live from the provider. Use it to pick a real id for warroom_set_model instead of guessing — includes every model behind the gateway (Claude, GPT, local Ollama, ...). Omit route to list the server default provider.',
+    {
+      route: z.string().optional().describe('Provider route to list: anthropic-api, openai-api, openrouter, subscription, or ollama-local. Omit for this deployment\'s default provider.'),
+    },
+    async ({ route }) => {
+      try {
+        const r = await ops.listModels({ route });
+        if (!r.ok) return ok(`FAILED — ${r.route}: ${r.error}`);
+        return ok(`${r.models.length} models via ${r.route}:\n\n${r.models.join('\n')}\n\nUse an id with warroom_set_model (verify first with warroom_test_model).`);
+      } catch (e) { return err(e.message); }
+    }
+  );
+
   // ─── Session lifecycle, quality, recall ───────────────────────────────
 
-  // 17. warroom_resume_session
+  // 18. warroom_resume_session
   server.tool(
     'warroom_resume_session',
     'Restart a stopped or interrupted session at its first unfinished phase. Phases whose agents already spoke are skipped, so this continues rather than re-running the deliberation. Errors if the session is already running or every phase is covered.',
@@ -423,7 +439,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 18. warroom_rate_session
+  // 19. warroom_rate_session
   server.tool(
     'warroom_rate_session',
     'Record whether a finished deliberation was actually useful. This is the only human signal on deliberation quality — rate a session once you have acted on its verdict so regressions stay visible.',
@@ -439,7 +455,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 19. warroom_get_quality
+  // 20. warroom_get_quality
   server.tool(
     'warroom_get_quality',
     'Quality scoring for one session: composite score, its breakdown, the human rating if one was recorded, and the shadow answer (what a single naive model said about the same problem). shadow_delta is the honest read on whether the deliberation beat that baseline.',
@@ -462,7 +478,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 20. warroom_get_analytics
+  // 21. warroom_get_analytics
   server.tool(
     'warroom_get_analytics',
     'Quality analytics across all scored sessions: average composite score, rolling trend, per-dimension averages, and the best and worst sessions. Failed runs are excluded.',
@@ -489,7 +505,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 21. warroom_semantic_search
+  // 22. warroom_semantic_search
   server.tool(
     'warroom_semantic_search',
     'Find past sessions by meaning rather than keyword, ranked by similarity. Use it before opening a new deliberation to check whether this decision was already argued. Requires the embedding backend; falls back with an error if it is down (use warroom_search_sessions then).',
@@ -510,7 +526,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 22. warroom_recall_similar
+  // 23. warroom_recall_similar
   server.tool(
     'warroom_recall_similar',
     'Retrieve distilled lessons from past deliberations relevant to a problem. This is the memory layer the agents themselves draw on — reading it first tells you what the room already concluded about this class of problem.',
@@ -527,7 +543,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 23. warroom_improve_problem
+  // 24. warroom_improve_problem
   server.tool(
     'warroom_improve_problem',
     'Rewrite a rough problem statement into the structured form the agents deliberate best on. The problem statement is the largest single quality lever on a session, so run a thin or rushed one through this before warroom_create_session. Returns the rewrite only — nothing is created.',
@@ -540,7 +556,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 24. warroom_list_specialists
+  // 25. warroom_list_specialists
   server.tool(
     'warroom_list_specialists',
     'List the domain specialist templates that can join a room on top of the 8 core agents. Presets seed these automatically; use warroom_get_session_agents to see who actually joined a given session.',
@@ -555,7 +571,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 25. warroom_get_session_agents
+  // 26. warroom_get_session_agents
   server.tool(
     'warroom_get_session_agents',
     'The exact roster for one session: the 8 core agents plus whichever domain specialists were spawned for it.',
@@ -572,7 +588,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 26. warroom_get_phases
+  // 27. warroom_get_phases
   server.tool(
     'warroom_get_phases',
     'The deliberation phase sequence and which agents speak in each. Use it to read a session\'s phase number against what is actually happening.',
@@ -586,7 +602,7 @@ function registerTools(server, rawOps) {
     }
   );
 
-  // 27. warroom_get_status
+  // 28. warroom_get_status
   server.tool(
     'warroom_get_status',
     'Server health, session counts, and agent roster',

@@ -5,7 +5,7 @@ const { registerTools } = require('./tools.js');
 const { buildDecisionRecord } = require('../lib/decision-record');
 const appConfig = require('../lib/app-config');
 const { mergeRouting } = require('../lib/agent-routing');
-const { availableRoutes, resolveRoute, testConnection } = require('../lib/llm');
+const { availableRoutes, resolveRoute, testConnection, listModels } = require('../lib/llm');
 const { listPresets, getPreset } = require('../lib/presets');
 const { resumeSession } = require('../lib/resume');
 const { improverSystemPrompt, improverUserMessage } = require('../lib/improve');
@@ -327,6 +327,13 @@ function setupMCPServer(app, deps) {
     async testModel({ route, model }) {
       if (route && !model) throw new Error('a non-default route requires an explicit model');
       return testConnection({ route: route || '', model: model || '' });
+    },
+
+    async listModels({ route }) {
+      if (route && !appConfig.ROUTES.includes(route)) {
+        throw new Error(`unknown route: ${route} (valid: ${appConfig.ROUTES.join(', ')}, or omit for the default)`);
+      }
+      return listModels({ route: route || '' });
     },
 
     // ─── Quality, memory, intake ─────────────────────────────────────────

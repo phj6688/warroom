@@ -262,7 +262,7 @@
       <div class="export-modal-title">⚙ Agent Models &amp; Providers</div>
       <button class="export-modal-close" id="settings-close">✕</button>
     </div>
-    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save.</div>
+    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save. Every model field opens a dropdown (▾) listing the ids the selected route's provider actually serves; typing filters the list, and custom ids still work.</div>
     <div id="settings-agents"></div>
     <div class="settings-cost">
       <div class="settings-cost-title">Cost model</div>
@@ -2897,12 +2897,105 @@ const SETTINGS_ROUTE_LABELS = {
 };
 let _settingsData = null;
 let _costData = null;
+// Model picker — every model field is a combobox: its dropdown lists the ids
+// the row's selected provider actually serves (GET /api/settings/models),
+// typing filters the list, and a free-typed id stays valid. One shared popup
+// element means one open list at a time; catalogs cache per route, and a
+// fetch failure only means an explanatory status line, never a blocked field.
+const _modelsByRoute = {};   // route -> { models } cached; failures retry on reopen
+let _pickerRow = null;       // the row the popup is open in, null when closed
+let _pickerCat = null;       // catalog shown in the open popup
+let _pickerActive = -1;      // keyboard-highlighted item index
+let _pickerSeq = 0;          // discards a stale async fill after a reopen
+async function fetchCatalog(route) {
+  const key = route || '';
+  if (_modelsByRoute[key]) return _modelsByRoute[key];
+  try {
+    const res = await fetch(apiUrl('/api/settings/models' + (key ? '?route=' + encodeURIComponent(key) : '')));
+    const r = await res.json().catch(() => null);
+    if (res.ok && r && r.ok && Array.isArray(r.models)) {
+      _modelsByRoute[key] = { models: r.models };
+      return _modelsByRoute[key];
+    }
+    return { models: [], error: (r && r.error) || ('HTTP ' + res.status) };
+  } catch (e) { return { models: [], error: e.message }; }
+}
+function closeModelPicker() {
+  const el = document.getElementById('model-picker');
+  if (el) el.remove();
+  _pickerRow = null; _pickerCat = null; _pickerActive = -1;
+}
+async function openModelPicker(row) {
+  const seq = ++_pickerSeq;
+  const wrap = row.querySelector('.sa-model-wrap');
+  if (!wrap) return;
+  closeModelPicker();
+  const el = document.createElement('div');
+  el.id = 'model-picker';
+  el.className = 'model-picker';
+  el.innerHTML = '<div class="model-picker-status"></div><div class="model-picker-list"></div>';
+  wrap.appendChild(el);
+  _pickerRow = row;
+  const route = row.querySelector('.sa-route').value;
+  const label = SETTINGS_ROUTE_LABELS[route] || route || 'Default';
+  el.querySelector('.model-picker-status').textContent = 'Loading ' + label + ' models…';
+  const cat = await fetchCatalog(route);
+  if (seq !== _pickerSeq || _pickerRow !== row) return; // superseded meanwhile
+  _pickerCat = { ...cat, label };
+  renderModelPicker();
+}
+function renderModelPicker() {
+  const el = document.getElementById('model-picker');
+  if (!el || !_pickerRow || !_pickerCat) return;
+  const q = _pickerRow.querySelector('.sa-model').value.trim().toLowerCase();
+  const matches = q ? _pickerCat.models.filter(m => m.toLowerCase().includes(q)) : _pickerCat.models;
+  const status = el.querySelector('.model-picker-status');
+  if (_pickerCat.error) {
+    status.textContent = _pickerCat.label + ': catalog unavailable, type a model id (' + _pickerCat.error + ')';
+  } else {
+    const counted = q ? matches.length + ' of ' + _pickerCat.models.length : String(_pickerCat.models.length);
+    status.textContent = counted + ' models · ' + _pickerCat.label + ' · type to filter, custom ids allowed';
+  }
+  _pickerActive = -1;
+  const list = el.querySelector('.model-picker-list');
+  if (!matches.length) {
+    const empty = document.createElement('div');
+    empty.className = 'model-picker-empty';
+    empty.textContent = _pickerCat.error ? 'No catalog for this provider.'
+      : (q ? 'No match. A custom id is used as typed.' : 'The provider returned no models.');
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...matches.map(id => {
+    const item = document.createElement('div');
+    item.className = 'model-picker-item';
+    item.textContent = id;
+    return item;
+  }));
+}
+function pickModel(item) {
+  if (!_pickerRow) return;
+  const input = _pickerRow.querySelector('.sa-model');
+  input.value = item.textContent;
+  // Focus while the picker still registers as open for this row, or the
+  // focusin handler would immediately reopen the list that was just used.
+  input.focus();
+  closeModelPicker();
+}
+function movePickerActive(delta) {
+  const items = document.querySelectorAll('#model-picker .model-picker-item');
+  if (!items.length) return;
+  _pickerActive = (_pickerActive + delta + items.length) % items.length;
+  items.forEach((it, i) => it.classList.toggle('active', i === _pickerActive));
+  items[_pickerActive].scrollIntoView({ block: 'nearest' });
+}
 async function openSettings() {
   try {
     const res = await fetch(apiUrl('/api/settings/agent-routing'));
     if (!res.ok) throw new Error('HTTP ' + res.status);
     _settingsData = await res.json();
     renderSettings();
+    fetchCatalog(''); // warm the default provider's catalog
     try {
       const cres = await fetch(apiUrl('/api/settings/cost'));
       if (cres.ok) { _costData = await cres.json(); populateCostInputs(); }
@@ -2922,6 +3015,7 @@ function populateCostInputs() {
   set('cost-kwh', e.pricePerKwh);
 }
 function renderSettings() {
+  closeModelPicker(); // the popup's row is about to be re-rendered away
   const host = document.getElementById('settings-agents');
   const { agents, routes, available, routing, effective } = _settingsData;
   const routeOpts = (sel) => ['', ...routes].map(r => {
@@ -2935,7 +3029,10 @@ function renderSettings() {
   const allRow = `<div class="settings-all-row">
       <span class="sa-name">⚡ Set every agent</span>
       <select class="sa-route" id="settings-all-route">${routeOpts('')}</select>
-      <input class="sa-model" id="settings-all-model" type="text" placeholder="model for every agent" spellcheck="false">
+      <span class="sa-model-wrap">
+        <input class="sa-model" id="settings-all-model" type="text" placeholder="model for every agent" spellcheck="false" autocomplete="off">
+        <button class="sa-model-toggle" type="button" tabindex="-1" title="Browse this provider's models" aria-label="Browse models">▾</button>
+      </span>
       <button class="settings-all-apply" id="settings-all-apply" type="button">Apply to all</button>
       <button class="sa-test" type="button" title="Fire a 1-token call at this route + model">Test</button>
     </div>`;
@@ -2945,7 +3042,10 @@ function renderSettings() {
     return `<div class="settings-agent-row" data-aid="${a.id}">
       <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
       <select class="sa-route">${routeOpts(cur.route)}</select>
-      <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false">
+      <span class="sa-model-wrap">
+        <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false" autocomplete="off">
+        <button class="sa-model-toggle" type="button" tabindex="-1" title="Browse this provider's models" aria-label="Browse models">▾</button>
+      </span>
       <button class="sa-test" type="button" title="Fire a 1-token call at this route + model">Test</button>
     </div>`;
   }).join('');
@@ -2993,6 +3093,51 @@ async function testRowConnection(btn) {
 document.getElementById('settings-agents').addEventListener('click', (e) => {
   const btn = e.target.closest('.sa-test');
   if (btn) testRowConnection(btn);
+});
+// Picker wiring, delegated so re-renders keep working. A row's model field
+// opens on focus or on its ▾ toggle; typing filters; the route select feeds
+// the list, so changing it while open reloads the catalog.
+const settingsAgentsEl = document.getElementById('settings-agents');
+settingsAgentsEl.addEventListener('click', (e) => {
+  const item = e.target.closest('.model-picker-item');
+  if (item) { pickModel(item); return; }
+  const toggle = e.target.closest('.sa-model-toggle');
+  if (toggle) {
+    const row = toggle.closest('.settings-all-row, .settings-agent-row');
+    if (_pickerRow === row) closeModelPicker();
+    else openModelPicker(row);
+  }
+});
+settingsAgentsEl.addEventListener('focusin', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('sa-model')) return;
+  const row = e.target.closest('.settings-all-row, .settings-agent-row');
+  if (row && _pickerRow !== row) openModelPicker(row);
+});
+settingsAgentsEl.addEventListener('input', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('sa-model')) return;
+  const row = e.target.closest('.settings-all-row, .settings-agent-row');
+  if (_pickerRow === row) renderModelPicker();
+  else openModelPicker(row); // typing into a closed field reopens its list
+});
+settingsAgentsEl.addEventListener('change', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('sa-route')) return;
+  const row = e.target.closest('.settings-all-row, .settings-agent-row');
+  if (_pickerRow === row) openModelPicker(row);
+});
+settingsAgentsEl.addEventListener('keydown', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('sa-model')) return;
+  if (!_pickerRow) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); movePickerActive(1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); movePickerActive(-1); }
+  else if (e.key === 'Enter') {
+    const active = document.querySelector('#model-picker .model-picker-item.active');
+    if (active) { e.preventDefault(); pickModel(active); }
+    else closeModelPicker();
+  } else if (e.key === 'Escape') { e.stopPropagation(); closeModelPicker(); }
+});
+// Anywhere outside the active field and its popup closes the list.
+document.addEventListener('pointerdown', (e) => {
+  if (_pickerRow && !e.target.closest('.sa-model-wrap')) closeModelPicker();
 });
 // Copy the master route+model into every agent row. Nothing persists until
 // Save, and individual rows stay editable after the fill. Empty route with an
@@ -3060,7 +3205,7 @@ async function saveSettings() {
   showToast('✓ Settings saved');
   closeSettings();
 }
-function closeSettings() { document.getElementById('settings-overlay').classList.remove('open'); }
+function closeSettings() { closeModelPicker(); document.getElementById('settings-overlay').classList.remove('open'); }
 document.getElementById('settings-btn').addEventListener('click', openSettings);
 document.getElementById('settings-close').addEventListener('click', closeSettings);
 document.getElementById('settings-save').addEventListener('click', saveSettings);
