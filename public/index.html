@@ -262,8 +262,9 @@
       <div class="export-modal-title">⚙ Agent Models &amp; Providers</div>
       <button class="export-modal-close" id="settings-close">✕</button>
     </div>
-    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save.</div>
+    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save. Model fields suggest the ids the selected route's provider actually serves; free-typed ids still work.</div>
     <div id="settings-agents"></div>
+    <datalist id="model-datalist"></datalist>
     <div class="settings-cost">
       <div class="settings-cost-title">Cost model</div>
       <div class="settings-hint">API and OpenRouter routes use published per-model rates. The subscription route amortizes a flat plan price over its token allowance. Local (Ollama) uses an electricity estimate.</div>
@@ -2897,12 +2898,34 @@ const SETTINGS_ROUTE_LABELS = {
 };
 let _settingsData = null;
 let _costData = null;
+// Model catalog per route, fetched from the provider once per panel lifetime.
+// The shared datalist tracks whichever row's model input has focus, so the
+// suggestions always match that row's selected route. Free text stays valid: a
+// datalist suggests, it never restricts, and a provider failure or slow fetch
+// only means an empty suggestion list.
+const _modelsByRoute = {};
+let _datalistRoute = null;
+async function refreshModelDatalist(route) {
+  const key = route || '';
+  _datalistRoute = key;
+  if (!(key in _modelsByRoute)) {
+    try {
+      const res = await fetch(apiUrl('/api/settings/models' + (key ? '?route=' + encodeURIComponent(key) : '')));
+      const r = res.ok ? await res.json() : null;
+      _modelsByRoute[key] = (r && r.ok && Array.isArray(r.models)) ? r.models : [];
+    } catch (_) { _modelsByRoute[key] = []; }
+  }
+  if (_datalistRoute !== key) return; // focus moved to another route mid-fetch
+  const dl = document.getElementById('model-datalist');
+  dl.replaceChildren(..._modelsByRoute[key].map(id => Object.assign(document.createElement('option'), { value: id })));
+}
 async function openSettings() {
   try {
     const res = await fetch(apiUrl('/api/settings/agent-routing'));
     if (!res.ok) throw new Error('HTTP ' + res.status);
     _settingsData = await res.json();
     renderSettings();
+    refreshModelDatalist(''); // warm the default route's suggestions
     try {
       const cres = await fetch(apiUrl('/api/settings/cost'));
       if (cres.ok) { _costData = await cres.json(); populateCostInputs(); }
@@ -2935,7 +2958,7 @@ function renderSettings() {
   const allRow = `<div class="settings-all-row">
       <span class="sa-name">⚡ Set every agent</span>
       <select class="sa-route" id="settings-all-route">${routeOpts('')}</select>
-      <input class="sa-model" id="settings-all-model" type="text" placeholder="model for every agent" spellcheck="false">
+      <input class="sa-model" id="settings-all-model" type="text" placeholder="model for every agent" spellcheck="false" list="model-datalist">
       <button class="settings-all-apply" id="settings-all-apply" type="button">Apply to all</button>
       <button class="sa-test" type="button" title="Fire a 1-token call at this route + model">Test</button>
     </div>`;
@@ -2945,7 +2968,7 @@ function renderSettings() {
     return `<div class="settings-agent-row" data-aid="${a.id}">
       <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
       <select class="sa-route">${routeOpts(cur.route)}</select>
-      <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false">
+      <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false" list="model-datalist">
       <button class="sa-test" type="button" title="Fire a 1-token call at this route + model">Test</button>
     </div>`;
   }).join('');
@@ -2993,6 +3016,12 @@ async function testRowConnection(btn) {
 document.getElementById('settings-agents').addEventListener('click', (e) => {
   const btn = e.target.closest('.sa-test');
   if (btn) testRowConnection(btn);
+});
+// Focusing a model field points the shared datalist at that row's route.
+document.getElementById('settings-agents').addEventListener('focusin', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('sa-model')) return;
+  const row = e.target.closest('.settings-all-row, .settings-agent-row');
+  if (row) refreshModelDatalist(row.querySelector('.sa-route').value);
 });
 // Copy the master route+model into every agent row. Nothing persists until
 // Save, and individual rows stay editable after the fill. Empty route with an

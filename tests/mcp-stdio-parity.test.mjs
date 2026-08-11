@@ -41,6 +41,7 @@ test('stdio transport: every tool has an op, and the model tools reach the same 
     const names = (await client.listTools()).tools.map(t => t.name).sort();
     assert.ok(names.includes('warroom_get_decision_record'));
     assert.ok(names.includes('warroom_set_model'));
+    assert.ok(names.includes('warroom_list_models'));
     assert.ok(names.length >= 27, `stdio advertises the full tool set, got ${names.length}`);
 
     // The two tools that had no stdio op.
