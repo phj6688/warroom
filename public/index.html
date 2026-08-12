@@ -3039,8 +3039,12 @@ function renderSettings() {
   host.innerHTML = allRow + (agents || []).map(a => {
     const cur = routing[a.id] || {};
     const eff = effective[a.id] || {};
+    // Specialists are spawned per session, so their rows configure a template
+    // that may not appear in every run. Mark them; the roster is otherwise
+    // 19 undifferentiated names.
+    const kind = a.isSpecialist ? ' <span class="sa-kind">specialist</span>' : '';
     return `<div class="settings-agent-row" data-aid="${a.id}">
-      <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}</span>
+      <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}${kind}</span>
       <select class="sa-route">${routeOpts(cur.route)}</select>
       <span class="sa-model-wrap">
         <input class="sa-model" type="text" value="${escHtml(cur.model || '')}" placeholder="${escHtml(eff.model || 'default')}" spellcheck="false" autocomplete="off">

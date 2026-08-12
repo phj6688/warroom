@@ -5,6 +5,7 @@ const { registerTools } = require('./tools.js');
 const { buildDecisionRecord } = require('../lib/decision-record');
 const appConfig = require('../lib/app-config');
 const { mergeRouting } = require('../lib/agent-routing');
+const { routableAgents, routableAgentIds } = require('../lib/routable-agents');
 const { availableRoutes, resolveRoute, testConnection, listModels } = require('../lib/llm');
 const { listPresets, getPreset } = require('../lib/presets');
 const { resumeSession } = require('../lib/resume');
@@ -296,10 +297,10 @@ function setupMCPServer(app, deps) {
     // ─── Model / provider routing (server-wide, same store as the UI) ────
     async getModelConfig() {
       const configured = appConfig.getAgentRouting();
-      const agents = AGENTS.map(a => {
+      const agents = routableAgents(AGENTS, specialist, log).map(a => {
         const eff = resolveRoute(a.id);
         return {
-          id: a.id, name: a.name, emoji: a.emoji, role: a.role,
+          ...a,
           configured: configured[a.id] || null,
           effective: { route: eff.route, model: eff.model },
         };
@@ -311,7 +312,7 @@ function setupMCPServer(app, deps) {
     // panel's Apply-to-all. clear drops the override so the agent falls back to
     // the deployment's env default.
     async setModel({ agentId, route, model, clear }) {
-      const validIds = new Set(AGENTS.map(a => a.id));
+      const validIds = routableAgentIds(AGENTS, specialist, log);
       const targets = agentId === 'all' ? [...validIds] : [agentId];
       for (const id of targets) {
         if (!validIds.has(id)) throw new Error(`unknown agent: ${id} (use warroom_list_agents for valid ids, or "all")`);
