@@ -19,6 +19,13 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV HOME=/tmp
 
+# Baked into the image rather than supplied at run time. A runtime value has to
+# be re-supplied on every `docker compose up`, and one that is forgotten silently
+# drops the build beacon from the served page, which costs the screenshot gate
+# its provenance without anything visibly breaking.
+ARG BUILD_SHA=""
+ENV BUILD_SHA=$BUILD_SHA
+
 EXPOSE 8090
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["node", "server.js"]
