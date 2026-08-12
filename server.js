@@ -10,7 +10,7 @@ const appConfig = require('./lib/app-config');
 appConfig.init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveModel, resolveRoute, anyLLMInFlight, inFlightLLMCount, AGENT_MAX_TOKENS, parseAgentMaxTokens } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveRoute, anyLLMInFlight, inFlightLLMCount, AGENT_MAX_TOKENS, parseAgentMaxTokens } = require('./lib/llm');
 const { runWithTools } = require('./lib/agents/tool-loop');
 const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
@@ -509,7 +509,11 @@ async function runAgentTurn(session, agentId, phase) {
 
       const loopOut = await runWithTools({
         llmCall: callLLMRaw,
-        model: resolveModel(agentId),
+        // No explicit model: an explicit one outranks the agent's configured
+        // model in resolveRoute, which would ship the global default model to
+        // whatever provider the agent is routed to. The prose path resolves
+        // from agentId alone; this path must match it.
+        model: undefined,
         system: agent.systemPrompt,
         messages,
         tools: [WEB_SEARCH_TOOL, ESCALATE_TOOL],
