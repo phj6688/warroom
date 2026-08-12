@@ -21,6 +21,20 @@ assert.equal(
   deliberationOutcome({ messageCount: 0, phasesCompleted: 5, totalPhases: 5 }),
   'failed', 'zero messages is a failed run');
 
+// ...unless a human stopped it before the first agent spoke. The room spends
+// its first seconds on classification and memory retrieval, so a stop in that
+// window leaves zero messages, and blaming the provider for a human decision
+// also overwrites the 'stopped' the shutdown path already stamped.
+assert.equal(
+  deliberationOutcome({ messageCount: 0, phasesCompleted: 0, totalPhases: 5, deactivated: true }),
+  'stopped', 'a stop before the first message is stopped, not failed');
+
+// A stop landing during the final synthesis turn still leaves a finished
+// deliberation: the turn ran to completion and wrote its verdict.
+assert.equal(
+  deliberationOutcome({ messageCount: 14, phasesCompleted: 5, totalPhases: 5, deactivated: true }),
+  'complete', 'all phases run counts as complete even if a stop arrived at the end');
+
 // The regression this file exists for: partial progress is not completion.
 assert.equal(
   deliberationOutcome({ messageCount: 3, phasesCompleted: 1, totalPhases: 5 }),

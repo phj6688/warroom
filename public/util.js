@@ -49,7 +49,26 @@
       .replace(/^\s*[-*]\s+/gm, '• ').trim();
   }
 
-  const api = { escHtml, formatFileSize, fmtSize, parseSynthesisSections, mdToText };
+  // One answer to "how did this session end", shared by the detail badge and
+  // the history card. `active` alone cannot answer it: an inactive session is
+  // only complete when its outcome says so, and rendering every inactive row
+  // as Complete is what let a run killed at Problem Framing look finished.
+  // A null outcome is a legacy row from before the column existed.
+  const SESSION_BADGES = {
+    complete: { label: 'Complete', cls: 'idle', title: 'Deliberation finished — export results or ask follow-ups' },
+    stopped: { label: 'Stopped', cls: 'interrupted', title: 'Ended before the last phase — resume to run the rest' },
+    failed: { label: 'Failed', cls: 'interrupted', title: 'No verdict produced — the agent turns did not get through' },
+    crashed: { label: 'Interrupted', cls: 'interrupted', title: 'A server restart ended this run — resume to continue' },
+  };
+  function sessionBadge(session) {
+    const s = session || {};
+    if (s.active) return { label: 'Active', cls: 'active', title: 'Agents are processing' };
+    if (s.outcome && SESSION_BADGES[s.outcome]) return SESSION_BADGES[s.outcome];
+    if (s.crashRecovered) return SESSION_BADGES.crashed;
+    return SESSION_BADGES.complete;
+  }
+
+  const api = { escHtml, formatFileSize, fmtSize, parseSynthesisSections, mdToText, sessionBadge, SESSION_BADGES };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   } else {

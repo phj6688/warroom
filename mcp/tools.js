@@ -40,12 +40,14 @@ function registerTools(server, rawOps) {
     return TERMINAL_LABEL[s.outcome] || 'Complete';
   }
 
-  // Phases the run got through, so "stopped" carries how far it got. `phase` is
-  // the zero-based index of the phase it was last in.
+  // How far the run got, so "stopped" carries a distance. `phase` is the
+  // zero-based index of the phase the room was last IN, which is not the same
+  // as the number it finished — the loop stamps it on entry — so this says
+  // reached, not completed.
   function phaseProgress(s) {
     const total = s.totalPhases || 5;
     const reached = Math.min(total, (Number(s.phase) || 0) + 1);
-    return `${reached}/${total}`;
+    return `phase ${reached} of ${total} reached`;
   }
 
   // One absent-cost token across list and detail. Sub-dollar costs keep 4
@@ -71,7 +73,9 @@ function registerTools(server, rawOps) {
         if (!sessions.length) return ok('No sessions yet. Use warroom_create_session to start one.');
         const rows = sessions.map(s => {
           const date = new Date(s.createdAt).toISOString().slice(0, 16);
-          const status = s.active ? 'ACTIVE' : 'Done';
+          // "Done" for every inactive row is the same lie the detail view told:
+          // the list is where an empty run used to read as "Done | Synthesis".
+          const status = s.active ? 'ACTIVE' : sessionStatus(s).toUpperCase();
           const tok = s.totalTokens != null ? `${s.totalTokens.toLocaleString()} tok` : '— tok';
           const cost = fmtCost(s.totalCostUsd);
           return `[${s.id}] ${status} | Phase: ${s.phaseName || s.phase} | ${s.messageCount || 0} msgs | ${s.pendingCount || 0} pending | ${tok} | ${cost} | ${date}\n  ${s.problem.slice(0, 120)}`;

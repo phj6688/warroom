@@ -86,7 +86,7 @@ describe('F4 — boot reconciliation', () => {
     const db = new Database(dbPath, { readonly: true });
     let row;
     try {
-      row = db.prepare('SELECT id, active, crash_recovered_at FROM sessions WHERE id = ?').get(ORPHAN_ID);
+      row = db.prepare('SELECT id, active, outcome, crash_recovered_at FROM sessions WHERE id = ?').get(ORPHAN_ID);
     } finally {
       db.close();
     }
@@ -96,6 +96,10 @@ describe('F4 — boot reconciliation', () => {
       row.crash_recovered_at && Number(row.crash_recovered_at) > 0,
       'crash_recovered_at must be a non-zero timestamp'
     );
+    // The outcome has to name the state too. An orphan left with a NULL
+    // outcome reads as a legacy completion everywhere downstream, and gets
+    // retroactively quality-scored as if it had produced a verdict.
+    assert.equal(row.outcome, 'crashed', 'orphaned session must be recorded as crashed');
   });
 
   test('boot logs include a crash-recovered notice with the orphan ID', () => {

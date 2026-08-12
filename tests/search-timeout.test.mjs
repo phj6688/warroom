@@ -26,6 +26,19 @@ const { createTavilyProvider } = require('./lib/search-providers/tavily');
   await inspect.search('anything');
   assert.equal(seenSignal, 'present', 'default provider must arm an abort signal');
 
+  // ...and the default has to be a usable window, not whatever setTimeout does
+  // with undefined (which fires on the next tick and aborts every search).
+  const slow = createTavilyProvider({
+    apiKey: 'k',
+    fetch: async (_url, init) => {
+      await new Promise((r) => setTimeout(r, 600));
+      if (init.signal.aborted) throw new Error('aborted');
+      return { ok: true, json: async () => ({ results: [{ title: 't', url: 'u', content: 'c' }] }) };
+    },
+  });
+  const slowOut = await slow.search('anything');
+  assert.equal(slowOut.results.length, 1, 'a 600ms search must survive the default deadline');
+
   // 2. A gateway that never answers must not park the turn forever.
   const hung = createTavilyProvider({
     apiKey: 'k',

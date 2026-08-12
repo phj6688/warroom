@@ -631,12 +631,16 @@ function handleMessage(data) {
       addHumanMessage(data);
       break;
 
-    case 'deliberation-complete':
+    case 'deliberation-complete': {
       renderDecisionRecord();
-      addCompleteBanner();
-      document.getElementById('status-badge').textContent = 'Complete';
-      document.getElementById('status-badge').className = 'status-badge idle';
-      document.getElementById('status-badge').title = 'Deliberation finished — export results or ask follow-ups';
+      // The event fires for every ending, including a stop and a circuit
+      // breaker abort. Rendering "✅ Deliberation Complete" for a run that
+      // produced no verdict is the same lie the status field used to tell.
+      const endBadge = sessionBadge({ outcome: data.outcome });
+      addCompleteBanner(data.outcome);
+      document.getElementById('status-badge').textContent = endBadge.label;
+      document.getElementById('status-badge').className = `status-badge ${endBadge.cls}`;
+      document.getElementById('status-badge').title = endBadge.title;
       document.getElementById('chat-input').placeholder = 'Send a message, ask a follow-up, or answer an escalation...';
       document.getElementById('btn-stop').style.display = 'none';
       document.getElementById('btn-export').style.display = 'flex';
@@ -658,8 +662,15 @@ function handleMessage(data) {
             .catch(() => {});
         }, 5000);
       }
-      // Auto-prompt export after short delay
-      setTimeout(() => openExportModal(), 800);
+      // Auto-prompt export only when there is a verdict to export.
+      if (!data.outcome || data.outcome === 'complete') setTimeout(() => openExportModal(), 800);
+      break;
+    }
+
+    case 'deliberation-aborted':
+      // The circuit breaker gave up: consecutive agent turns all failed. Say
+      // why, with the provider's own error, instead of leaving the room silent.
+      showToast(`⚠️ Deliberation abandoned after ${data.failedTurns} consecutive failed agent turns: ${data.reason || 'unknown error'}`);
       break;
 
     case 'session-stopped':
@@ -702,9 +713,10 @@ function handleMessage(data) {
       document.getElementById('problem-display').textContent = data.session.problem;
       document.getElementById('problem-display').title = data.session.problem;
       showSessionId(data.session.id);
-      document.getElementById('status-badge').textContent = data.session.active ? 'Active' : 'Complete';
-      document.getElementById('status-badge').className = `status-badge ${data.session.active ? 'active' : 'idle'}`;
-      document.getElementById('status-badge').title = data.session.active ? 'Agents are processing' : 'Deliberation finished — export results or ask follow-ups';
+      const badgeState = sessionBadge(data.session);
+      document.getElementById('status-badge').textContent = badgeState.label;
+      document.getElementById('status-badge').className = `status-badge ${badgeState.cls}`;
+      document.getElementById('status-badge').title = badgeState.title;
       if (!data.session.active) {
         document.getElementById('chat-input').placeholder = 'Send a message, ask a follow-up, or answer an escalation...';
         document.getElementById('btn-stop').style.display = 'none';
@@ -1005,7 +1017,7 @@ function renderSessionList() {
       <div class="sc-phase-dots">${dots}</div>
       ${specs ? `<div class="sc-specialists">${specs}</div>` : ''}
       <div class="sc-meta">
-        <span class="sc-status ${s.active ? 'active' : (s.crashRecovered ? 'interrupted' : 'done')}"></span>
+        <span class="sc-status ${s.active ? 'active' : (s.crashRecovered || s.outcome === 'crashed' || s.outcome === 'stopped' || s.outcome === 'failed' ? 'interrupted' : 'done')}" title="${escHtml(sessionBadge(s).title)}"></span>
         <span>${relativeDate(s.createdAt)}</span>
         <span>·</span>
         <span>${s.messageCount || 0} msgs</span>
@@ -1879,13 +1891,20 @@ function renderDecisionRecord(explicitSynth) {
   feed.insertBefore(card, feed.firstChild);
 }
 
-function addCompleteBanner() {
+function addCompleteBanner(outcome) {
   const d = document.createElement('div');
   d.className = 'complete-banner';
-  d.innerHTML = `
+  const finished = !outcome || outcome === 'complete';
+  d.innerHTML = finished ? `
     <h3>✅ Deliberation Complete</h3>
     <p>Review the synthesis above for findings and recommendations.</p>
     <button class="export-btn" id="banner-export-btn">📤 Export Results</button>
+  ` : `
+    <h3>⚠️ Deliberation ${outcome === 'failed' ? 'Failed' : 'Stopped'}</h3>
+    <p>${outcome === 'failed'
+      ? 'No verdict was produced: the agent turns did not get through. Check the provider before resuming.'
+      : 'The room ended before the last phase. Resume to run the rest.'}</p>
+    <button class="export-btn" id="banner-export-btn">📤 Export Transcript</button>
   `;
   document.getElementById('feed').appendChild(d);
   d.querySelector('#banner-export-btn').addEventListener('click', () => openExportModal());

@@ -786,10 +786,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // the phases that already ran before it.
   let phasesCompleted = resumeFromPhase;
   let abortReason = null;
+  let deactivated = false;
   let consecutiveTurnFailures = 0;
 
   for (let phaseIdx = resumeFromPhase; phaseIdx < PHASES.length; phaseIdx++) {
-    if (!session.active) break;
+    if (!session.active) { deactivated = true; break; }
     router.setIndex(phaseIdx);
     const phase = router.current();
     session.phase = phaseIdx;
@@ -797,8 +798,14 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     const phaseAgents = getPhaseAgents(phase);
     broadcast(session.id, { type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents, sessionId: session.id });
 
+    // Whether every agent of this phase was dispatched. The inner loop's three
+    // exits are all early ones, so "ran to its end" is exactly the condition,
+    // and it is not the same as "the session is still active": a stop landing
+    // during the final agent's turn (synthesis is one agent and minutes long)
+    // still leaves that phase finished, with its message written.
+    let phaseRanToEnd = true;
     for (const agentId of phaseAgents) {
-      if (!session.active) break;
+      if (!session.active) { phaseRanToEnd = false; break; }
       // Only BLOCKING escalations halt the deliberation. Optional ones
       // accumulate in the pending panel and auto-resolve to their stated
       // default at phase end (below) — they never block an agent turn.
@@ -852,7 +859,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       // as a timeout above) but leaves the loop mid-iteration. Recheck before
       // the turn so a stopped or deleted session never runs another agent, and
       // its insertMessage never lands on a row deleteSession already removed.
-      if (!session.active) break;
+      if (!session.active) { phaseRanToEnd = false; break; }
       const turnError = await runAgentTurn(session, agentId, phaseIdx);
       // A provider that refuses one turn usually refuses the next: on
       // 2026-08-11 three sessions each drove all 21 turns into a 402/429 storm
@@ -868,6 +875,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
           reason: turnError, failedTurns: consecutiveTurnFailures,
         });
         session.active = false;
+        phaseRanToEnd = false;
         break;
       }
     }
@@ -884,11 +892,12 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       broadcast(session.id, { type: 'escalation-answered', escalationId: e.id, answer: ans, sessionId: session.id, autoResolved: true });
     }
 
-    // Count the phase only if the room got through it. A stop, a delete, or a
-    // SIGTERM lands here with active already false, and that run did not
-    // complete this phase.
-    if (!session.active) break;
-    phasesCompleted = phaseIdx + 1;
+    // Count the phase when every one of its agents was dispatched, even if the
+    // stop arrived during the last of them: that phase did finish, and the
+    // final synthesis message is already written. Then leave, because the
+    // session is no longer running.
+    if (phaseRanToEnd) phasesCompleted = phaseIdx + 1;
+    if (!session.active) { deactivated = true; break; }
   }
 
   session.active = false;
@@ -897,6 +906,7 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     phasesCompleted,
     totalPhases: PHASES.length,
     aborted: !!abortReason,
+    deactivated,
   });
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   stmts.updateSessionOutcome.run(outcome, outcome === 'failed' ? Date.now() : null, Date.now(), session.id);

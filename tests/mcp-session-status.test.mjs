@@ -22,6 +22,7 @@ function seed(dbPath) {
   ins.run('sess-stopped', 'killed by a redeploy at framing', 0, 0, now, now, 'stopped');
   ins.run('sess-complete', 'ran the whole room', 4, 0, now, now, 'complete');
   ins.run('sess-failed', 'provider refused every turn', 4, 0, now, now, 'failed');
+  ins.run('sess-crashed', 'server restarted mid-run', 2, 0, now, now, 'crashed');
   const metric = db.prepare(`INSERT INTO search_metrics (session_id, agent_id, agent_tier, path, event_type, error, created_at)
                              VALUES (?, ?, 'D', 'none', 'agent_turn_complete', ?, ?)`);
   metric.run('sess-failed', 'process-architect', 'Gateway error (402): can only afford 20722', now);
@@ -45,11 +46,17 @@ test('warroom_get_session tells a stopped run apart from a completed one', async
       const stopped = await detail(client, 'sess-stopped');
       assert.match(stopped, /Status: Stopped/, 'a run that ended early must say so');
       assert.doesNotMatch(stopped, /Status: Complete/, 'and must not claim completion');
-      assert.match(stopped, /1\/5/, 'phases completed must be visible');
+      // How far it got, stated as reached rather than completed: `phase` is
+      // stamped when the room enters a phase, not when it finishes one.
+      assert.match(stopped, /phase 1 of 5 reached/, 'how far the run got must be visible');
 
       const complete = await detail(client, 'sess-complete');
       assert.match(complete, /Status: Complete/, 'a finished run still reads as complete');
-      assert.match(complete, /5\/5/);
+      assert.match(complete, /phase 5 of 5 reached/);
+
+      const crashed = await detail(client, 'sess-crashed');
+      assert.match(crashed, /Status: Crashed/, 'a restart casualty says so');
+      assert.doesNotMatch(crashed, /Status: Complete/);
 
       const failed = await detail(client, 'sess-failed');
       assert.match(failed, /Status: Failed/, 'a run with no output reads as failed');

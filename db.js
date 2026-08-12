@@ -63,7 +63,7 @@ const stmts = {
   // Why a run died. Every agent turn records its provider error here; these
   // two turn that record into something a caller can read over MCP.
   turnFailureCount: db.prepare("SELECT COUNT(*) AS c FROM search_metrics WHERE session_id = ? AND event_type = 'agent_turn_complete' AND error IS NOT NULL"),
-  lastTurnError: db.prepare("SELECT agent_id, error, created_at FROM search_metrics WHERE session_id = ? AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1"),
+  lastTurnError: db.prepare("SELECT agent_id, error, created_at FROM search_metrics WHERE session_id = ? AND event_type = 'agent_turn_complete' AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1"),
   // Bulk / auto-resolve path also flags bulk_resolved so we can measure how
   // often the human carpet-bombs defaults vs engages (Red Team watch-metric).
   answerEscalationBulk: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ?, bulk_resolved = 1 WHERE id = ?'),
