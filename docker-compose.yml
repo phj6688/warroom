@@ -2,7 +2,14 @@ name: war-room
 
 services:
   war-room:
-    build: .
+    build:
+      context: .
+      args:
+        # Baked into the image, not injected at run time. Deploy with:
+        #   BUILD_SHA=$(git rev-parse HEAD) docker compose up -d --build
+        # A later plain `docker compose up -d` then keeps the beacon, because the
+        # value lives in the image instead of in whoever's shell ran the command.
+        BUILD_SHA: ${BUILD_SHA:-}
     container_name: war-room
     restart: unless-stopped
     ports:
@@ -17,10 +24,9 @@ services:
       INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID}
       INFISICAL_ENV: prod
       BASELINE_LOG: data/baseline-usage.jsonl
-      # Commit this container is running. Injected into the served document so a
-      # screenshot harness can prove which build painted the page it captured.
-      # Deploy with: BUILD_SHA=$(git rev-parse HEAD) docker compose up -d --build
-      BUILD_SHA: ${BUILD_SHA:-}
+      # BUILD_SHA is deliberately NOT listed here. Compose would resolve an unset
+      # variable to an empty string and that empty value overrides the image ENV,
+      # so every redeploy that forgot to export it silently erased the beacon.
       IMPROVER_SYSTEM_PROMPT: ${IMPROVER_SYSTEM_PROMPT:-}
       EMBED_GATEWAY_URL: ${EMBED_GATEWAY_URL:-http://embed-gateway:8200}
       EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
