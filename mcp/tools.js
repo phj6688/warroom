@@ -24,6 +24,32 @@ function registerTools(server, rawOps) {
   function ok(text) { return { content: [{ type: 'text', text }] }; }
   function err(text) { return { content: [{ type: 'text', text }], isError: true }; }
 
+  // This line used to read `active ? 'Active' : 'Complete'`, so a run a
+  // redeploy killed at Problem Framing was reported to the caller as Complete,
+  // indistinguishable from one that reached Synthesis. Name the real terminal
+  // state. A NULL outcome on an inactive row is a legacy session from before
+  // the outcome column existed and is treated as complete.
+  const TERMINAL_LABEL = {
+    complete: 'Complete',
+    stopped: 'Stopped before the last phase',
+    failed: 'Failed (no verdict produced)',
+    crashed: 'Crashed (server restarted mid-run)',
+  };
+  function sessionStatus(s) {
+    if (s.active) return 'Running';
+    return TERMINAL_LABEL[s.outcome] || 'Complete';
+  }
+
+  // How far the run got, so "stopped" carries a distance. `phase` is the
+  // zero-based index of the phase the room was last IN, which is not the same
+  // as the number it finished — the loop stamps it on entry — so this says
+  // reached, not completed.
+  function phaseProgress(s) {
+    const total = s.totalPhases || 5;
+    const reached = Math.min(total, (Number(s.phase) || 0) + 1);
+    return `phase ${reached} of ${total} reached`;
+  }
+
   // One absent-cost token across list and detail. Sub-dollar costs keep 4
   // decimals so a fraction-of-a-cent session does not round to $0.00 (the live
   // panel shows the real value via the same precision rule).
@@ -47,7 +73,9 @@ function registerTools(server, rawOps) {
         if (!sessions.length) return ok('No sessions yet. Use warroom_create_session to start one.');
         const rows = sessions.map(s => {
           const date = new Date(s.createdAt).toISOString().slice(0, 16);
-          const status = s.active ? 'ACTIVE' : 'Done';
+          // "Done" for every inactive row is the same lie the detail view told:
+          // the list is where an empty run used to read as "Done | Synthesis".
+          const status = s.active ? 'ACTIVE' : sessionStatus(s).toUpperCase();
           const tok = s.totalTokens != null ? `${s.totalTokens.toLocaleString()} tok` : '— tok';
           const cost = fmtCost(s.totalCostUsd);
           return `[${s.id}] ${status} | Phase: ${s.phaseName || s.phase} | ${s.messageCount || 0} msgs | ${s.pendingCount || 0} pending | ${tok} | ${cost} | ${date}\n  ${s.problem.slice(0, 120)}`;
@@ -69,12 +97,16 @@ function registerTools(server, rawOps) {
         const lines = [
           `Session: ${s.id}`,
           `Problem: ${s.problem}`,
-          `Status: ${s.active ? 'Active' : 'Complete'} | Phase: ${s.phaseName || s.phase}`,
+          `Status: ${sessionStatus(s)} | Phase: ${s.phaseName || s.phase} (${phaseProgress(s)})`,
           `Created: ${new Date(s.createdAt).toISOString()}`,
           `Tokens: ${s.totalTokens != null ? s.totalTokens.toLocaleString() : '—'}`,
           `Cost: ${fmtCost(s.totalCostUsd)}`,
           `Outcome: ${s.outcome || (s.active ? 'running' : 'complete')} | Quality: ${s.qualityScore != null ? s.qualityScore.toFixed(3) : '(none)'}`,
         ];
+        if (s.failedTurns) {
+          const last = s.lastError ? ` | Last error: ${String(s.lastError.error).slice(0, 240)}` : '';
+          lines.push(`Failed turns: ${s.failedTurns}${last}`);
+        }
         if (s.costBreakdown && typeof s.costBreakdown === 'object') {
           const parts = Object.entries(s.costBreakdown).map(([route, amt]) => `${route} ${fmtCost(amt)}`);
           if (parts.length) lines.push(`  by route: ${parts.join(', ')}`);
@@ -122,7 +154,7 @@ function registerTools(server, rawOps) {
   // 3. warroom_create_session
   server.tool(
     'warroom_create_session',
-    'Start a new multi-agent deliberation. 8 agents work through 5 phases: Framing → Divergence → Convergence → Red Team → Synthesis. Runs async — poll warroom_get_session every 1-2 min and answer pending escalations with warroom_answer_escalation promptly (unanswered escalations block progress). Use for decisions worth real deliberation: weeks-of-work commitments, post-failure adversarial reads, genuine 2-3 option uncertainty. NOT for routine questions answerable in a single response. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
+    'Start a new multi-agent deliberation. 8 agents work through 5 phases: Framing → Divergence → Convergence → Red Team → Synthesis. Runs async — poll warroom_get_session every 1-2 min and answer pending escalations with warroom_answer_escalation while the room waits (an unanswered escalation resolves to the agent\'s stated default after 5 minutes, so a late answer costs quality, not the session). Read the Status line to know where a run ended: Running, Complete, Stopped, Failed, or Crashed, with the phases it got through. Only Complete means the room reached Synthesis. Use for decisions worth real deliberation: weeks-of-work commitments, post-failure adversarial reads, genuine 2-3 option uncertainty. NOT for routine questions answerable in a single response. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
     {
       problem: z.string().describe('Problem statement. Agents see this verbatim every turn — it is the largest single quality lever. Strong statements include: (1) context, (2) the core question or decision, (3) hard constraints, (4) success criteria for a good answer, (5) explicit intent — comparison, recommendation, design, analysis, or decision. Name the tradeoffs and stakeholder perspectives that matter. Keep short problems short; add structure only when it aids clarity. Do not invent requirements that were not stated.'),
       files: z.array(z.object({
@@ -224,15 +256,16 @@ function registerTools(server, rawOps) {
   // 7. warroom_answer_escalation
   server.tool(
     'warroom_answer_escalation',
-    'Answer a pending agent escalation to unblock deliberation',
+    'Answer a pending agent escalation. A blocking escalation wakes the room the moment you answer. Answering is worth doing, but it is not a deadline you can miss: an unanswered escalation resolves to the default the agent stated and the room carries on, so a late answer costs quality, never the session.',
     {
       escalationId: z.string().describe('Escalation ID'),
       answer: z.string().describe('Your answer'),
     },
     async ({ escalationId, answer }) => {
       try {
-        await ops.answerEscalation(escalationId, answer);
-        return ok(`Escalation ${escalationId} answered.`);
+        const out = await ops.answerEscalation(escalationId, answer);
+        const woke = out && out.resolved ? ' Deliberation resumed.' : '';
+        return ok(`Escalation ${escalationId} answered.${woke}`);
       } catch (e) { return err(e.message); }
     }
   );

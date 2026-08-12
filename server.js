@@ -32,7 +32,7 @@ const { createFilesServiceClient } = require('./lib/clients/files-service');
 const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
-const { waitForEscalation, abortSessionWaits, getDeadline, pauseEscalation, DEFAULT_TIMEOUT_MS } = require('./lib/escalation');
+const { waitForEscalation, abortSessionWaits, getDeadline, pauseEscalation, defaultAnswerFor, DEFAULT_TIMEOUT_MS } = require('./lib/escalation');
 const { createSearchProvider } = require('./lib/search');
 const { getSearchConfigForAgent, makeSessionBudget, SESSION_QUERY_BUDGET, AGENT_SEARCH_EXPANSION } = require('./lib/agents/search-config');
 const { createMetricsSink, tierForAgent } = require('./lib/metrics/search-metrics');
@@ -343,6 +343,13 @@ function loadSession(id) {
     continuesFromSessionId: row.continues_from_session_id || null,
     totalTokens: row.total_tokens ?? null,
     tokenBreakdown: (() => { try { return row.token_breakdown ? JSON.parse(row.token_breakdown) : null; } catch (_) { return null; } })(),
+    // How the run ended, for every reader of GET /api/sessions/:id — the web
+    // UI and the stdio MCP transport included. Without it those surfaces can
+    // only see `active`, which is exactly the blindness that let a session
+    // stopped at Problem Framing read as a completed one.
+    outcome: row.outcome ?? null,
+    crashRecoveredAt: row.crash_recovered_at ?? null,
+    totalPhases: PHASES.length,
   };
 }
 
@@ -652,9 +659,19 @@ async function runAgentTurn(session, agentId, phase) {
       sLog.error({ agentId, err: err && err.message }, 'metrics sink threw on agent_turn_complete');
     }
   }
+  // The loop reads this to spot a provider that is refusing every turn.
+  return turnError;
 }
 
 // ─── Deliberation Loop ─────────────────────────────────────
+// How many agent turns may fail back to back before the run is abandoned. Four
+// is one full phase of failures plus one: enough to ride out a single flaky
+// agent, short enough that a dead provider costs one phase, not five.
+const MAX_CONSECUTIVE_TURN_FAILURES = (() => {
+  const n = Number.parseInt(process.env.MAX_CONSECUTIVE_TURN_FAILURES || '', 10);
+  return Number.isInteger(n) && n > 0 ? n : 4;
+})();
+
 async function runDeliberation(session, resumeFromPhase = 0) {
   const sLog = withSession(session.id);
   // Fingerprint classification + specialist spawning (before Phase 0)
@@ -764,8 +781,16 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     return baseAgents;
   }
 
+  // Phases the loop actually finished. The completion path reads it to tell a
+  // run that reached Synthesis from one that ended early; a resumed run counts
+  // the phases that already ran before it.
+  let phasesCompleted = resumeFromPhase;
+  let abortReason = null;
+  let deactivated = false;
+  let consecutiveTurnFailures = 0;
+
   for (let phaseIdx = resumeFromPhase; phaseIdx < PHASES.length; phaseIdx++) {
-    if (!session.active) break;
+    if (!session.active) { deactivated = true; break; }
     router.setIndex(phaseIdx);
     const phase = router.current();
     session.phase = phaseIdx;
@@ -773,8 +798,14 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     const phaseAgents = getPhaseAgents(phase);
     broadcast(session.id, { type: 'phase-change', phase: phaseIdx, phaseName: phase.name, phaseAgents, sessionId: session.id });
 
+    // Whether every agent of this phase was dispatched. The inner loop's three
+    // exits are all early ones, so "ran to its end" is exactly the condition,
+    // and it is not the same as "the session is still active": a stop landing
+    // during the final agent's turn (synthesis is one agent and minutes long)
+    // still leaves that phase finished, with its message written.
+    let phaseRanToEnd = true;
     for (const agentId of phaseAgents) {
-      if (!session.active) break;
+      if (!session.active) { phaseRanToEnd = false; break; }
       // Only BLOCKING escalations halt the deliberation. Optional ones
       // accumulate in the pending panel and auto-resolve to their stated
       // default at phase end (below) — they never block an agent turn.
@@ -803,17 +834,50 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         });
         const results = await Promise.all(waits);
         const timedOut = results.filter(r => r.status === 'timeout');
-        if (timedOut.length > 0) {
-          sLog.warn({ count: timedOut.length }, 'escalation wait timed out, proceeding without input');
-          broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
+        // A blocking escalation that timed out was never marked answered, so
+        // the next agent turn re-armed a fresh 5-minute wait on the same
+        // question, and so did every turn after it — one unanswered question
+        // could hold a room for over an hour. Close it on its stated default,
+        // the way the phase gate closes an optional one. A stop or a delete
+        // also surfaces here as a timeout, so only do this while the session
+        // is still running.
+        if (timedOut.length > 0 && session.active) {
+          for (const r of timedOut) {
+            const e = pending.find(x => x.id === r.id);
+            if (!e || e.answered) continue;
+            const ans = defaultAnswerFor(e, '[auto-resolved after timeout]');
+            e.answered = true;
+            e.answer = ans;
+            stmts.answerEscalationBulk.run(ans, Date.now(), e.id);
+            broadcast(session.id, { type: 'escalation-answered', escalationId: e.id, answer: ans, sessionId: session.id, autoResolved: true });
+          }
+          sLog.warn({ count: timedOut.length }, 'escalation wait timed out; resolved to the stated defaults');
+          broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding on the stated defaults (timeout)', sessionId: session.id });
         }
       }
       // A stop or delete during the escalation wait releases the wait (surfaced
       // as a timeout above) but leaves the loop mid-iteration. Recheck before
       // the turn so a stopped or deleted session never runs another agent, and
       // its insertMessage never lands on a row deleteSession already removed.
-      if (!session.active) break;
-      await runAgentTurn(session, agentId, phaseIdx);
+      if (!session.active) { phaseRanToEnd = false; break; }
+      const turnError = await runAgentTurn(session, agentId, phaseIdx);
+      // A provider that refuses one turn usually refuses the next: on
+      // 2026-08-11 three sessions each drove all 21 turns into a 402/429 storm
+      // and produced nothing, in under two minutes and for real money. Stop
+      // paying for a room that cannot speak.
+      if (!turnError) {
+        consecutiveTurnFailures = 0;
+      } else if (++consecutiveTurnFailures >= MAX_CONSECUTIVE_TURN_FAILURES) {
+        abortReason = turnError;
+        sLog.error({ consecutiveTurnFailures, lastError: turnError }, 'aborting deliberation: consecutive agent turns all failed');
+        broadcast(session.id, {
+          type: 'deliberation-aborted', sessionId: session.id,
+          reason: turnError, failedTurns: consecutiveTurnFailures,
+        });
+        session.active = false;
+        phaseRanToEnd = false;
+        break;
+      }
     }
 
     // Phase end: auto-resolve any still-open OPTIONAL escalations to their
@@ -821,18 +885,33 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     // and fed back to agents — never silently dropped.
     const unresolvedOptional = session.escalations.filter(e => !e.answered && e.severity === 'optional');
     for (const e of unresolvedOptional) {
-      const ans = e.defaultAction
-        ? `[auto-resolved to default] ${e.defaultAction}`
-        : '[auto-resolved] No human answer; proceed with your stated default / best judgment.';
+      const ans = defaultAnswerFor(e, '[auto-resolved]');
       e.answered = true;
       e.answer = ans;
       stmts.answerEscalationBulk.run(ans, Date.now(), e.id);
       broadcast(session.id, { type: 'escalation-answered', escalationId: e.id, answer: ans, sessionId: session.id, autoResolved: true });
     }
+
+    // Count the phase when every one of its agents was dispatched, even if the
+    // stop arrived during the last of them: that phase did finish, and the
+    // final synthesis message is already written. Then leave, because the
+    // session is no longer running.
+    if (phaseRanToEnd) phasesCompleted = phaseIdx + 1;
+    if (!session.active) { deactivated = true; break; }
   }
 
   session.active = false;
-  const outcome = deliberationOutcome(session.messages.length);
+  // Did the room reach a verdict, not just reach the phase that produces one.
+  const finalPhaseName = PHASES[PHASES.length - 1].name;
+  const verdictProduced = session.messages.some(m => m.phase === finalPhaseName);
+  const outcome = deliberationOutcome({
+    messageCount: session.messages.length,
+    phasesCompleted,
+    totalPhases: PHASES.length,
+    aborted: !!abortReason,
+    deactivated,
+    verdictProduced,
+  });
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   stmts.updateSessionOutcome.run(outcome, outcome === 'failed' ? Date.now() : null, Date.now(), session.id);
   activeSessions.delete(session.id);
@@ -842,10 +921,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // not crash the request path.
   jobs.enqueue('memory.storeSessionMemory', { sessionId: session.id });
   jobs.enqueue('memory.extractArchivalFacts', { sessionId: session.id });
-  // A failed run (no agent produced a message, e.g. a provider cooldown storm)
-  // is not scored: scoring it would pollute the quality metric with
-  // infrastructure failures (B7 / HLB-797).
-  if (outcome !== 'failed') jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
+  // Only a run that reached the end is scored. Scoring a failed run pollutes
+  // the metric with infrastructure failures (B7 / HLB-797); scoring a stopped
+  // one dresses a redeploy casualty up as a judged verdict, which is how a
+  // three-message session came to carry a quality score of 0.249.
+  if (outcome === 'complete') jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
 
   // HLB-152 — persist the per-session token tally accumulated across all agent
   // turns and tool round-trips. Embedding/memory/quality tokens are added by
@@ -976,6 +1056,10 @@ async function shutdown() {
   activeSessions.forEach((session) => {
     session.active = false;
     try { stmts.updateSessionActive.run(0, Date.now(), session.id); } catch (_) {}
+    // Stamp the outcome here rather than leaving it to the loop: the process
+    // may exit before the parked turn gets another tick, and a row with no
+    // outcome reads as a legacy completion. A redeploy is not a verdict.
+    try { stmts.updateSessionOutcome.run('stopped', null, Date.now(), session.id); } catch (_) {}
     try { abortSessionWaits(session.id, 'server shutting down'); } catch (_) {}
   });
 

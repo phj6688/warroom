@@ -48,12 +48,22 @@ const stmts = {
   updateSessionPhase: db.prepare('UPDATE sessions SET phase = ?, updated_at = ? WHERE id = ?'),
   updateSessionActive: db.prepare('UPDATE sessions SET active = ?, updated_at = ? WHERE id = ?'),
   updateSessionOutcome: db.prepare('UPDATE sessions SET outcome = ?, failed_at = ?, updated_at = ? WHERE id = ?'),
-  markCrashRecovered: db.prepare('UPDATE sessions SET active = 0, crash_recovered_at = ?, updated_at = ? WHERE id = ?'),
+  // COALESCE keeps an outcome the loop already wrote; only a row that never
+  // reached its completion path is labelled crashed. Without the label the row
+  // reads as a legacy completion and gets retroactively quality-scored.
+  markCrashRecovered: db.prepare("UPDATE sessions SET active = 0, outcome = COALESCE(outcome, 'crashed'), crash_recovered_at = ?, updated_at = ? WHERE id = ?"),
   getActiveSessions: db.prepare('SELECT id FROM sessions WHERE active = 1'),
   insertFile: db.prepare('INSERT OR IGNORE INTO session_files (session_id, file_id, file_sha256, file_name, file_tokens, file_mime, attached_at) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   insertMessage: db.prepare('INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   insertEscalation: db.prepare('INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, severity, default_action, answer, status, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, \'pending\', ?, NULL)'),
   answerEscalation: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ? WHERE id = ?'),
+  // An answer names an escalation, not a session. This is how the shared answer
+  // path finds the room to wake when the caller only holds the escalation id.
+  getEscalation: db.prepare('SELECT * FROM escalations WHERE id = ?'),
+  // Why a run died. Every agent turn records its provider error here; these
+  // two turn that record into something a caller can read over MCP.
+  turnFailureCount: db.prepare("SELECT COUNT(*) AS c FROM search_metrics WHERE session_id = ? AND event_type = 'agent_turn_complete' AND error IS NOT NULL"),
+  lastTurnError: db.prepare("SELECT agent_id, error, created_at FROM search_metrics WHERE session_id = ? AND event_type = 'agent_turn_complete' AND error IS NOT NULL ORDER BY created_at DESC LIMIT 1"),
   // Bulk / auto-resolve path also flags bulk_resolved so we can measure how
   // often the human carpet-bombs defaults vs engages (Red Team watch-metric).
   answerEscalationBulk: db.prepare('UPDATE escalations SET status = \'answered\', answer = ?, answered_at = ?, bulk_resolved = 1 WHERE id = ?'),

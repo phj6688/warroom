@@ -25,6 +25,13 @@ stmts.insertSession.run('failed-1', 'p', now, now);   // stmt hardcodes active=1
 stmts.updateSessionActive.run(0, now, 'failed-1');
 stmts.updateSessionOutcome.run('failed', now, now, 'failed-1');
 
+// A stopped session: it produced messages but never reached the last phase, so
+// scoring it would dress a redeploy casualty up as a judged verdict. This is
+// how a three-message run came to carry a quality score of 0.249.
+stmts.insertSession.run('stopped-1', 'p', now, now);
+stmts.updateSessionActive.run(0, now, 'stopped-1');
+stmts.updateSessionOutcome.run('stopped', null, now, 'stopped-1');
+
 const quality = createQualityManager({ db, stmts, callAnthropic: async () => '', PHASES: [], onTokenUsage: () => {} });
 
 (async () => {
@@ -33,6 +40,11 @@ const quality = createQualityManager({ db, stmts, callAnthropic: async () => '',
     'retroactiveScore must NOT create a quality_scores row for a failed session');
   const sess = stmts.getSession.get('failed-1');
   assert.ok(sess.quality_score == null, 'failed session has no quality_score after backfill');
+
+  assert.ok(!db.prepare('SELECT 1 FROM quality_scores WHERE session_id = ?').get('stopped-1'),
+    'retroactiveScore must NOT score a session that ended before the last phase');
+  assert.equal(await quality.evaluateSession('stopped-1'), null,
+    'evaluateSession returns null for a stopped session');
 
   // Defense-in-depth: a direct evaluateSession on a failed session is a no-op.
   const direct = await quality.evaluateSession('failed-1');

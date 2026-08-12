@@ -9,6 +9,7 @@ const { routableAgents, routableAgentIds } = require('../lib/routable-agents');
 const { availableRoutes, resolveRoute, testConnection, listModels } = require('../lib/llm');
 const { listPresets, getPreset } = require('../lib/presets');
 const { resumeSession } = require('../lib/resume');
+const { answerEscalationById } = require('../lib/escalation');
 const { improverSystemPrompt, improverUserMessage } = require('../lib/improve');
 const { buildJsonExport } = require('../lib/export');
 const { embed } = require('../lib/embeddings');
@@ -109,13 +110,27 @@ function setupMCPServer(app, deps) {
       const messages = stmts.getSessionMessages.all(sessionId);
       const escalations = stmts.getSessionEscalations.all(sessionId);
       const humanMsgs = stmts.getSessionHumanMessages.all(sessionId);
+      // Why a run died was already in the DB (every failed turn records its
+      // provider error) but nothing surfaced it, so a caller polling over MCP
+      // could not tell a credit refusal from a rate limit from a stall.
+      let failedTurns = 0;
+      let lastError = null;
+      try {
+        failedTurns = stmts.turnFailureCount.get(sessionId).c;
+        const row = failedTurns > 0 ? stmts.lastTurnError.get(sessionId) : null;
+        if (row) lastError = { agentId: row.agent_id, error: row.error, at: row.created_at };
+      } catch (_) { /* diagnostics are best-effort, never break the read */ }
       return {
         id: s.id, problem: s.problem, phase: s.phase,
         phaseName: PHASES[s.phase]?.name || String(s.phase),
+        totalPhases: PHASES.length,
         active: !!s.active, createdAt: s.created_at,
         totalTokens: s.total_tokens ?? null,
         totalCostUsd: s.total_cost_usd ?? null,
         outcome: s.outcome ?? null,
+        crashRecoveredAt: s.crash_recovered_at ?? null,
+        failedTurns,
+        lastError,
         qualityScore: s.quality_score ?? null,
         costBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.cost_breakdown),
         tokenBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.token_breakdown),
@@ -186,6 +201,9 @@ function setupMCPServer(app, deps) {
       if (session) {
         session.active = false;
         stmts.updateSessionActive.run(0, Date.now(), sessionId);
+        // Parity with the WS stop path: a NULL outcome in the window before
+        // the loop exits reads as a completion to the next poll.
+        stmts.updateSessionOutcome.run('stopped', null, Date.now(), sessionId);
         activeSessions.delete(sessionId);
         // Release any deliberation parked on an escalation wait so the loop
         // can fall through and exit (parity with the WS stop path).
@@ -202,11 +220,13 @@ function setupMCPServer(app, deps) {
       stmts.insertHumanMessage.run(hmId, sessionId, message, now);
     },
     async answerEscalation(escalationId, answer) {
-      stmts.answerEscalation.run(answer, Date.now(), escalationId);
-      for (const [, session] of activeSessions) {
-        const esc = session.escalations?.find(e => e.id === escalationId);
-        if (esc) { esc.answered = true; esc.answer = answer; break; }
-      }
+      // This used to persist the answer and set the in-memory flag without
+      // ever releasing the waiter, so the deliberation stayed parked for its
+      // full 5-minute window while the caller believed the room had resumed.
+      // The shared routine wakes it.
+      const out = answerEscalationById({ stmts, activeSessions, broadcast }, escalationId, answer);
+      if (!out) throw new Error(`Escalation ${escalationId} not found`);
+      return out;
     },
     async getEscalations(sessionId) {
       if (sessionId) return stmts.getPendingEscalations.all(sessionId);

@@ -25,6 +25,8 @@ test('stdio transport: every tool has an op, and the model tools reach the same 
     const db = new Database(server.dbPath);
     db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 4, 0, ?, ?)')
       .run('stdioparity1', 'decide something', now, now);
+    db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at, outcome) VALUES (?, ?, 0, 0, ?, ?, ?)')
+      .run('stdioparity2', 'killed at framing', now, now, 'stopped');
     db.prepare('INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run('sp1', 'stdioparity1', 'process-architect', 'Process Architect', '', '', 'DECISION: ship it', 'Synthesis', now);
     db.close();
@@ -52,6 +54,14 @@ test('stdio transport: every tool has an op, and the model tools reach the same 
 
     const attach = await call('warroom_attach_files', { sessionId: 'stdioparity1' });
     assert.ok(!/is not a function/.test(textOf(attach)), 'attach_files has a stdio op');
+
+    // Both transports render the Status line from the same helper, but stdio
+    // feeds it from REST rather than the DB. When that mapping drops `outcome`
+    // the shared renderer silently falls back to "Complete", which is the
+    // whole defect: a run stopped at Problem Framing reporting itself finished.
+    const stopped = textOf(await call('warroom_get_session', { sessionId: 'stdioparity2' }));
+    assert.match(stopped, /Status: Stopped/, 'stdio must report a stopped run as stopped');
+    assert.doesNotMatch(stopped, /Status: Complete/, 'and must not claim completion');
 
     // Model tools over stdio write the same server-wide store.
     const cfg = await call('warroom_get_model_config');
