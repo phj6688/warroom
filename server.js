@@ -32,7 +32,7 @@ const { createFilesServiceClient } = require('./lib/clients/files-service');
 const { runLegacyFileMigration } = require('./lib/migrate-files');
 const jobs = require('./lib/jobs');
 const { log, withSession } = require('./lib/logger');
-const { waitForEscalation, abortSessionWaits, getDeadline, pauseEscalation, DEFAULT_TIMEOUT_MS } = require('./lib/escalation');
+const { waitForEscalation, abortSessionWaits, getDeadline, pauseEscalation, defaultAnswerFor, DEFAULT_TIMEOUT_MS } = require('./lib/escalation');
 const { createSearchProvider } = require('./lib/search');
 const { getSearchConfigForAgent, makeSessionBudget, SESSION_QUERY_BUDGET, AGENT_SEARCH_EXPANSION } = require('./lib/agents/search-config');
 const { createMetricsSink, tierForAgent } = require('./lib/metrics/search-metrics');
@@ -652,9 +652,19 @@ async function runAgentTurn(session, agentId, phase) {
       sLog.error({ agentId, err: err && err.message }, 'metrics sink threw on agent_turn_complete');
     }
   }
+  // The loop reads this to spot a provider that is refusing every turn.
+  return turnError;
 }
 
 // ─── Deliberation Loop ─────────────────────────────────────
+// How many agent turns may fail back to back before the run is abandoned. Four
+// is one full phase of failures plus one: enough to ride out a single flaky
+// agent, short enough that a dead provider costs one phase, not five.
+const MAX_CONSECUTIVE_TURN_FAILURES = (() => {
+  const n = Number.parseInt(process.env.MAX_CONSECUTIVE_TURN_FAILURES || '', 10);
+  return Number.isInteger(n) && n > 0 ? n : 4;
+})();
+
 async function runDeliberation(session, resumeFromPhase = 0) {
   const sLog = withSession(session.id);
   // Fingerprint classification + specialist spawning (before Phase 0)
@@ -764,6 +774,13 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     return baseAgents;
   }
 
+  // Phases the loop actually finished. The completion path reads it to tell a
+  // run that reached Synthesis from one that ended early; a resumed run counts
+  // the phases that already ran before it.
+  let phasesCompleted = resumeFromPhase;
+  let abortReason = null;
+  let consecutiveTurnFailures = 0;
+
   for (let phaseIdx = resumeFromPhase; phaseIdx < PHASES.length; phaseIdx++) {
     if (!session.active) break;
     router.setIndex(phaseIdx);
@@ -803,9 +820,25 @@ async function runDeliberation(session, resumeFromPhase = 0) {
         });
         const results = await Promise.all(waits);
         const timedOut = results.filter(r => r.status === 'timeout');
-        if (timedOut.length > 0) {
-          sLog.warn({ count: timedOut.length }, 'escalation wait timed out, proceeding without input');
-          broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding without human input (timeout)', sessionId: session.id });
+        // A blocking escalation that timed out was never marked answered, so
+        // the next agent turn re-armed a fresh 5-minute wait on the same
+        // question, and so did every turn after it — one unanswered question
+        // could hold a room for over an hour. Close it on its stated default,
+        // the way the phase gate closes an optional one. A stop or a delete
+        // also surfaces here as a timeout, so only do this while the session
+        // is still running.
+        if (timedOut.length > 0 && session.active) {
+          for (const r of timedOut) {
+            const e = pending.find(x => x.id === r.id);
+            if (!e || e.answered) continue;
+            const ans = defaultAnswerFor(e, '[auto-resolved after timeout]');
+            e.answered = true;
+            e.answer = ans;
+            stmts.answerEscalationBulk.run(ans, Date.now(), e.id);
+            broadcast(session.id, { type: 'escalation-answered', escalationId: e.id, answer: ans, sessionId: session.id, autoResolved: true });
+          }
+          sLog.warn({ count: timedOut.length }, 'escalation wait timed out; resolved to the stated defaults');
+          broadcast(session.id, { type: 'escalation-timeout', message: 'Proceeding on the stated defaults (timeout)', sessionId: session.id });
         }
       }
       // A stop or delete during the escalation wait releases the wait (surfaced
@@ -813,7 +846,23 @@ async function runDeliberation(session, resumeFromPhase = 0) {
       // the turn so a stopped or deleted session never runs another agent, and
       // its insertMessage never lands on a row deleteSession already removed.
       if (!session.active) break;
-      await runAgentTurn(session, agentId, phaseIdx);
+      const turnError = await runAgentTurn(session, agentId, phaseIdx);
+      // A provider that refuses one turn usually refuses the next: on
+      // 2026-08-11 three sessions each drove all 21 turns into a 402/429 storm
+      // and produced nothing, in under two minutes and for real money. Stop
+      // paying for a room that cannot speak.
+      if (!turnError) {
+        consecutiveTurnFailures = 0;
+      } else if (++consecutiveTurnFailures >= MAX_CONSECUTIVE_TURN_FAILURES) {
+        abortReason = turnError;
+        sLog.error({ consecutiveTurnFailures, lastError: turnError }, 'aborting deliberation: consecutive agent turns all failed');
+        broadcast(session.id, {
+          type: 'deliberation-aborted', sessionId: session.id,
+          reason: turnError, failedTurns: consecutiveTurnFailures,
+        });
+        session.active = false;
+        break;
+      }
     }
 
     // Phase end: auto-resolve any still-open OPTIONAL escalations to their
@@ -821,18 +870,27 @@ async function runDeliberation(session, resumeFromPhase = 0) {
     // and fed back to agents — never silently dropped.
     const unresolvedOptional = session.escalations.filter(e => !e.answered && e.severity === 'optional');
     for (const e of unresolvedOptional) {
-      const ans = e.defaultAction
-        ? `[auto-resolved to default] ${e.defaultAction}`
-        : '[auto-resolved] No human answer; proceed with your stated default / best judgment.';
+      const ans = defaultAnswerFor(e, '[auto-resolved]');
       e.answered = true;
       e.answer = ans;
       stmts.answerEscalationBulk.run(ans, Date.now(), e.id);
       broadcast(session.id, { type: 'escalation-answered', escalationId: e.id, answer: ans, sessionId: session.id, autoResolved: true });
     }
+
+    // Count the phase only if the room got through it. A stop, a delete, or a
+    // SIGTERM lands here with active already false, and that run did not
+    // complete this phase.
+    if (!session.active) break;
+    phasesCompleted = phaseIdx + 1;
   }
 
   session.active = false;
-  const outcome = deliberationOutcome(session.messages.length);
+  const outcome = deliberationOutcome({
+    messageCount: session.messages.length,
+    phasesCompleted,
+    totalPhases: PHASES.length,
+    aborted: !!abortReason,
+  });
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   stmts.updateSessionOutcome.run(outcome, outcome === 'failed' ? Date.now() : null, Date.now(), session.id);
   activeSessions.delete(session.id);
@@ -842,10 +900,11 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   // not crash the request path.
   jobs.enqueue('memory.storeSessionMemory', { sessionId: session.id });
   jobs.enqueue('memory.extractArchivalFacts', { sessionId: session.id });
-  // A failed run (no agent produced a message, e.g. a provider cooldown storm)
-  // is not scored: scoring it would pollute the quality metric with
-  // infrastructure failures (B7 / HLB-797).
-  if (outcome !== 'failed') jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
+  // Only a run that reached the end is scored. Scoring a failed run pollutes
+  // the metric with infrastructure failures (B7 / HLB-797); scoring a stopped
+  // one dresses a redeploy casualty up as a judged verdict, which is how a
+  // three-message session came to carry a quality score of 0.249.
+  if (outcome === 'complete') jobs.enqueue('quality.evaluateSession', { sessionId: session.id });
 
   // HLB-152 — persist the per-session token tally accumulated across all agent
   // turns and tool round-trips. Embedding/memory/quality tokens are added by
@@ -976,6 +1035,10 @@ async function shutdown() {
   activeSessions.forEach((session) => {
     session.active = false;
     try { stmts.updateSessionActive.run(0, Date.now(), session.id); } catch (_) {}
+    // Stamp the outcome here rather than leaving it to the loop: the process
+    // may exit before the parked turn gets another tick, and a row with no
+    // outcome reads as a legacy completion. A redeploy is not a verdict.
+    try { stmts.updateSessionOutcome.run('stopped', null, Date.now(), session.id); } catch (_) {}
     try { abortSessionWaits(session.id, 'server shutting down'); } catch (_) {}
   });
 
