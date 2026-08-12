@@ -152,6 +152,14 @@ const ops = {
       id: s.id, problem: s.problem, phase: s.phase,
       phaseName: `Phase ${s.phase}`, active: s.active,
       createdAt: s.createdAt,
+      // Both transports render the same Status line from mcp/tools.js. Without
+      // these the shared renderer falls back to "Complete" for every inactive
+      // session, which is the bug this branch exists to remove.
+      outcome: s.outcome ?? null,
+      crashRecoveredAt: s.crashRecoveredAt ?? null,
+      totalPhases: s.totalPhases ?? null,
+      qualityScore: s.qualityScore ?? null,
+      totalTokens: s.totalTokens ?? null,
       messages: s.messages || [],
       escalations: s.escalations || [],
       humanMessages: s.humanMessages || [],

@@ -343,6 +343,13 @@ function loadSession(id) {
     continuesFromSessionId: row.continues_from_session_id || null,
     totalTokens: row.total_tokens ?? null,
     tokenBreakdown: (() => { try { return row.token_breakdown ? JSON.parse(row.token_breakdown) : null; } catch (_) { return null; } })(),
+    // How the run ended, for every reader of GET /api/sessions/:id — the web
+    // UI and the stdio MCP transport included. Without it those surfaces can
+    // only see `active`, which is exactly the blindness that let a session
+    // stopped at Problem Framing read as a completed one.
+    outcome: row.outcome ?? null,
+    crashRecoveredAt: row.crash_recovered_at ?? null,
+    totalPhases: PHASES.length,
   };
 }
 
