@@ -1,9 +1,10 @@
 // A provider that accepts a request and never answers used to park the agent
-// turn, its phase, and the whole deliberation: nothing in the loop carries a
-// deadline. Measured 2026-08-12: one OpenRouter request held session
-// 3fe5a74f for over two hours with no log line, no error row, no phase
-// advance. Every LLM call now carries an AbortSignal, and a timeout fails the
-// turn once instead of burning the retry budget on a dead connection.
+// turn, its phase, and the whole deliberation: nothing in the loop carried a
+// deadline, so there was no bound on how long a session could sit silent.
+// Measured on the 2026-08-12 run, a legitimate turn takes 60-300s, so a hung
+// call looks exactly like a slow one and nothing would ever end it. Every LLM
+// call now carries an AbortSignal, and a timeout fails the turn once instead
+// of burning the retry budget on a dead connection.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runNodeScript } from './_helpers.mjs';
