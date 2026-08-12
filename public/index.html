@@ -636,6 +636,13 @@ function handleMessage(data) {
       // The event fires for every ending, including a stop and a circuit
       // breaker abort. Rendering "✅ Deliberation Complete" for a run that
       // produced no verdict is the same lie the status field used to tell.
+      // The history card was last updated by the stop handler, before the loop
+      // knew how the run ended, so without this it keeps a stale "done" dot
+      // until the tab reloads.
+      {
+        const li = sessionsList.findIndex(s => s.id === data.sessionId);
+        if (li >= 0) sessionsList[li] = { ...sessionsList[li], active: false, outcome: data.outcome ?? null };
+      }
       const endBadge = sessionBadge({ outcome: data.outcome });
       addCompleteBanner(data.outcome);
       document.getElementById('status-badge').textContent = endBadge.label;
@@ -763,8 +770,13 @@ function handleMessage(data) {
       else resetTokenStats();
       // Restore phase progress visual state
       if (data.session.phase != null) {
-        const phaseIdx = data.session.active ? data.session.phase : phases.length;
-        updatePhases(phaseIdx);
+        // Marking every phase Done for any inactive session is the same lie the
+        // badge used to tell: a run stopped in Framing showed a full rail of
+        // Done beside a "Stopped" badge. Only a run that actually finished gets
+        // the full rail; a legacy row with no outcome still counts as finished.
+        const o = data.session.outcome;
+        const finished = !data.session.active && (!o || o === 'complete');
+        updatePhases(finished ? phases.length : data.session.phase);
       }
       // Completed sessions get the Decision Record card up top too (templated
       // from the stored Synthesis message — no deliberation-complete event here).

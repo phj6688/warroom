@@ -32,8 +32,15 @@ assert.equal(
 // A stop landing during the final synthesis turn still leaves a finished
 // deliberation: the turn ran to completion and wrote its verdict.
 assert.equal(
-  deliberationOutcome({ messageCount: 14, phasesCompleted: 5, totalPhases: 5, deactivated: true }),
+  deliberationOutcome({ messageCount: 14, phasesCompleted: 5, totalPhases: 5, deactivated: true, verdictProduced: true }),
   'complete', 'all phases run counts as complete even if a stop arrived at the end');
+
+// Reaching the last phase is not finishing it. One 429 on the synthesis turn
+// leaves a transcript with no verdict in it, and calling that complete is how
+// a verdict-less session came to carry a quality score.
+assert.equal(
+  deliberationOutcome({ messageCount: 14, phasesCompleted: 5, totalPhases: 5, verdictProduced: false }),
+  'stopped', 'every phase run but no verdict produced is not a completion');
 
 // The regression this file exists for: partial progress is not completion.
 assert.equal(
@@ -51,10 +58,10 @@ assert.equal(
 
 // Only a run that got through every phase claims completion.
 assert.equal(
-  deliberationOutcome({ messageCount: 14, phasesCompleted: 5, totalPhases: 5 }),
-  'complete', 'every phase run is complete');
+  deliberationOutcome({ messageCount: 14, phasesCompleted: 5, totalPhases: 5, verdictProduced: true }),
+  'complete', 'every phase run with a verdict is complete');
 assert.equal(
-  deliberationOutcome({ messageCount: 6, phasesCompleted: 6, totalPhases: 5 }),
+  deliberationOutcome({ messageCount: 6, phasesCompleted: 6, totalPhases: 5, verdictProduced: true }),
   'complete', 'a loop-back that overshoots still counts as complete');
 
 console.log('deliberation-outcome assertions passed');

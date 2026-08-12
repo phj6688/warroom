@@ -201,6 +201,9 @@ function setupMCPServer(app, deps) {
       if (session) {
         session.active = false;
         stmts.updateSessionActive.run(0, Date.now(), sessionId);
+        // Parity with the WS stop path: a NULL outcome in the window before
+        // the loop exits reads as a completion to the next poll.
+        stmts.updateSessionOutcome.run('stopped', null, Date.now(), sessionId);
         activeSessions.delete(sessionId);
         // Release any deliberation parked on an escalation wait so the loop
         // can fall through and exit (parity with the WS stop path).

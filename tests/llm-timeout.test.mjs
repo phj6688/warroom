@@ -54,6 +54,45 @@ global.fetch = async (url, init) => {
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
 `;
 
+// A stubbed fetch whose json() resolves instantly never exercises the body
+// phase, so the test above passes even against a build whose timer is cleared
+// the moment headers arrive. This one uses a real socket: headers, then a body
+// that never ends, which is what an overloaded gateway actually does.
+const BODY_SCRIPT = `
+const assert = require('assert');
+const http = require('http');
+const appConfig = require('./lib/app-config');
+appConfig.init({ getAllSettings: { all: () => [] } });
+
+const srv = http.createServer((req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.write(' ');
+  setInterval(() => { try { res.write(' '); } catch (_) {} }, 200).unref();
+});
+
+srv.listen(0, '127.0.0.1', async () => {
+  process.env.OPENAI_BASE_URL = 'http://127.0.0.1:' + srv.address().port + '/v1';
+  process.env.OPENAI_API_KEY = 'test-key';
+  const { callAnthropic } = require('./lib/llm');
+  const t0 = Date.now();
+  await assert.rejects(
+    callAnthropic('s', [{ role: 'user', content: 'x' }], 'agent-x', 50),
+    /timed out/i,
+    'a body that never ends must still hit the deadline'
+  );
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 20000, 'settled in ' + elapsed + 'ms');
+  srv.close();
+  console.log('llm-timeout body assertions passed');
+});
+`;
+
+test('a response whose body never ends still hits the deadline', async () => {
+  const { code, stdout, stderr } = await runNodeScript(BODY_SCRIPT, { env: { LLM_TIMEOUT_MS: '800' } });
+  assert.equal(code, 0, `script failed:\n${stdout}\n${stderr}`);
+  assert.match(stdout, /llm-timeout body assertions passed/);
+});
+
 test('a hung provider request fails the turn instead of parking the session', async () => {
   const { code, stdout, stderr } = await runNodeScript(SCRIPT, {
     env: {

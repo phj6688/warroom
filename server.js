@@ -901,12 +901,16 @@ async function runDeliberation(session, resumeFromPhase = 0) {
   }
 
   session.active = false;
+  // Did the room reach a verdict, not just reach the phase that produces one.
+  const finalPhaseName = PHASES[PHASES.length - 1].name;
+  const verdictProduced = session.messages.some(m => m.phase === finalPhaseName);
   const outcome = deliberationOutcome({
     messageCount: session.messages.length,
     phasesCompleted,
     totalPhases: PHASES.length,
     aborted: !!abortReason,
     deactivated,
+    verdictProduced,
   });
   stmts.updateSessionActive.run(0, Date.now(), session.id);
   stmts.updateSessionOutcome.run(outcome, outcome === 'failed' ? Date.now() : null, Date.now(), session.id);
