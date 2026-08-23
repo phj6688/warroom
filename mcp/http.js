@@ -7,6 +7,8 @@ const appConfig = require('../lib/app-config');
 const { mergeRouting } = require('../lib/agent-routing');
 const { routableAgents, routableAgentIds } = require('../lib/routable-agents');
 const { availableRoutes, resolveRoute, testConnection, listModels } = require('../lib/llm');
+const { createPreflight } = require('../lib/preflight');
+const { getSearchConfigForAgent } = require('../lib/agents/search-config');
 const { listPresets, getPreset } = require('../lib/presets');
 const { resumeSession } = require('../lib/resume');
 const { answerEscalationById } = require('../lib/escalation');
@@ -40,6 +42,10 @@ function formatAttachedFiles(files) {
 
 function setupMCPServer(app, deps) {
   const { db, stmts, callLLM, createSession, loadSession, runDeliberation, activeSessions, AGENTS, PHASES, filesServiceClient, attachFiles, abortSessionWaits, quality, memory, specialist, getAgentsForSession, broadcast, broadcastGlobal, log } = deps;
+
+  const preflight = createPreflight({
+    AGENTS, PHASES, specialist, appConfig, resolveRoute, testConnection, getSearchConfigForAgent, log,
+  });
 
   function inferMime(name) {
     const ext = (name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
@@ -331,7 +337,10 @@ function setupMCPServer(app, deps) {
     // agentId 'all' writes the same pair to every agent, mirroring the Settings
     // panel's Apply-to-all. clear drops the override so the agent falls back to
     // the deployment's env default.
-    async setModel({ agentId, route, model, clear }) {
+    // Dry-run before the write, same rule as the Settings panel: a candidate
+    // that cannot complete a deliberation is refused and nothing is stored.
+    // force:true persists a failing candidate on purpose.
+    async setModel({ agentId, route, model, clear, force }) {
       const validIds = routableAgentIds(AGENTS, specialist, log);
       const targets = agentId === 'all' ? [...validIds] : [agentId];
       for (const id of targets) {
@@ -341,8 +350,17 @@ function setupMCPServer(app, deps) {
       for (const id of targets) patch[id] = clear ? null : { route, model };
       const { clean, error } = mergeRouting(appConfig.getAgentRouting(), patch, validIds, appConfig.ROUTES);
       if (error) throw new Error(error);
+
+      const report = await preflight.run({ routing: clean });
+      if (!report.ok && !force) {
+        return { blocked: true, preflight: report, routing: appConfig.getAgentRouting(), changed: [] };
+      }
       appConfig.set('agent_routing', clean);
-      return { routing: clean, changed: targets };
+      return { routing: clean, changed: targets, preflight: report, forced: !report.ok };
+    },
+
+    async preflight({ routing = null, timeoutMs } = {}) {
+      return preflight.run({ routing, timeoutMs });
     },
 
     async testModel({ route, model }) {

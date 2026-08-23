@@ -262,7 +262,7 @@
       <div class="export-modal-title">⚙ Agent Models &amp; Providers</div>
       <button class="export-modal-close" id="settings-close">✕</button>
     </div>
-    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save. Every model field opens a dropdown (▾) listing the ids the selected route's provider actually serves; typing filters the list, and custom ids still work.</div>
+    <div class="settings-hint">Each agent runs on a sensible default. Override the provider route or model per agent for cost or capability. Leave a route on "Default" to follow this deployment's configured provider. Routes marked "no key" need a credential set in the environment. The top row fills every agent at once; adjust individual agents afterwards, then Save. Every model field opens a dropdown (▾) listing the ids the selected route's provider actually serves; typing filters the list, and custom ids still work. Save dry-runs the change first: the server walks all five phases, the specialists and the support calls on the new configuration and probes each model once. A configuration that fails the dry run is not saved.</div>
     <div id="settings-agents"></div>
     <div class="settings-cost">
       <div class="settings-cost-title">Cost model</div>
@@ -275,8 +275,17 @@
         <label>Electricity price ($/kWh)<input id="cost-kwh" type="number" step="any" min="0" spellcheck="false"></label>
       </div>
     </div>
-    <div class="export-submit-row">
+    <div class="settings-preflight" id="settings-preflight" hidden>
+      <div class="settings-preflight-head">
+        <span class="settings-preflight-verdict" id="settings-preflight-verdict"></span>
+        <span class="settings-preflight-meta" id="settings-preflight-meta"></span>
+      </div>
+      <div class="settings-preflight-body" id="settings-preflight-body"></div>
+    </div>
+    <div class="export-submit-row settings-actions">
+      <button class="settings-dryrun" id="settings-dryrun" type="button">Dry run</button>
       <button class="export-submit" id="settings-save">Save</button>
+      <button class="settings-force" id="settings-force" type="button" hidden>Save anyway</button>
     </div>
   </div>
 </div>
@@ -3187,7 +3196,12 @@ function applyAllRouting() {
   });
   showToast(route || model ? '✓ Applied to every agent. Review, then Save.' : '✓ Cleared every override. Save to persist.');
 }
-async function saveSettings() {
+// ─── Preflight dry run ───────────────────────────────────────
+// A model change is a blind write until something runs on it. Save asks the
+// server to walk every phase on the candidate configuration first, and a
+// candidate that fails is refused server-side — this panel is where the
+// operator reads why.
+function collectRouting() {
   const routing = {};
   let missingModelFor = null;
   document.querySelectorAll('#settings-agents .settings-agent-row').forEach(row => {
@@ -3205,6 +3219,104 @@ async function saveSettings() {
     }
     if (Object.keys(entry).length) routing[id] = entry;
   });
+  return { routing, missingModelFor };
+}
+
+const preflightEl = () => document.getElementById('settings-preflight');
+
+function setPreflightBusy(text) {
+  const el = preflightEl();
+  el.hidden = false;
+  el.className = 'settings-preflight busy';
+  document.getElementById('settings-preflight-verdict').textContent = text;
+  document.getElementById('settings-preflight-meta').textContent = '';
+  document.getElementById('settings-preflight-body').textContent = '';
+  document.getElementById('settings-force').hidden = true;
+}
+
+function clearPreflight() {
+  const el = preflightEl();
+  el.hidden = true;
+  el.className = 'settings-preflight';
+  document.getElementById('settings-force').hidden = true;
+}
+
+// textContent everywhere: a provider error body is untrusted text and lands in
+// this panel verbatim.
+function renderPreflight(r) {
+  const el = preflightEl();
+  el.hidden = false;
+  el.className = 'settings-preflight ' + (r.ok ? 'ok' : 'fail');
+  document.getElementById('settings-preflight-verdict').textContent =
+    r.ok ? '✓ Dry run passed' : '✗ Dry run failed — nothing was saved';
+  document.getElementById('settings-preflight-meta').textContent =
+    r.checkpointCount + ' checkpoints · ' + r.probeCount + ' probe(s) · ' + r.durationMs + 'ms';
+
+  const body = document.getElementById('settings-preflight-body');
+  body.textContent = '';
+  const groups = [];
+  for (const ph of r.phases || []) groups.push({ label: ph.name, ok: ph.ok, rows: ph.agents });
+  if ((r.specialists || []).length) {
+    groups.push({ label: 'Specialists (spawned on demand)', ok: r.specialists.every(x => x.ok), rows: r.specialists });
+  }
+  if ((r.support || []).length) {
+    groups.push({ label: 'Support calls around the phases', ok: r.support.every(x => x.ok), rows: r.support });
+  }
+  for (const g of groups) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pf-group ' + (g.ok ? 'ok' : 'fail');
+    const head = document.createElement('div');
+    head.className = 'pf-group-head';
+    head.textContent = (g.ok ? '✓ ' : '✗ ') + g.label;
+    wrap.appendChild(head);
+    for (const row of g.rows || []) {
+      const line = document.createElement('div');
+      line.className = 'pf-row ' + (row.ok ? 'ok' : 'fail');
+      const name = document.createElement('span');
+      name.className = 'pf-name';
+      name.textContent = (row.emoji ? row.emoji + ' ' : '') + row.name;
+      const pair = document.createElement('span');
+      pair.className = 'pf-pair';
+      pair.textContent = row.model + ' via ' + (row.route || 'no route');
+      line.appendChild(name);
+      line.appendChild(pair);
+      if (!row.ok) {
+        const errEl = document.createElement('div');
+        errEl.className = 'pf-error';
+        errEl.textContent = row.error || 'failed';
+        line.appendChild(errEl);
+      }
+      wrap.appendChild(line);
+    }
+    body.appendChild(wrap);
+  }
+}
+
+async function runDryRun() {
+  const { routing, missingModelFor } = collectRouting();
+  if (missingModelFor) { showToast('⚠️ ' + missingModelFor + ': a non-default route needs a model'); return; }
+  const btn = document.getElementById('settings-dryrun');
+  btn.disabled = true;
+  setPreflightBusy('Dry run in progress — walking every phase…');
+  try {
+    const res = await fetch(apiUrl('/api/settings/preflight'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ routing }),
+    });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error || ('HTTP ' + res.status));
+    renderPreflight(r);
+  } catch (e) {
+    clearPreflight();
+    showToast('⚠️ Dry run failed to run: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveSettings(force) {
+  const { routing, missingModelFor } = collectRouting();
   if (missingModelFor) { showToast('⚠️ ' + missingModelFor + ': a non-default route needs a model'); return; }
 
   // Snapshot the cost form synchronously, before any await, so a later DOM edit
@@ -3218,15 +3330,38 @@ async function saveSettings() {
   if (pw != null && tps != null && kwh != null) costBody.electricity = { powerWatts: pw, tokensPerSec: tps, pricePerKwh: kwh };
   const costPayload = Object.keys(costBody).length ? JSON.stringify(costBody) : null;
 
-  // Routing first. A routing failure is total: nothing was persisted.
+  // Routing first. A routing failure is total: nothing was persisted. The PUT
+  // dry-runs the candidate and answers 409 when it cannot complete a
+  // deliberation, so Save blocks on the same verdict the Dry run button shows.
+  const saveBtn = document.getElementById('settings-save');
+  const forceBtn = document.getElementById('settings-force');
+  saveBtn.disabled = true;
+  forceBtn.disabled = true;
+  setPreflightBusy(force ? 'Saving without waiting for a passing dry run…' : 'Dry run in progress — walking every phase…');
   try {
     const res = await fetch(apiUrl('/api/settings/agent-routing'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ routing }),
+      body: JSON.stringify({ routing, force: !!force }),
     });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
-  } catch (e) { showToast('⚠️ Save failed: ' + e.message); return; }
+    const payload = await res.json().catch(() => ({}));
+    if (res.status === 409 && payload.preflight) {
+      renderPreflight(payload.preflight);
+      forceBtn.hidden = false;
+      showToast('⚠️ Not saved: the dry run failed. Fix the models, or Save anyway.');
+      return;
+    }
+    if (!res.ok) throw new Error(payload.error || ('HTTP ' + res.status));
+    if (payload.preflight) renderPreflight(payload.preflight);
+    else clearPreflight();
+  } catch (e) {
+    clearPreflight();
+    showToast('⚠️ Save failed: ' + e.message);
+    return;
+  } finally {
+    saveBtn.disabled = false;
+    forceBtn.disabled = false;
+  }
 
   // Cost second, in its own scope: if it fails, routing is already saved, so
   // report partial success rather than a misleading "Save failed".
@@ -3237,13 +3372,18 @@ async function saveSettings() {
     } catch (e) { showToast('⚠️ Routing saved, but cost failed: ' + e.message); return; }
   }
 
-  showToast('✓ Settings saved');
+  // A forced save keeps the panel open so the failures stay readable; a clean
+  // save has nothing left to report.
+  if (force) { showToast('✓ Saved despite the failing dry run'); return; }
+  showToast('✓ Settings saved — dry run passed');
   closeSettings();
 }
-function closeSettings() { closeModelPicker(); document.getElementById('settings-overlay').classList.remove('open'); }
+function closeSettings() { closeModelPicker(); clearPreflight(); document.getElementById('settings-overlay').classList.remove('open'); }
 document.getElementById('settings-btn').addEventListener('click', openSettings);
 document.getElementById('settings-close').addEventListener('click', closeSettings);
-document.getElementById('settings-save').addEventListener('click', saveSettings);
+document.getElementById('settings-save').addEventListener('click', () => saveSettings(false));
+document.getElementById('settings-force').addEventListener('click', () => saveSettings(true));
+document.getElementById('settings-dryrun').addEventListener('click', runDryRun);
 document.getElementById('settings-overlay').addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
 
 connect();

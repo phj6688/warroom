@@ -24,6 +24,57 @@ function registerTools(server, rawOps) {
   function ok(text) { return { content: [{ type: 'text', text }] }; }
   function err(text) { return { content: [{ type: 'text', text }], isError: true }; }
 
+  // Render a preflight report for a model client. The verdict comes first
+  // because that is the only line a caller must act on; the per-phase detail
+  // follows so a failure can be attributed without a second call.
+  //
+  // One dead provider fails every checkpoint with the same error, so failing
+  // rows are grouped by (pair, error) and counted. A repeated wall of the same
+  // 401 is not more information, it is the same information 31 times.
+  const MAX_FAIL_LINES = 6;
+  function formatPreflight(r) {
+    if (!r) return '(no dry run was performed)';
+    const lines = [];
+    lines.push(r.ok
+      ? `DRY RUN PASSED in ${r.durationMs}ms — ${r.checkpointCount} checkpoints across ${(r.phases || []).length} phases, ${r.probeCount} provider probe(s).`
+      : `DRY RUN FAILED in ${r.durationMs}ms — ${r.failures.length} of ${r.checkpointCount} checkpoints could not run.`);
+
+    if (r.ok) {
+      lines.push('');
+      for (const ph of r.phases || []) lines.push(`  [PASS] ${ph.name} (${(ph.agents || []).length} agents)`);
+      for (const x of r.support || []) lines.push(`  [PASS] ${x.name} — ${x.model} via ${x.route}`);
+      return lines.join('\n');
+    }
+
+    const rows = [];
+    for (const ph of r.phases || []) for (const a of ph.agents || []) if (!a.ok) rows.push({ where: ph.name, ...a });
+    for (const x of r.specialists || []) if (!x.ok) rows.push({ where: 'Specialists', ...x });
+    for (const x of r.support || []) if (!x.ok) rows.push({ where: 'Support', ...x });
+
+    const byCause = new Map();
+    for (const row of rows) {
+      const key = `${row.route}|${row.model}|${row.error}`;
+      if (!byCause.has(key)) byCause.set(key, { route: row.route, model: row.model, error: row.error, who: [] });
+      byCause.get(key).who.push(`${row.where}/${row.name}`);
+    }
+
+    lines.push('');
+    lines.push('What failed:');
+    const causes = [...byCause.values()];
+    for (const c of causes.slice(0, MAX_FAIL_LINES)) {
+      lines.push(`  ✗ ${c.model} via ${c.route || 'no route'} — ${c.who.length} checkpoint(s): ${c.error}`);
+      lines.push(`      affects: ${c.who.slice(0, 4).join(', ')}${c.who.length > 4 ? `, +${c.who.length - 4} more` : ''}`);
+    }
+    if (causes.length > MAX_FAIL_LINES) lines.push(`  … and ${causes.length - MAX_FAIL_LINES} more distinct failure(s).`);
+
+    const okPhases = (r.phases || []).filter(p => p.ok).map(p => p.name);
+    if (okPhases.length) {
+      lines.push('');
+      lines.push(`Phases that would run: ${okPhases.join(', ')}.`);
+    }
+    return lines.join('\n');
+  }
+
   // This line used to read `active ? 'Active' : 'Complete'`, so a run a
   // redeploy killed at Problem Framing was reported to the caller as Complete,
   // indistinguishable from one that reached Synthesis. Name the real terminal
@@ -403,23 +454,56 @@ function registerTools(server, rawOps) {
   // 15. warroom_set_model
   server.tool(
     'warroom_set_model',
-    'Set the model (and optionally the provider route) an agent uses. Pass agentId "all" to apply one pair to every agent. This is a SERVER-WIDE setting shared with the web UI and with any session already running — it is not scoped to your session or client. Applies immediately, no restart. Use clear:true to drop an override and fall back to the server default. Verify a pair first with warroom_test_model: an unreachable model id fails every agent turn.',
+    'Set the model (and optionally the provider route) an agent uses. Pass agentId "all" to apply one pair to every agent. This is a SERVER-WIDE setting shared with the web UI and with any session already running — it is not scoped to your session or client.\n\nEVERY change is dry-run before it is stored. The call blocks for a few seconds while the server walks all five phases, the specialists and the support calls on the candidate configuration and fires one real minimal completion per distinct model. WAIT for the result and read it: if the dry run fails, NOTHING IS SAVED, the old configuration is still live, and the report names which phase and which agent could not run. Fix the model id or the route and call again — do not start a session on the assumption the change landed. Use force:true only to store a configuration you know fails right now (a provider that is down, being configured ahead of time). The default server model is claude-opus-5; clear:true drops an override back to it.',
     {
       agentId: z.string().describe('Agent id from warroom_list_agents (e.g. "red-teamer"), or "all" for every agent'),
       model: z.string().optional().describe('Model id as the provider expects it (e.g. "claude-opus-5", "x-ai/grok-2", "gpt-4o-mini"). Required unless clear:true.'),
       route: z.string().optional().describe('Provider route: anthropic-api, openai-api, openrouter, subscription, or ollama-local. Omit to keep the server default route. A non-default route REQUIRES an explicit model.'),
       clear: z.boolean().optional().describe('Remove this agent\'s override so it reverts to the server default model and route'),
+      force: z.boolean().optional().describe('Store the configuration even though the dry run failed. Only for a provider you know is temporarily down. The next session will fail on every checkpoint the report listed.'),
     },
-    async ({ agentId, model, route, clear }) => {
+    async ({ agentId, model, route, clear, force }) => {
       try {
         if (!clear && !model && !route) return err('Provide a model (and optionally a route), or clear:true to reset this agent.');
-        const result = await ops.setModel({ agentId, route, model, clear: !!clear });
-        if (clear) return ok(`Cleared model override for ${result.changed.join(', ')}. They now use the server default.`);
+        const result = await ops.setModel({ agentId, route, model, clear: !!clear, force: !!force });
+        if (result.blocked) {
+          return err(`NOT SAVED — the dry run failed, so the configuration was rejected and the previous one is still live.\n\n${formatPreflight(result.preflight)}\n\nFix the model id or route and call warroom_set_model again, or pass force:true to store it anyway.`);
+        }
+        const verdict = result.forced
+          ? `\n\nSAVED WITH force:true DESPITE A FAILING DRY RUN.\n\n${formatPreflight(result.preflight)}`
+          : `\n\n${formatPreflight(result.preflight)}`;
+        if (clear) return ok(`Cleared model override for ${result.changed.join(', ')}. They now use the server default.${verdict}`);
         const entries = result.changed.map(id => {
           const e = result.routing[id] || {};
           return `  ${id}: ${e.model || '(default model)'}${e.route ? ` via ${e.route}` : ' via default route'}`;
         });
-        return ok(`Model updated for ${result.changed.length} agent(s):\n${entries.join('\n')}\n\nApplies server-wide, effective immediately.`);
+        return ok(`Model updated for ${result.changed.length} agent(s):\n${entries.join('\n')}\n\nApplies server-wide, effective immediately.${verdict}`);
+      } catch (e) { return err(e.message); }
+    }
+  );
+
+  // 15b. warroom_preflight
+  server.tool(
+    'warroom_preflight',
+    'Dry-run the deliberation pipeline without starting a session and without changing anything. Walks all five phases, every specialist template and the five support calls that bracket the phases (fingerprint, memory, improver, adversarial twin, quality), resolves each one to its model and provider route, and fires one real minimal completion per distinct pair — including a tools-enabled probe, because every agent turn ships a tools array and a model that answers a plain prompt can still reject one. Takes a few seconds. Use it to check the live configuration before starting a session, or to test a candidate model without saving it: pass agentId + model to see what would happen if you set that pair. warroom_set_model runs this automatically, so this tool is for checking, not for saving.',
+    {
+      agentId: z.string().optional().describe('Check a candidate for this agent instead of the stored configuration. Use "all" for every agent. Requires model.'),
+      model: z.string().optional().describe('Candidate model id to check with agentId. Nothing is persisted.'),
+      route: z.string().optional().describe('Candidate provider route to check with agentId. A non-default route requires a model.'),
+    },
+    async ({ agentId, model, route }) => {
+      try {
+        let routing = null;
+        if (agentId) {
+          if (!model) return err('Checking a candidate needs a model id alongside agentId.');
+          const cfg = await ops.getModelConfig();
+          const ids = agentId === 'all' ? cfg.agents.map(a => a.id) : [agentId];
+          routing = { ...Object.fromEntries((cfg.agents || []).filter(a => a.configured).map(a => [a.id, a.configured])) };
+          for (const id of ids) routing[id] = route ? { route, model } : { model };
+        }
+        const r = await ops.preflight({ routing });
+        const scope = routing ? 'candidate configuration (not saved)' : 'live configuration';
+        return ok(`Dry run of the ${scope}:\n\n${formatPreflight(r)}`);
       } catch (e) { return err(e.message); }
     }
   );

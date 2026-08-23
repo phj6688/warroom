@@ -1,3 +1,7 @@
+// The PUTs below carry skipPreflight: no provider is reachable in a test env,
+// and what is under test is the validation rule, not the dry run. The dry-run
+// gate has its own coverage in preflight.test.mjs.
+//
 // HLB-342 fix 1 — a non-default route with no model must never ship the global
 // Anthropic model id to a non-Anthropic endpoint. resolveRoute() falls back to
 // the default route (same handling as a route whose credentials are missing),
@@ -30,7 +34,9 @@ appConfig.init({ getAllSettings: { all: () => [{ key: 'agent_routing', value: JS
 const noModel = resolveRoute('divergent-generator');
 assert.equal(noModel.transport, 'anthropic', 'route-without-model falls back to anthropic default transport');
 assert.equal(noModel.route, 'anthropic-api', 'route-without-model falls back to default route');
-assert.ok(noModel.model && noModel.model.startsWith('anthropic/'), 'default model is the anthropic default');
+const { DEFAULT_MODEL } = require('./lib/llm');
+assert.equal(noModel.model, DEFAULT_MODEL, 'default model is the deployment default (a Claude id)');
+assert.ok(noModel.model.includes('claude-'), 'and that default is a Claude model');
 // Belt and suspenders: an openai-transport resolution must never carry an anthropic/ model.
 assert.ok(!(noModel.transport === 'openai' && String(noModel.model).startsWith('anthropic/')), 'no anthropic id on an openai transport');
 
@@ -97,7 +103,7 @@ test('PUT /api/settings/agent-routing rejects a non-default route with no model 
     // entry that also let a route-less whitespace model slip through.
     const wsDefault = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
       method: 'PUT', headers,
-      body: JSON.stringify({ routing: { [agentId]: { model: '   ' } } }),
+      body: JSON.stringify({ routing: { [agentId]: { model: '   ' } }, skipPreflight: true }),
     });
     assert.equal(wsDefault.status, 200, 'whitespace-only model on the default route is accepted');
     const wsDefaultBody = await wsDefault.json();
@@ -106,14 +112,14 @@ test('PUT /api/settings/agent-routing rejects a non-default route with no model 
     // The default route never requires a model.
     const okDefault = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
       method: 'PUT', headers,
-      body: JSON.stringify({ routing: { [agentId]: { model: 'gpt-4o-mini' } } }),
+      body: JSON.stringify({ routing: { [agentId]: { model: 'gpt-4o-mini' } }, skipPreflight: true }),
     });
     assert.equal(okDefault.status, 200, 'model-only (default route) is accepted');
 
     // route + model is accepted and persisted.
     const okBoth = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
       method: 'PUT', headers,
-      body: JSON.stringify({ routing: { [agentId]: { route: 'openai-api', model: 'gpt-4o-mini' } } }),
+      body: JSON.stringify({ routing: { [agentId]: { route: 'openai-api', model: 'gpt-4o-mini' } }, skipPreflight: true }),
     });
     assert.equal(okBoth.status, 200, 'route+model is accepted');
     const okBody = await okBoth.json();

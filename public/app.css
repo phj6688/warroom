@@ -2053,3 +2053,37 @@ html, body {
 @media (max-width: 767px) {
   .desktop-sidebar, .desktop-right { display: none !important; }
 }
+
+/* ─── Preflight dry run panel (settings modal) ───────────────────────────
+   A model change is dry-run before it is stored. This panel is where the
+   verdict lands: one group per phase, plus the specialists and the support
+   calls that bracket them. Failing rows carry the provider's own error text.
+   `contain` keeps a long report from reflowing the modal behind it. */
+.settings-preflight { margin: 14px 20px 0; border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,0.02); contain: layout style; }
+.settings-preflight.ok { border-color: var(--success); }
+.settings-preflight.fail { border-color: var(--danger); }
+.settings-preflight-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.settings-preflight-verdict { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.settings-preflight.ok .settings-preflight-verdict { color: var(--success); }
+.settings-preflight.fail .settings-preflight-verdict { color: var(--danger); }
+.settings-preflight.busy .settings-preflight-verdict { color: var(--accent-orange); }
+.settings-preflight-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-dimmer); white-space: nowrap; }
+.settings-preflight-body { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0; }
+.settings-preflight[hidden] { display: none; }
+.pf-group { padding: 6px 12px; }
+.pf-group + .pf-group { border-top: 1px solid var(--border); }
+.pf-group-head { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dimmer); margin-bottom: 4px; }
+.pf-group.ok .pf-group-head { color: var(--success); }
+.pf-group.fail .pf-group-head { color: var(--danger); }
+.pf-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 2px 0; }
+.pf-row .pf-name { font-size: 11px; color: var(--text); }
+.pf-row .pf-pair { font-family: var(--font-mono); font-size: 10px; color: var(--text-dimmer); }
+.pf-row.fail .pf-name { color: var(--danger); }
+.pf-error { flex-basis: 100%; font-family: var(--font-mono); font-size: 10px; color: var(--danger); line-height: 1.45; word-break: break-word; }
+.settings-actions { align-items: center; }
+.settings-dryrun { font-family: var(--font-mono); font-size: 11px; padding: 8px 12px; background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.settings-dryrun:hover { border-color: var(--accent-orange); color: var(--accent-orange); }
+.settings-dryrun:disabled { opacity: 0.6; cursor: wait; }
+.settings-force { font-family: var(--font-mono); font-size: 11px; padding: 8px 12px; background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 6px; cursor: pointer; }
+.settings-force[hidden] { display: none; }
+.settings-force:disabled { opacity: 0.6; cursor: wait; }

@@ -60,7 +60,9 @@ describe('specialist provider routing', () => {
         'process-architect': { route: 'openrouter', model: 'openai/gpt-5.6-sol' },
       };
       const put = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
-        method: 'PUT', headers, body: JSON.stringify({ routing }),
+        // skipPreflight: this test is about the store, not about whether a
+        // provider answers. The dry-run gate is covered in preflight.test.mjs.
+        method: 'PUT', headers, body: JSON.stringify({ routing, skipPreflight: true }),
       });
       assert.equal(put.status, 200, 'a specialist override is accepted');
       const saved = (await put.json()).routing;
@@ -78,7 +80,7 @@ describe('specialist provider routing', () => {
       // An id that is neither a core agent nor a template is still refused.
       const bogus = await fetch(`${server.baseUrl}/api/settings/agent-routing`, {
         method: 'PUT', headers,
-        body: JSON.stringify({ routing: { 'specialist-not-a-real-template': { route: 'openrouter', model: 'x' } } }),
+        body: JSON.stringify({ routing: { 'specialist-not-a-real-template': { route: 'openrouter', model: 'x' } }, skipPreflight: true }),
       });
       assert.equal(bogus.status, 200, 'an unknown id is dropped, not a 400');
       assert.ok(!('specialist-not-a-real-template' in (await bogus.json()).routing), 'an unknown id is not persisted');
