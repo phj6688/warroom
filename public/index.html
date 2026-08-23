@@ -3259,6 +3259,8 @@ function renderPreflight(r) {
   const el = preflightEl();
   el.hidden = false;
   el.className = 'settings-preflight ' + (r.ok ? 'ok' : 'fail');
+  // A passing report must not leave "Save anyway" on screen from an earlier run.
+  if (r.ok) document.getElementById('settings-force').hidden = true;
   document.getElementById('settings-preflight-verdict').textContent =
     r.ok ? '✓ Dry run passed' : '✗ Dry run failed — nothing was saved';
   document.getElementById('settings-preflight-meta').textContent =
