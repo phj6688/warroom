@@ -2087,3 +2087,11 @@ html, body {
 .settings-force { font-family: var(--font-mono); font-size: 11px; padding: 8px 12px; background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 6px; cursor: pointer; }
 .settings-force[hidden] { display: none; }
 .settings-force:disabled { opacity: 0.6; cursor: wait; }
+
+/* Per-route billing mode: how a route is paid decides how its tokens are
+   priced, so the operator sets it next to the rates it drives. */
+.cost-billing { margin: 8px 0 14px; }
+.cost-billing-row { display: grid; grid-template-columns: 1fr 200px; gap: 8px; align-items: center; padding: 4px 0; }
+.cost-billing-row .cb-route { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+.cost-billing-row .cb-mode { font-family: var(--font-mono); font-size: 11px; padding: 5px 6px; background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border); border-radius: 6px; width: 100%; }
+@media (max-width: 600px) { .cost-billing-row { grid-template-columns: 1fr; gap: 3px; } }

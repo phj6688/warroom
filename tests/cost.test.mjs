@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeCost, costFromSnapshot, rateForModel, amortizedPerToken, electricityPerToken,
+  billingForRoute, sanitizeRouteBilling,
   DEFAULT_SUBSCRIPTION, DEFAULT_ELECTRICITY,
 } from '../lib/cost.js';
 import { createTokenLedger } from '../lib/token-usage.js';
@@ -112,4 +113,59 @@ test('ledger: opts.model populates by_model for cost attribution', () => {
   // embedding tokens are in the grand total but not attributed to a model
   assert.equal(snap.total_tokens, 100 + 50 + 10 + 5 + 7);
   assert.equal(Object.keys(snap.by_model).length, 1);
+});
+
+// ─── Billing mode follows how a route is PAID ───────────────────────────
+// The mode used to be hardcoded to the route id with `published` as the
+// catch-all, so a deployment whose default endpoint is a subscription gateway
+// was invoiced at metered Anthropic rates for traffic that costs nothing per
+// token. Three live sessions carried $4.11, $4.89 and $3.65 of money never spent.
+
+test('default route billed as a subscription costs the amortized slice, not metered rates', () => {
+  const tally = { 'default::claude-opus-5': { input_tokens: 600000, output_tokens: 400000, total_tokens: 1e6 } };
+
+  const metered = computeCost(tally);
+  near(metered.total_cost_usd, 13); // 0.6*5 + 0.4*25 — what it used to always charge
+  assert.equal(metered.modes['default'], 'published');
+
+  const subscription = computeCost(tally, { routeBilling: { default: 'amortized' } });
+  near(subscription.total_cost_usd, 1); // 1e6 * (200/200e6)
+  assert.equal(subscription.modes['default'], 'amortized');
+});
+
+test('an operator override wins over the per-route default', () => {
+  const tally = { 'openrouter::claude-opus-4-8': { input_tokens: 1e6, output_tokens: 1e6, total_tokens: 2e6 } };
+  assert.equal(computeCost(tally).modes['openrouter'], 'published');
+  const r = computeCost(tally, { routeBilling: { openrouter: 'amortized' } });
+  assert.equal(r.modes['openrouter'], 'amortized');
+  near(r.total_cost_usd, 2); // 2e6 * $1/MTok
+});
+
+test('the subscription and local routes keep their modes with no config at all', () => {
+  assert.equal(billingForRoute('subscription'), 'amortized');
+  assert.equal(billingForRoute('ollama-local'), 'electricity');
+  assert.equal(billingForRoute('anthropic-api'), 'published');
+  // Unknown route and unknown mode both fall back rather than yielding NaN.
+  assert.equal(billingForRoute('not-a-route'), 'published');
+  assert.equal(billingForRoute('subscription', { subscription: 'free-beer' }), 'amortized');
+});
+
+test('sanitizeRouteBilling drops unknown routes and unknown modes', () => {
+  const clean = sanitizeRouteBilling(
+    { default: 'amortized', openrouter: 'published', bogus: 'amortized', 'ollama-local': 'not-a-mode' },
+    ['openrouter', 'ollama-local'],
+  );
+  assert.deepEqual(clean, { default: 'amortized', openrouter: 'published' });
+  assert.deepEqual(sanitizeRouteBilling(null, []), {});
+  assert.deepEqual(sanitizeRouteBilling('nope', []), {});
+});
+
+test('a mixed session prices each route by its own mode', () => {
+  const r = computeCost({
+    'default::claude-opus-5': { input_tokens: 500000, output_tokens: 500000, total_tokens: 1e6 },
+    'openrouter::claude-haiku-4-5': { input_tokens: 1e6, output_tokens: 1e6, total_tokens: 2e6 },
+  }, { routeBilling: { default: 'amortized' } });
+  near(r.cost_breakdown['default'], 1);        // amortized
+  near(r.cost_breakdown['openrouter'], 6);     // 1*1 + 1*5, metered
+  near(r.total_cost_usd, 7);
 });

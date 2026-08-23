@@ -266,7 +266,8 @@
     <div id="settings-agents"></div>
     <div class="settings-cost">
       <div class="settings-cost-title">Cost model</div>
-      <div class="settings-hint">API and OpenRouter routes use published per-model rates. The subscription route amortizes a flat plan price over its token allowance. Local (Ollama) uses an electricity estimate.</div>
+      <div class="settings-hint">How each route is paid decides how its tokens are priced. A metered route uses published per-model rates. A subscription route spreads a flat plan price over its token allowance, so the figure is a share of a fee already paid, not money spent per token. Local (Ollama) uses an electricity estimate. Set the mode per route below.</div>
+      <div class="cost-billing" id="cost-billing"></div>
       <div class="settings-cost-grid">
         <label>Subscription plan price (USD)<input id="cost-plan-price" type="number" step="any" min="0" spellcheck="false"></label>
         <label>Plan token allowance / period<input id="cost-allowance" type="number" step="any" min="1" spellcheck="false"></label>
@@ -3043,8 +3044,61 @@ async function openSettings() {
     document.getElementById('settings-overlay').classList.add('open');
   } catch (e) { showToast('⚠️ Could not load settings: ' + e.message); }
 }
+// One row per route: what it costs to send a token there. The mode for the
+// deployment's own endpoint comes from the server, which knows whether it is a
+// metered API or a gateway in front of a flat plan.
+const BILLING_LABEL = { published: 'Metered (per token)', amortized: 'Subscription (flat plan)', electricity: 'Local (electricity)' };
+function renderCostBilling() {
+  const host = document.getElementById('cost-billing');
+  if (!host || !_costData || !_costData.routeBilling) return;
+  const modes = _costData.billingModes || ['published', 'amortized', 'electricity'];
+  host.textContent = '';
+  for (const [route, mode] of Object.entries(_costData.routeBilling)) {
+    const row = document.createElement('div');
+    row.className = 'cost-billing-row';
+    const name = document.createElement('span');
+    name.className = 'cb-route';
+    name.textContent = route === 'default' ? 'default (this deployment)' : route;
+    const sel = document.createElement('select');
+    sel.className = 'cb-mode';
+    sel.setAttribute('data-route', route);
+    for (const m of modes) {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = BILLING_LABEL[m] || m;
+      if (m === mode) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    row.appendChild(name);
+    row.appendChild(sel);
+    host.appendChild(row);
+  }
+}
+
+// Only what the operator actually CHANGED. The panel renders the effective
+// mode for every route, so sending all of them back would freeze today's
+// resolved values as permanent overrides: a deployment that later moved from a
+// gateway to the metered OpenAI API would keep pricing real spend as a
+// subscription, which is this bug with the sign flipped. An empty object is a
+// legitimate answer and clears every override.
+function collectRouteBilling() {
+  const rows = document.querySelectorAll('#cost-billing .cb-mode');
+  // The panel never rendered (the cost GET failed), so it holds no opinion.
+  // Returning {} here would read as "clear every override" and wipe the
+  // operator's settings on the next save.
+  if (!rows.length) return null;
+  const defaults = (_costData && _costData.defaults && _costData.defaults.routeBilling) || {};
+  const out = {};
+  rows.forEach(sel => {
+    const route = sel.getAttribute('data-route');
+    if (sel.value !== defaults[route]) out[route] = sel.value;
+  });
+  return out;
+}
+
 function populateCostInputs() {
   if (!_costData) return;
+  renderCostBilling();
   const s = _costData.subscription || {};
   const e = _costData.electricity || {};
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v != null ? v : ''); };
@@ -3343,6 +3397,10 @@ async function saveSettings(force) {
   if (pp != null && al != null) costBody.subscription = { planPriceUsd: pp, allowanceTokens: al };
   const pw = num('cost-power'), tps = num('cost-tps'), kwh = num('cost-kwh');
   if (pw != null && tps != null && kwh != null) costBody.electricity = { powerWatts: pw, tokensPerSec: tps, pricePerKwh: kwh };
+  // Sent whenever the panel rendered, including as {}: without an empty map
+  // there is no way to clear an override.
+  const billing = collectRouteBilling();
+  if (billing) costBody.routeBilling = billing;
   const costPayload = Object.keys(costBody).length ? JSON.stringify(costBody) : null;
 
   // Routing first. A routing failure is total: nothing was persisted. The PUT

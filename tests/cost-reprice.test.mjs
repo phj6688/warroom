@@ -1,0 +1,179 @@
+// Sessions costed under the old rule carry metered dollars for subscription
+// traffic. The backfill re-prices exactly the rows it can compute exactly, and
+// leaves the rest alone rather than guessing.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { repriceLegacySessions, billingSignature, MARKER_KEY } from '../lib/cost-backfill.js';
+import { billingForRoute, amortizedPerToken, electricityPerToken, DEFAULT_SUBSCRIPTION } from '../lib/cost.js';
+
+const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);
+const quiet = { info() {}, warn() {} };
+
+// Minimal stand-ins: a row store with the two statements the backfill uses,
+// and a settings cache. No SQLite needed, so this stays a unit test.
+function fakeDb(rows) {
+  return {
+    rows,
+    prepare(sql) {
+      if (sql.startsWith('SELECT')) return { all: () => rows.map(r => ({ ...r })) };
+      return {
+        run: (usd, breakdown, id) => {
+          const row = rows.find(r => r.id === id);
+          row.total_cost_usd = usd;
+          row.cost_breakdown = breakdown;
+        },
+      };
+    },
+    transaction: (fn) => fn,
+  };
+}
+
+function fakeConfig(initial = {}) {
+  const store = { ...initial };
+  return { get: (k, d = null) => (k in store ? store[k] : d), set: (k, v) => { store[k] = v; return v; }, _store: store };
+}
+
+const ROUTES = ['anthropic-api', 'openai-api', 'openrouter', 'subscription', 'ollama-local'];
+const deps = (db, appConfig, routeBilling = { default: 'amortized' }) => ({
+  db, appConfig, log: quiet, billingForRoute, amortizedPerToken, electricityPerToken, routes: ROUTES,
+  costConfig: () => ({ subscription: null, electricity: null, routeBilling }),
+});
+
+test('a default-route session priced at metered rates is re-priced to the plan slice', () => {
+  const rows = [
+    { id: 'a', total_tokens: 572193, total_cost_usd: 3.648645, cost_breakdown: '{"default":3.648645}' },
+    { id: 'b', total_tokens: 743355, total_cost_usd: 4.893535, cost_breakdown: '{"default":4.893535}' },
+  ];
+  const db = fakeDb(rows);
+  const cfg = fakeConfig();
+  const r = repriceLegacySessions(deps(db, cfg));
+
+  assert.equal(r.repriced, 2);
+  const perToken = amortizedPerToken(DEFAULT_SUBSCRIPTION); // $200 / 200M = $1/MTok
+  near(rows[0].total_cost_usd, 572193 * perToken);
+  near(rows[1].total_cost_usd, 743355 * perToken);
+  assert.deepEqual(JSON.parse(rows[0].cost_breakdown), { default: 572193 * perToken });
+  assert.ok(cfg.get(MARKER_KEY), 'the marker is written so this runs once');
+});
+
+test('a metered route is left alone: its input/output split is not recoverable', () => {
+  const rows = [{ id: 'c', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"openrouter":13}' }];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig()));
+  assert.equal(r.repriced, 0);
+  assert.equal(r.left, 1);
+  assert.equal(rows[0].total_cost_usd, 13, 'untouched');
+});
+
+test('a multi-route session is left alone: the per-route split is not stored', () => {
+  const rows = [{ id: 'd', total_tokens: 1e6, total_cost_usd: 9, cost_breakdown: '{"default":4,"openrouter":5}' }];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig()));
+  assert.equal(r.repriced, 0);
+  assert.equal(rows[0].total_cost_usd, 9);
+});
+
+test('it runs once: a second call is a no-op even with stale rows present', () => {
+  const rows = [{ id: 'e', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"default":13}' }];
+  const db = fakeDb(rows);
+  const cfg = fakeConfig();
+  assert.equal(repriceLegacySessions(deps(db, cfg)).repriced, 1);
+  const again = repriceLegacySessions(deps(db, cfg));
+  assert.equal(again.repriced, 0);
+  assert.equal(again.skipped, 'already applied');
+});
+
+test('an already-correct row is not rewritten', () => {
+  const perToken = amortizedPerToken(DEFAULT_SUBSCRIPTION);
+  const usd = 1e6 * perToken;
+  const rows = [{ id: 'f', total_tokens: 1e6, total_cost_usd: usd, cost_breakdown: JSON.stringify({ default: usd }) }];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig()));
+  assert.equal(r.repriced, 0);
+  assert.equal(r.left, 1);
+});
+
+test('corrupt breakdown JSON is skipped, not crashed on', () => {
+  const rows = [{ id: 'g', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: 'not json' }];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig()));
+  assert.equal(r.repriced, 0);
+  assert.equal(rows[0].total_cost_usd, 13);
+});
+
+test('a NULL token count is skipped, never zeroed', () => {
+  // total_tokens is nullable. Multiplying `|| 0` by a rate turns an unknown
+  // count into a confident $0.00 and destroys the only figure the row had.
+  const rows = [
+    { id: 'n1', total_tokens: null, total_cost_usd: 4.11, cost_breakdown: '{"default":4.11}' },
+    { id: 'n2', total_tokens: undefined, total_cost_usd: 2.5, cost_breakdown: '{"default":2.5}' },
+    { id: 'n3', total_tokens: -5, total_cost_usd: 1.5, cost_breakdown: '{"default":1.5}' },
+  ];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig()));
+  assert.equal(r.repriced, 0);
+  assert.equal(r.left, 3);
+  assert.equal(rows[0].total_cost_usd, 4.11);
+  assert.equal(rows[1].total_cost_usd, 2.5);
+  assert.equal(rows[2].total_cost_usd, 1.5);
+});
+
+test('a zero-token row is still re-priceable, and lands on zero honestly', () => {
+  const rows = [{ id: 'z', total_tokens: 0, total_cost_usd: 0.5, cost_breakdown: '{"default":0.5}' }];
+  const db = fakeDb(rows);
+  assert.equal(repriceLegacySessions(deps(db, fakeConfig())).repriced, 1);
+  assert.equal(rows[0].total_cost_usd, 0);
+});
+
+test('a route-specific mode change re-runs it, even with the default unchanged', () => {
+  // The marker used to track only the default route's mode. An operator moving
+  // openrouter to amortized while the default stayed published short-circuited
+  // here, and those rows kept their metered cost forever.
+  const rows = [{ id: 'r', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"openrouter":13}' }];
+  const db = fakeDb(rows);
+  const cfg = fakeConfig();
+
+  assert.equal(repriceLegacySessions(deps(db, cfg, { default: 'published' })).repriced, 0);
+  assert.equal(rows[0].total_cost_usd, 13, 'openrouter is metered by default, so nothing moves');
+
+  const after = repriceLegacySessions(deps(db, cfg, { default: 'published', openrouter: 'amortized' }));
+  assert.equal(after.repriced, 1, 'the default is unchanged, but openrouter is not');
+  near(rows[0].total_cost_usd, 1e6 * amortizedPerToken(DEFAULT_SUBSCRIPTION));
+});
+
+test('the billing signature is stable under key order and sensitive to any route', () => {
+  const a = billingSignature(ROUTES, { default: 'amortized', openrouter: 'published' }, billingForRoute);
+  const b = billingSignature([...ROUTES].reverse(), { openrouter: 'published', default: 'amortized' }, billingForRoute);
+  assert.equal(a, b, 'key and route order must not look like a configuration change');
+  const c = billingSignature(ROUTES, { default: 'amortized', openrouter: 'amortized' }, billingForRoute);
+  assert.notEqual(a, c, 'a change on any single route must invalidate the marker');
+  assert.match(a, /^anthropic-api=/, 'sorted, so the string is canonical');
+});
+
+test('the marker is keyed to the mode, so a later billing change re-runs once', () => {
+  const rows = [{ id: 'm', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"default":13}' }];
+  const db = fakeDb(rows);
+  const cfg = fakeConfig();
+
+  // Metered deployment: nothing is eligible, and the marker records that mode.
+  const first = repriceLegacySessions(deps(db, cfg, { default: 'published' }));
+  assert.equal(first.repriced, 0);
+  assert.equal(rows[0].total_cost_usd, 13, 'a metered deployment rewrites nothing');
+
+  // The operator then declares the default route a subscription. The old
+  // run-once marker would have locked this history out forever.
+  const second = repriceLegacySessions(deps(db, cfg, { default: 'amortized' }));
+  assert.equal(second.repriced, 1);
+  near(rows[0].total_cost_usd, 1e6 * amortizedPerToken(DEFAULT_SUBSCRIPTION));
+
+  // And it does not run a third time under the same mode.
+  assert.equal(repriceLegacySessions(deps(db, cfg, { default: 'amortized' })).skipped, 'already applied');
+});
+
+test('a local route re-prices off the electricity rate', () => {
+  const rows = [{ id: 'h', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"ollama-local":13}' }];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig(), { default: 'amortized' }));
+  assert.equal(r.repriced, 1);
+  near(rows[0].total_cost_usd, 1e6 * electricityPerToken(null));
+});
