@@ -10,7 +10,7 @@ const appConfig = require('./lib/app-config');
 appConfig.init(stmts); // HLB-336 — load runtime routing/pricing settings into the cache at boot
 const { AGENTS, getAgentsForSession } = require('./lib/agents');
 const { PHASES, createRouter } = require('./lib/phases');
-const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveRoute, anyLLMInFlight, inFlightLLMCount, AGENT_MAX_TOKENS, parseAgentMaxTokens } = require('./lib/llm');
+const { callAnthropic, callAnthropicWithTools, callLLMRaw, resolveRoute, defaultRouteBilling, anyLLMInFlight, inFlightLLMCount, AGENT_MAX_TOKENS, parseAgentMaxTokens } = require('./lib/llm');
 const { runWithTools } = require('./lib/agents/tool-loop');
 const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
@@ -24,7 +24,8 @@ const { createSpecialistSpawner } = require('./lib/specialist');
 const { getPreset, listPresets } = require('./lib/presets');
 const { deliberationOutcome } = require('./lib/outcome');
 const { createTokenLedger, persistSessionTokens, createTickThrottle } = require('./lib/token-usage');
-const { costFromSnapshot } = require('./lib/cost');
+const { costFromSnapshot, billingForRoute, amortizedPerToken, electricityPerToken } = require('./lib/cost');
+const { repriceLegacySessions } = require('./lib/cost-backfill');
 const { estimateTokens } = require('./lib/embeddings');
 const { buildContext } = require('./lib/context');
 const { createContentBlockBuilder } = require('./lib/prompt/content-blocks');
@@ -151,11 +152,17 @@ function onTokenUsage(sessionId, category, usage, opts) {
 
 // HLB-337 — pricing / subscription / electricity config from the settings
 // store; cost.js applies sensible defaults for anything unset.
+//
+// routeBilling says how each route is PAID. cost.js cannot infer that for the
+// deployment's own endpoint, so llm.js answers it here and an operator override
+// wins over both. Without this the default route was billed at metered rates on
+// a deployment that pays a flat subscription.
 function costConfig() {
   return {
     pricing: appConfig.get('pricing', null),
     subscription: appConfig.get('subscription', null),
     electricity: appConfig.get('electricity', null),
+    routeBilling: { default: defaultRouteBilling(), ...appConfig.get('route_billing', {}) },
   };
 }
 
@@ -1140,5 +1147,19 @@ process.on('SIGINT', shutdown);
   fingerprint.backfillArchetypes().catch(err =>
     log.warn({ err: err.message }, 'archetype backfill error')
   );
+
+  // Re-price sessions costed under the old rule, which billed everything that
+  // was not literally the `subscription` route at metered per-token rates.
+  // Only runs where the deployment's own endpoint is subscription-backed, so a
+  // genuinely metered deployment never has its history rewritten.
+  if (defaultRouteBilling() === 'amortized') {
+    try {
+      repriceLegacySessions({
+        db, appConfig, costConfig, billingForRoute, amortizedPerToken, electricityPerToken, log,
+      });
+    } catch (err) {
+      log.warn({ err: err.message }, 'cost reprice error');
+    }
+  }
   });
 })();
