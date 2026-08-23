@@ -9,20 +9,15 @@ import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
-import { createServer as createNetServer } from 'node:net';
+import { getFreePort } from '../_helpers.mjs';
 
 // Fixed ports collide with a parallel job or a stray local process and fail
-// before the spec reaches an assertion. Bind :0 and let the OS pick.
-const freePort = () => new Promise((resolve, reject) => {
-  const srv = createNetServer();
-  srv.unref();
-  srv.on('error', reject);
-  srv.listen(0, '127.0.0.1', () => {
-    const { port } = srv.address();
-    srv.close(() => resolve(port));
-  });
-});
-const APP = await freePort(), STUB = await freePort();
+// before the spec reaches an assertion. The stub takes the port the OS hands
+// it and never releases it, so there is no window there at all. The app reads
+// its port from env, so it uses the shared helper, which reserves and releases:
+// that window is the documented behaviour of tests/_helpers.mjs and every
+// spawned server in this repo shares it.
+const APP = await getFreePort();
 const BASE = `http://localhost:${APP}`;
 const SHOT = (n) => `/tmp/warroom-e2e-preflight-${n}.png`;
 const fail = (msg) => { console.error('E2E-FAIL:', msg); process.exit(1); };
@@ -51,7 +46,8 @@ const stub = createServer((req, res) => {
     }
   });
 });
-await new Promise((r) => stub.listen(STUB, '127.0.0.1', r));
+await new Promise((r) => stub.listen(0, '127.0.0.1', r));
+const STUB = stub.address().port;
 
 const app = spawn(process.execPath, ['server.js'], {
   env: {
