@@ -2079,7 +2079,7 @@ html, body {
 .pf-row .pf-name { font-size: 11px; color: var(--text); }
 .pf-row .pf-pair { font-family: var(--font-mono); font-size: 10px; color: var(--text-dimmer); }
 .pf-row.fail .pf-name { color: var(--danger); }
-.pf-error { flex-basis: 100%; font-family: var(--font-mono); font-size: 10px; color: var(--danger); line-height: 1.45; word-break: break-word; }
+.pf-error { flex-basis: 100%; font-family: var(--font-mono); font-size: 10px; color: var(--danger); line-height: 1.45; overflow-wrap: anywhere; }
 .settings-actions { align-items: center; }
 .settings-dryrun { font-family: var(--font-mono); font-size: 11px; padding: 8px 12px; background: rgba(255,255,255,0.05); color: var(--text); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .settings-dryrun:hover { border-color: var(--accent-orange); color: var(--accent-orange); }

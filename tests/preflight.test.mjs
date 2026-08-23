@@ -277,9 +277,12 @@ test('warroom_set_model is blocked by a failing dry run, and force gets past it'
 
     // Setting the same pair twice must not probe again: an idempotent call
     // would otherwise be blocked whenever the provider is briefly down.
+    // "Model updated" alone would also pass if the probe ran, so count the
+    // stub's requests instead of reading the wording.
+    const probesBefore = seen.length;
     const again = await client.callTool({ name: 'warroom_set_model', arguments: { agentId: 'red-teamer', model: 'other-good-model' } });
     assert.notEqual(again.isError, true, textOf(again));
-    assert.match(textOf(again), /no dry run was performed|Model updated/);
+    assert.equal(seen.length, probesBefore, 'an unchanged write must make no provider call');
   } finally {
     await client.close();
     await putRouting({ routing: {}, skipPreflight: true });

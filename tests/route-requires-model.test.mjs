@@ -61,6 +61,10 @@ test('resolveRoute: non-default route without a model falls back to default (HLB
       ANTHROPIC_API_KEY: 'test-anthropic',
       OPENAI_API_KEY: '',
       OPENAI_BASE_URL: '',
+      MODEL: '',
+      // Blank, not absent: lib/llm.js prefers a non-empty MODEL, so an
+      // inherited one would make the assertions describe the shell that ran
+      // the test instead of the code under test.
     },
   });
   assert.equal(code, 0, `script failed:\n${stdout}\n${stderr}`);
