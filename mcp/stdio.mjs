@@ -43,6 +43,12 @@ class ApiError extends Error {
     super(`HTTP ${status}: ${body}`);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
+    // Some non-2xx answers are the endpoint's verdict rather than a transport
+    // failure — a 409 from the routing PUT carries the whole dry-run report.
+    // Keep the parsed body so a caller can act on it instead of re-reading the
+    // message string.
+    try { this.data = JSON.parse(body); } catch { this.data = null; }
   }
 }
 
@@ -276,7 +282,11 @@ const ops = {
   // Not atomic: a Settings-panel or second-client write landing between the GET
   // and the PUT is overwritten, last-write-wins. Bounding that needs a
   // conditional write on the settings endpoint, which is a separate change.
-  async setModel({ agentId, route, model, clear }) {
+  // The PUT dry-runs the candidate and answers 409 when it cannot complete a
+  // deliberation. That verdict is the tool's answer, not a transport error, so
+  // it is unwrapped here into the same { blocked, preflight } shape the
+  // in-process transport returns.
+  async setModel({ agentId, route, model, clear, force }) {
     const cfg = await api('/api/settings/agent-routing');
     const validIds = new Set((cfg.agents || []).map(a => a.id));
     const targets = agentId === 'all' ? [...validIds] : [agentId];
@@ -287,8 +297,25 @@ const ops = {
     for (const id of targets) patch[id] = clear ? null : { route, model };
     const { clean, error } = mergeRouting(cfg.routing || {}, patch, validIds, cfg.routes || []);
     if (error) throw new Error(error);
-    const r = await apiPut('/api/settings/agent-routing', { routing: clean });
-    return { routing: r.routing, changed: targets };
+    let r;
+    try {
+      r = await apiPut('/api/settings/agent-routing', { routing: clean, force: !!force });
+    } catch (err) {
+      // apiSend rejects on every non-2xx, so the refusal has to be caught here
+      // rather than read off a returned body. Anything else is a real error.
+      if (err && err.status === 409 && err.data && err.data.error === 'preflight_failed') {
+        return { blocked: true, preflight: err.data.preflight, routing: cfg.routing || {}, changed: [] };
+      }
+      throw err;
+    }
+    return { routing: r.routing, changed: targets, preflight: r.preflight || null, forced: !!r.forced };
+  },
+
+  async preflight({ routing = null, timeoutMs } = {}) {
+    const body = {};
+    if (routing) body.routing = routing;
+    if (timeoutMs) body.timeoutMs = timeoutMs;
+    return apiPost('/api/settings/preflight', body);
   },
   async testModel({ route, model }) {
     if (route && !model) throw new Error('a non-default route requires an explicit model');

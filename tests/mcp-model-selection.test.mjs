@@ -49,7 +49,10 @@ test('MCP model tools: read, set, merge, clear, and cross-transport agreement', 
     assert.ok(!/openrouter \(no credentials\)/.test(before), 'openrouter has credentials here');
 
     // Set one agent to a non-default route + model.
-    const set = await call('warroom_set_model', { agentId: 'red-teamer', model: 'x-ai/grok-2', route: 'openrouter' });
+    // force: no provider answers in a test env, and what is under test is the
+    // write path, not the dry run. The gate itself is covered in preflight.test.mjs
+    // and by the blocked-write case at the end of this file.
+    const set = await call('warroom_set_model', { agentId: 'red-teamer', model: 'x-ai/grok-2', route: 'openrouter', force: true });
     assert.match(set, /red-teamer: x-ai\/grok-2 via openrouter/, 'reports what it wrote');
 
     // The HTTP settings API sees the same store — one setting, two surfaces.
@@ -59,7 +62,7 @@ test('MCP model tools: read, set, merge, clear, and cross-transport agreement', 
 
     // Setting a second agent must MERGE, not replace: the HTTP PUT takes the
     // whole map, so a naive per-agent write would wipe every other override.
-    await call('warroom_set_model', { agentId: 'divergent-generator', model: 'gpt-4o-mini' });
+    await call('warroom_set_model', { agentId: 'divergent-generator', model: 'gpt-4o-mini', force: true });
     const merged = await (await fetch(`${server.baseUrl}/api/settings/agent-routing`)).json();
     assert.deepEqual(merged.routing['red-teamer'], { route: 'openrouter', model: 'x-ai/grok-2' }, 'first override survives');
     assert.deepEqual(merged.routing['divergent-generator'], { model: 'gpt-4o-mini' }, 'model-only override, default route');
@@ -81,7 +84,7 @@ test('MCP model tools: read, set, merge, clear, and cross-transport agreement', 
     assert.match(textOf(badAgent), /unknown agent: nope/);
 
     // "all" applies one pair across every agent.
-    await call('warroom_set_model', { agentId: 'all', model: 'claude-opus-5' });
+    await call('warroom_set_model', { agentId: 'all', model: 'claude-opus-5', force: true });
     const all = await (await fetch(`${server.baseUrl}/api/settings/agent-routing`)).json();
     assert.equal(all.agents.length > 1, true);
     for (const a of all.agents) {
@@ -89,7 +92,7 @@ test('MCP model tools: read, set, merge, clear, and cross-transport agreement', 
     }
 
     // clear drops the override so the agent falls back to the server default.
-    await call('warroom_set_model', { agentId: 'red-teamer', clear: true });
+    await call('warroom_set_model', { agentId: 'red-teamer', clear: true, force: true });
     const cleared = await (await fetch(`${server.baseUrl}/api/settings/agent-routing`)).json();
     assert.equal(cleared.routing['red-teamer'], undefined, 'override removed');
     assert.ok(cleared.effective['red-teamer'].model, 'still resolves to the env default');

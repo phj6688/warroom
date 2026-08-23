@@ -68,13 +68,15 @@ test('stdio transport: every tool has an op, and the model tools reach the same 
     assert.notEqual(cfg.isError, true, textOf(cfg));
     assert.match(textOf(cfg), /openai-api \(no credentials\)/, 'route availability comes from the server');
 
-    const set = await call('warroom_set_model', { agentId: 'red-teamer', model: 'x-ai/grok-2', route: 'openrouter' });
+    // force: the dry run cannot pass against a test env with no live provider,
+    // and this test is about the two adapters reaching the same store.
+    const set = await call('warroom_set_model', { agentId: 'red-teamer', model: 'x-ai/grok-2', route: 'openrouter', force: true });
     assert.notEqual(set.isError, true, textOf(set));
     const httpCfg = await (await fetch(`${server.baseUrl}/api/settings/agent-routing`)).json();
     assert.deepEqual(httpCfg.routing['red-teamer'], { route: 'openrouter', model: 'x-ai/grok-2' }, 'stdio write reached the shared store');
 
     // Read-modify-write: a second single-agent set must not wipe the first.
-    await call('warroom_set_model', { agentId: 'divergent-generator', model: 'gpt-4o-mini' });
+    await call('warroom_set_model', { agentId: 'divergent-generator', model: 'gpt-4o-mini', force: true });
     const merged = await (await fetch(`${server.baseUrl}/api/settings/agent-routing`)).json();
     assert.deepEqual(merged.routing['red-teamer'], { route: 'openrouter', model: 'x-ai/grok-2' }, 'first override survives over stdio too');
     assert.deepEqual(merged.routing['divergent-generator'], { model: 'gpt-4o-mini' });
