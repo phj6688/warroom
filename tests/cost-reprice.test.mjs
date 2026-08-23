@@ -100,6 +100,50 @@ test('corrupt breakdown JSON is skipped, not crashed on', () => {
   assert.equal(rows[0].total_cost_usd, 13);
 });
 
+test('a NULL token count is skipped, never zeroed', () => {
+  // total_tokens is nullable. Multiplying `|| 0` by a rate turns an unknown
+  // count into a confident $0.00 and destroys the only figure the row had.
+  const rows = [
+    { id: 'n1', total_tokens: null, total_cost_usd: 4.11, cost_breakdown: '{"default":4.11}' },
+    { id: 'n2', total_tokens: undefined, total_cost_usd: 2.5, cost_breakdown: '{"default":2.5}' },
+    { id: 'n3', total_tokens: -5, total_cost_usd: 1.5, cost_breakdown: '{"default":1.5}' },
+  ];
+  const db = fakeDb(rows);
+  const r = repriceLegacySessions(deps(db, fakeConfig()));
+  assert.equal(r.repriced, 0);
+  assert.equal(r.left, 3);
+  assert.equal(rows[0].total_cost_usd, 4.11);
+  assert.equal(rows[1].total_cost_usd, 2.5);
+  assert.equal(rows[2].total_cost_usd, 1.5);
+});
+
+test('a zero-token row is still re-priceable, and lands on zero honestly', () => {
+  const rows = [{ id: 'z', total_tokens: 0, total_cost_usd: 0.5, cost_breakdown: '{"default":0.5}' }];
+  const db = fakeDb(rows);
+  assert.equal(repriceLegacySessions(deps(db, fakeConfig())).repriced, 1);
+  assert.equal(rows[0].total_cost_usd, 0);
+});
+
+test('the marker is keyed to the mode, so a later billing change re-runs once', () => {
+  const rows = [{ id: 'm', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"default":13}' }];
+  const db = fakeDb(rows);
+  const cfg = fakeConfig();
+
+  // Metered deployment: nothing is eligible, and the marker records that mode.
+  const first = repriceLegacySessions(deps(db, cfg, { default: 'published' }));
+  assert.equal(first.repriced, 0);
+  assert.equal(rows[0].total_cost_usd, 13, 'a metered deployment rewrites nothing');
+
+  // The operator then declares the default route a subscription. The old
+  // run-once marker would have locked this history out forever.
+  const second = repriceLegacySessions(deps(db, cfg, { default: 'amortized' }));
+  assert.equal(second.repriced, 1);
+  near(rows[0].total_cost_usd, 1e6 * amortizedPerToken(DEFAULT_SUBSCRIPTION));
+
+  // And it does not run a third time under the same mode.
+  assert.equal(repriceLegacySessions(deps(db, cfg, { default: 'amortized' })).skipped, 'already applied');
+});
+
 test('a local route re-prices off the electricity rate', () => {
   const rows = [{ id: 'h', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"ollama-local":13}' }];
   const db = fakeDb(rows);

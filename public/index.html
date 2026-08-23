@@ -3075,10 +3075,23 @@ function renderCostBilling() {
   }
 }
 
+// Only what the operator actually CHANGED. The panel renders the effective
+// mode for every route, so sending all of them back would freeze today's
+// resolved values as permanent overrides: a deployment that later moved from a
+// gateway to the metered OpenAI API would keep pricing real spend as a
+// subscription, which is this bug with the sign flipped. An empty object is a
+// legitimate answer and clears every override.
 function collectRouteBilling() {
+  const rows = document.querySelectorAll('#cost-billing .cb-mode');
+  // The panel never rendered (the cost GET failed), so it holds no opinion.
+  // Returning {} here would read as "clear every override" and wipe the
+  // operator's settings on the next save.
+  if (!rows.length) return null;
+  const defaults = (_costData && _costData.defaults && _costData.defaults.routeBilling) || {};
   const out = {};
-  document.querySelectorAll('#cost-billing .cb-mode').forEach(sel => {
-    out[sel.getAttribute('data-route')] = sel.value;
+  rows.forEach(sel => {
+    const route = sel.getAttribute('data-route');
+    if (sel.value !== defaults[route]) out[route] = sel.value;
   });
   return out;
 }
@@ -3384,8 +3397,10 @@ async function saveSettings(force) {
   if (pp != null && al != null) costBody.subscription = { planPriceUsd: pp, allowanceTokens: al };
   const pw = num('cost-power'), tps = num('cost-tps'), kwh = num('cost-kwh');
   if (pw != null && tps != null && kwh != null) costBody.electricity = { powerWatts: pw, tokensPerSec: tps, pricePerKwh: kwh };
+  // Sent whenever the panel rendered, including as {}: without an empty map
+  // there is no way to clear an override.
   const billing = collectRouteBilling();
-  if (Object.keys(billing).length) costBody.routeBilling = billing;
+  if (billing) costBody.routeBilling = billing;
   const costPayload = Object.keys(costBody).length ? JSON.stringify(costBody) : null;
 
   // Routing first. A routing failure is total: nothing was persisted. The PUT

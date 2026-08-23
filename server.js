@@ -1149,17 +1149,16 @@ process.on('SIGINT', shutdown);
   );
 
   // Re-price sessions costed under the old rule, which billed everything that
-  // was not literally the `subscription` route at metered per-token rates.
-  // Only runs where the deployment's own endpoint is subscription-backed, so a
-  // genuinely metered deployment never has its history rewritten.
-  if (defaultRouteBilling() === 'amortized') {
-    try {
-      repriceLegacySessions({
-        db, appConfig, costConfig, billingForRoute, amortizedPerToken, electricityPerToken, log,
-      });
-    } catch (err) {
-      log.warn({ err: err.message }, 'cost reprice error');
-    }
+  // was not literally the `subscription` route at metered per-token rates. The
+  // helper decides per row from the effective billing config, so a metered
+  // deployment rewrites nothing and an operator override is respected; gating
+  // on the env-derived mode here would have ignored that override.
+  try {
+    repriceLegacySessions({
+      db, appConfig, costConfig, billingForRoute, amortizedPerToken, electricityPerToken, log,
+    });
+  } catch (err) {
+    log.warn({ err: err.message }, 'cost reprice error');
   }
   });
 })();
