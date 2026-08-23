@@ -43,6 +43,12 @@ class ApiError extends Error {
     super(`HTTP ${status}: ${body}`);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
+    // Some non-2xx answers are the endpoint's verdict rather than a transport
+    // failure — a 409 from the routing PUT carries the whole dry-run report.
+    // Keep the parsed body so a caller can act on it instead of re-reading the
+    // message string.
+    try { this.data = JSON.parse(body); } catch { this.data = null; }
   }
 }
 
@@ -291,9 +297,16 @@ const ops = {
     for (const id of targets) patch[id] = clear ? null : { route, model };
     const { clean, error } = mergeRouting(cfg.routing || {}, patch, validIds, cfg.routes || []);
     if (error) throw new Error(error);
-    const r = await apiPut('/api/settings/agent-routing', { routing: clean, force: !!force });
-    if (r && r.error === 'preflight_failed') {
-      return { blocked: true, preflight: r.preflight, routing: cfg.routing || {}, changed: [] };
+    let r;
+    try {
+      r = await apiPut('/api/settings/agent-routing', { routing: clean, force: !!force });
+    } catch (err) {
+      // apiSend rejects on every non-2xx, so the refusal has to be caught here
+      // rather than read off a returned body. Anything else is a real error.
+      if (err && err.status === 409 && err.data && err.data.error === 'preflight_failed') {
+        return { blocked: true, preflight: err.data.preflight, routing: cfg.routing || {}, changed: [] };
+      }
+      throw err;
     }
     return { routing: r.routing, changed: targets, preflight: r.preflight || null, forced: !!r.forced };
   },

@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { registerTools } = require('./tools.js');
 const { buildDecisionRecord } = require('../lib/decision-record');
 const appConfig = require('../lib/app-config');
-const { mergeRouting } = require('../lib/agent-routing');
+const { mergeRouting, sameRouting } = require('../lib/agent-routing');
 const { routableAgents, routableAgentIds } = require('../lib/routable-agents');
 const { availableRoutes, resolveRoute, testConnection, listModels } = require('../lib/llm');
 const { createPreflight } = require('../lib/preflight');
@@ -348,8 +348,14 @@ function setupMCPServer(app, deps) {
       }
       const patch = {};
       for (const id of targets) patch[id] = clear ? null : { route, model };
-      const { clean, error } = mergeRouting(appConfig.getAgentRouting(), patch, validIds, appConfig.ROUTES);
+      const current = appConfig.getAgentRouting();
+      const { clean, error } = mergeRouting(current, patch, validIds, appConfig.ROUTES);
       if (error) throw new Error(error);
+
+      // A write that changes no pair has nothing new to prove, and probing it
+      // would block an idempotent call during a provider outage. Same rule as
+      // the REST endpoint, from the same comparison.
+      if (sameRouting(clean, current)) return { routing: clean, changed: targets, preflight: null, unchanged: true };
 
       const report = await preflight.run({ routing: clean });
       if (!report.ok && !force) {

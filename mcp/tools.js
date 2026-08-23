@@ -497,7 +497,14 @@ function registerTools(server, rawOps) {
         if (agentId) {
           if (!model) return err('Checking a candidate needs a model id alongside agentId.');
           const cfg = await ops.getModelConfig();
-          const ids = agentId === 'all' ? cfg.agents.map(a => a.id) : [agentId];
+          const known = new Set((cfg.agents || []).map(a => a.id));
+          // sanitizeRouting drops an unknown id server-side without an error, so
+          // a typo here would dry-run the live configuration and report a pass
+          // for a candidate that was never tested.
+          if (agentId !== 'all' && !known.has(agentId)) {
+            return err(`unknown agent: ${agentId} (use warroom_list_agents for valid ids, or "all")`);
+          }
+          const ids = agentId === 'all' ? [...known] : [agentId];
           routing = { ...Object.fromEntries((cfg.agents || []).filter(a => a.configured).map(a => [a.id, a.configured])) };
           for (const id of ids) routing[id] = route ? { route, model } : { model };
         }

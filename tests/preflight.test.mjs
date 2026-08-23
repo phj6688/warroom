@@ -8,6 +8,7 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import Database from 'better-sqlite3';
 import { spawnServer, getFreePort } from './_helpers.mjs';
 
 let stub, stubPort, server;
@@ -174,6 +175,43 @@ test('skipPreflight stores without probing', async () => {
   await putRouting({ routing: {}, skipPreflight: true });
 });
 
+test('a stored route with no model names that cause, not a missing credential', async () => {
+  // The PUT rejects a route-only entry, so this shape only reaches the dry run
+  // from a row that predates that check or was hand-edited. ollama-local always
+  // has credentials, so the fallback here can only be the missing model — and
+  // the two causes need different fixes, so they need different messages.
+  // Written straight into app_settings, then re-read by a fresh server.
+  const db = new Database(server.dbPath);
+  db.prepare('INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)')
+    .run('agent_routing', JSON.stringify({ 'red-teamer': { route: 'ollama-local' } }), Date.now());
+  db.close();
+
+  const hand = await spawnServer({
+    env: {
+      OPENAI_BASE_URL: `http://127.0.0.1:${stubPort}/v1`,
+      OPENAI_API_KEY: 'stub-key',
+      MODEL: 'good-model',
+      WAR_ROOM_DB_PATH: server.dbPath,
+      WAR_ROOM_TOKEN: '',
+    },
+  });
+  try {
+    const r = await (await fetch(`${hand.baseUrl}/api/settings/preflight`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    })).json();
+    const row = r.phases.find(p => p.name === 'Red Team').agents.find(a => a.id === 'red-teamer');
+    assert.equal(row.ok, false, 'a route that does not take is a failure');
+    assert.equal(row.fellBack, true);
+    assert.match(row.error, /no model id/, `must name the real cause, got: ${row.error}`);
+    assert.doesNotMatch(row.error, /no credentials/, 'and must not blame the credential');
+  } finally {
+    await hand.dispose();
+    const cleanup = new Database(server.dbPath);
+    cleanup.prepare('DELETE FROM app_settings WHERE key = ?').run('agent_routing');
+    cleanup.close();
+  }
+});
+
 test('a route with no credentials is a failure, not a silent fallback', async () => {
   // openrouter has no key in this deployment, so resolveRoute would quietly
   // hand the agent back to the default provider. The dry run must say so.
@@ -230,6 +268,59 @@ test('warroom_set_model is blocked by a failing dry run, and force gets past it'
     const live = await client.callTool({ name: 'warroom_preflight', arguments: {} });
     assert.match(textOf(live), /live configuration/);
     assert.match(textOf(live), /DRY RUN PASSED/);
+
+    // A typo used to be dropped server-side, so the dry run checked the live
+    // configuration and reported a pass for a candidate nobody tested.
+    const typoAgent = await client.callTool({ name: 'warroom_preflight', arguments: { agentId: 'not-an-agent', model: 'typo-model' } });
+    assert.equal(typoAgent.isError, true);
+    assert.match(textOf(typoAgent), /unknown agent: not-an-agent/);
+
+    // Setting the same pair twice must not probe again: an idempotent call
+    // would otherwise be blocked whenever the provider is briefly down.
+    const again = await client.callTool({ name: 'warroom_set_model', arguments: { agentId: 'red-teamer', model: 'other-good-model' } });
+    assert.notEqual(again.isError, true, textOf(again));
+    assert.match(textOf(again), /no dry run was performed|Model updated/);
+  } finally {
+    await client.close();
+    await putRouting({ routing: {}, skipPreflight: true });
+  }
+});
+
+test('the stdio transport surfaces a blocked write as the report, not HTTP 409', async () => {
+  // apiSend rejects on every non-2xx, so the refusal has to be caught rather
+  // than read off a returned body. Missing that, a blocked save reached the
+  // client as "HTTP 409: {blob}" and the whole point of the gate was lost on
+  // the transport Claude Code actually uses.
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const path = await import('node:path');
+  const { REPO_ROOT } = await import('./_helpers.mjs');
+
+  const client = new Client({ name: 'preflight-stdio-test', version: '1.0.0' });
+  await client.connect(new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(REPO_ROOT, 'mcp', 'stdio.mjs')],
+    env: { ...process.env, WAR_ROOM_URL: server.baseUrl, WAR_ROOM_TOKEN: '' },
+  }));
+  try {
+    const textOf = (r) => (r.content || []).map(c => c.text || '').join('\n');
+
+    const names = (await client.listTools()).tools.map(t => t.name);
+    assert.ok(names.includes('warroom_preflight'), 'stdio advertises the dry-run tool too');
+
+    const blocked = await client.callTool({ name: 'warroom_set_model', arguments: { agentId: 'red-teamer', model: 'typo-model' } });
+    assert.equal(blocked.isError, true);
+    const msg = textOf(blocked);
+    assert.match(msg, /NOT SAVED/, `expected the report, got: ${msg.slice(0, 200)}`);
+    assert.match(msg, /DRY RUN FAILED/);
+    assert.doesNotMatch(msg, /^HTTP 409/, 'a raw transport error tells the caller nothing actionable');
+    assert.equal((await getRouting()).routing['red-teamer'], undefined, 'nothing was stored');
+
+    const passed = await client.callTool({ name: 'warroom_set_model', arguments: { agentId: 'red-teamer', model: 'other-good-model' } });
+    assert.notEqual(passed.isError, true, textOf(passed));
+    assert.match(textOf(passed), /DRY RUN PASSED/);
+
+    assert.match(textOf(await client.callTool({ name: 'warroom_preflight', arguments: {} })), /DRY RUN PASSED/);
   } finally {
     await client.close();
     await putRouting({ routing: {}, skipPreflight: true });
