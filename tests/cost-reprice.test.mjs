@@ -3,7 +3,7 @@
 // leaves the rest alone rather than guessing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { repriceLegacySessions, MARKER_KEY } from '../lib/cost-backfill.js';
+import { repriceLegacySessions, billingSignature, MARKER_KEY } from '../lib/cost-backfill.js';
 import { billingForRoute, amortizedPerToken, electricityPerToken, DEFAULT_SUBSCRIPTION } from '../lib/cost.js';
 
 const near = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);
@@ -33,8 +33,9 @@ function fakeConfig(initial = {}) {
   return { get: (k, d = null) => (k in store ? store[k] : d), set: (k, v) => { store[k] = v; return v; }, _store: store };
 }
 
+const ROUTES = ['anthropic-api', 'openai-api', 'openrouter', 'subscription', 'ollama-local'];
 const deps = (db, appConfig, routeBilling = { default: 'amortized' }) => ({
-  db, appConfig, log: quiet, billingForRoute, amortizedPerToken, electricityPerToken,
+  db, appConfig, log: quiet, billingForRoute, amortizedPerToken, electricityPerToken, routes: ROUTES,
   costConfig: () => ({ subscription: null, electricity: null, routeBilling }),
 });
 
@@ -122,6 +123,31 @@ test('a zero-token row is still re-priceable, and lands on zero honestly', () =>
   const db = fakeDb(rows);
   assert.equal(repriceLegacySessions(deps(db, fakeConfig())).repriced, 1);
   assert.equal(rows[0].total_cost_usd, 0);
+});
+
+test('a route-specific mode change re-runs it, even with the default unchanged', () => {
+  // The marker used to track only the default route's mode. An operator moving
+  // openrouter to amortized while the default stayed published short-circuited
+  // here, and those rows kept their metered cost forever.
+  const rows = [{ id: 'r', total_tokens: 1e6, total_cost_usd: 13, cost_breakdown: '{"openrouter":13}' }];
+  const db = fakeDb(rows);
+  const cfg = fakeConfig();
+
+  assert.equal(repriceLegacySessions(deps(db, cfg, { default: 'published' })).repriced, 0);
+  assert.equal(rows[0].total_cost_usd, 13, 'openrouter is metered by default, so nothing moves');
+
+  const after = repriceLegacySessions(deps(db, cfg, { default: 'published', openrouter: 'amortized' }));
+  assert.equal(after.repriced, 1, 'the default is unchanged, but openrouter is not');
+  near(rows[0].total_cost_usd, 1e6 * amortizedPerToken(DEFAULT_SUBSCRIPTION));
+});
+
+test('the billing signature is stable under key order and sensitive to any route', () => {
+  const a = billingSignature(ROUTES, { default: 'amortized', openrouter: 'published' }, billingForRoute);
+  const b = billingSignature([...ROUTES].reverse(), { openrouter: 'published', default: 'amortized' }, billingForRoute);
+  assert.equal(a, b, 'key and route order must not look like a configuration change');
+  const c = billingSignature(ROUTES, { default: 'amortized', openrouter: 'amortized' }, billingForRoute);
+  assert.notEqual(a, c, 'a change on any single route must invalidate the marker');
+  assert.match(a, /^anthropic-api=/, 'sorted, so the string is canonical');
 });
 
 test('the marker is keyed to the mode, so a later billing change re-runs once', () => {

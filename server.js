@@ -1155,7 +1155,8 @@ process.on('SIGINT', shutdown);
   // on the env-derived mode here would have ignored that override.
   try {
     repriceLegacySessions({
-      db, appConfig, costConfig, billingForRoute, amortizedPerToken, electricityPerToken, log,
+      db, appConfig, costConfig, billingForRoute, amortizedPerToken, electricityPerToken,
+      routes: appConfig.ROUTES, log,
     });
   } catch (err) {
     log.warn({ err: err.message }, 'cost reprice error');
