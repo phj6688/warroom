@@ -8,11 +8,17 @@
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 
 const APP = 8096, STUB = 8097;
 const BASE = `http://localhost:${APP}`;
 const SHOT = (n) => `/tmp/warroom-e2e-preflight-${n}.png`;
 const fail = (msg) => { console.error('E2E-FAIL:', msg); process.exit(1); };
+
+const DB = '/tmp/warroom-e2e-preflight.db';
+// Step 4 stores a deliberately failing configuration, so a leftover DB would
+// make step 1's "nothing was stored" assertion fail on the next run.
+for (const f of [DB, DB + '-wal', DB + '-shm']) rmSync(f, { force: true });
 
 const stub = createServer((req, res) => {
   let body = '';
@@ -39,7 +45,7 @@ const app = spawn(process.execPath, ['server.js'], {
   env: {
     ...process.env,
     PORT: String(APP),
-    WAR_ROOM_DB_PATH: '/tmp/warroom-e2e-preflight.db',
+    WAR_ROOM_DB_PATH: DB,
     OPENAI_BASE_URL: `http://127.0.0.1:${STUB}/v1`,
     OPENAI_API_KEY: 'stub-key',
     MODEL: 'good-model',
@@ -87,6 +93,7 @@ const bodyText = await page.locator('#settings-preflight-body').textContent();
 if (!/typo-model/.test(bodyText)) fail('the report must name the failing model');
 if (!/not found/.test(bodyText)) fail(`the report must carry the provider error: ${bodyText.slice(0, 200)}`);
 if (!(await forceBtn.isVisible())) fail('Save anyway must appear after a failed dry run');
+await page.waitForTimeout(600);
 await page.screenshot({ path: SHOT('1-failed') });
 
 // The modal must still be open, and nothing may have been stored.
@@ -116,7 +123,26 @@ await page.waitForFunction(() => {
 }, { timeout: 30000 });
 const stillStored = await (await fetch(BASE + '/api/settings/agent-routing')).json();
 if (stillStored.routing[agentId]?.model !== 'second-good-model') fail('the Dry run button must not save');
+await page.waitForTimeout(600);
 await page.screenshot({ path: SHOT('3-dryrun-only') });
+
+// 3b. Correct the id and the same button reports a pass.
+await row2.locator('.sa-model').fill('good-model');
+await page.click('#settings-dryrun');
+await page.waitForFunction(() => {
+  const el = document.getElementById('settings-preflight');
+  return el && !el.hidden && el.classList.contains('ok');
+}, { timeout: 30000 });
+const okBody = await page.locator('#settings-preflight-body').textContent();
+if (!/Problem Framing/i.test(okBody)) fail('a passing report still lists every phase');
+await page.waitForTimeout(600);
+await page.screenshot({ path: SHOT('3b-dryrun-pass') });
+await row2.locator('.sa-model').fill('another-typo');
+await page.click('#settings-dryrun');
+await page.waitForFunction(() => {
+  const el = document.getElementById('settings-preflight');
+  return el && !el.hidden && el.classList.contains('fail');
+}, { timeout: 30000 });
 
 // 4. Save anyway stores the failing configuration on purpose.
 await page.click('#settings-save');

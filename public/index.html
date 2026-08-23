@@ -3224,6 +3224,17 @@ function collectRouting() {
 
 const preflightEl = () => document.getElementById('settings-preflight');
 
+// The panel sits at the foot of a long modal, so a verdict that renders out of
+// view reads as nothing happening at all. The modal itself is the scroll
+// container, so scroll it to the end: that shows the verdict and the buttons
+// under it (including "Save anyway") in one move.
+function revealPreflight() {
+  try {
+    const modal = preflightEl().closest('.settings-modal');
+    if (modal) modal.scrollTo({ top: modal.scrollHeight, behavior: 'smooth' });
+  } catch (_) {}
+}
+
 function setPreflightBusy(text) {
   const el = preflightEl();
   el.hidden = false;
@@ -3232,6 +3243,7 @@ function setPreflightBusy(text) {
   document.getElementById('settings-preflight-meta').textContent = '';
   document.getElementById('settings-preflight-body').textContent = '';
   document.getElementById('settings-force').hidden = true;
+  revealPreflight();
 }
 
 function clearPreflight() {
@@ -3290,6 +3302,7 @@ function renderPreflight(r) {
     }
     body.appendChild(wrap);
   }
+  revealPreflight();
 }
 
 async function runDryRun() {
