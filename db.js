@@ -70,7 +70,10 @@ const stmts = {
   insertHumanMessage: db.prepare('INSERT INTO human_messages (id, session_id, content, created_at) VALUES (?, ?, ?, ?)'),
   getSessions: db.prepare('SELECT * FROM sessions ORDER BY created_at DESC'),
   getSession: db.prepare('SELECT * FROM sessions WHERE id = ?'),
-  getSessionMessages: db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC'),
+  // rowid breaks created_at ties. Two messages stamped in the same millisecond
+  // otherwise sort arbitrarily, and MCP's message cursor is an ordinal position
+  // in this exact order, so an unstable tie would silently skip or repeat one.
+  getSessionMessages: db.prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC, rowid ASC'),
   getSynthesisMessages: db.prepare("SELECT agent_name, agent_emoji, content, created_at FROM messages WHERE session_id = ? AND phase = 'Synthesis' ORDER BY created_at ASC"),
   getSessionEscalations: db.prepare('SELECT * FROM escalations WHERE session_id = ? ORDER BY created_at ASC'),
   getSessionHumanMessages: db.prepare('SELECT * FROM human_messages WHERE session_id = ? ORDER BY created_at ASC'),
