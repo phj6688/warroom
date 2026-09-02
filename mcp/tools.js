@@ -104,6 +104,10 @@ function registerTools(server, rawOps) {
 
   // How long ago the room last spoke. A poll asks "is this thing still moving"
   // and a bare timestamp makes the reader do the subtraction.
+  function isoAt(ts) {
+    const n = Number(ts);
+    return Number.isFinite(n) ? new Date(n).toISOString() : null;
+  }
   function ago(ts) {
     const ms = Date.now() - Number(ts);
     if (!Number.isFinite(ms) || ms < 0) return null;
@@ -125,8 +129,11 @@ function registerTools(server, rawOps) {
       lines.push(`  by phase: ${sum.byPhase.map(p => `${p.phase} ${p.count}`).join(', ')}`);
     }
     if (sum.latest) {
-      const when = sum.latest.at ? ` — ${new Date(Number(sum.latest.at)).toISOString()}` : '';
-      const rel = sum.latest.at ? ago(sum.latest.at) : null;
+      // A malformed timestamp must cost the reader that one detail, not the
+      // whole status line: `new Date(NaN).toISOString()` throws.
+      const iso = isoAt(sum.latest.at);
+      const when = iso ? ` — ${iso}` : '';
+      const rel = iso ? ago(sum.latest.at) : null;
       const emoji = sum.latest.agentEmoji ? `${sum.latest.agentEmoji} ` : '';
       lines.push(`  latest: ${emoji}${sum.latest.agentName} [${sum.latest.phase}]${when}${rel ? ` (${rel})` : ''}`);
     }
