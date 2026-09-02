@@ -102,6 +102,14 @@ function registerTools(server, rawOps) {
     return `phase ${reached} of ${total} reached`;
   }
 
+  // A poll should not carry text the caller already holds. Trim to a length
+  // that still identifies the thing, and say how much was cut so nobody
+  // mistakes a trimmed field for a short one.
+  function trim(text, max) {
+    const t = String(text ?? '');
+    return t.length > max ? `${t.slice(0, max)}… (+${t.length - max} chars)` : t;
+  }
+
   // How long ago the room last spoke. A poll asks "is this thing still moving"
   // and a bare timestamp makes the reader do the subtraction.
   // Finite is not the same as renderable: Date tops out at +/-8.64e15, so a
@@ -197,7 +205,9 @@ function registerTools(server, rawOps) {
         if (!s) return err(`Session ${sessionId} not found`);
         const lines = [
           `Session: ${s.id}`,
-          `Problem: ${s.problem}`,
+          // The problem statement runs to thousands of characters on a real
+          // session. A poll needs enough of it to know which room this is.
+          `Problem: ${includeMessages ? s.problem : trim(s.problem, 200)}`,
           `Status: ${sessionStatus(s)} | Phase: ${s.phaseName || s.phase} (${phaseProgress(s)})`,
           `Created: ${new Date(s.createdAt).toISOString()}`,
           `Tokens: ${s.totalTokens != null ? s.totalTokens.toLocaleString() : '—'}`,
@@ -229,10 +239,21 @@ function registerTools(server, rawOps) {
           }
         }
         if (s.escalations?.length) {
-          lines.push(`--- Escalations (${s.escalations.length}) ---\n`);
+          const pending = s.escalations.filter(e => !e.answered).length;
+          lines.push(`--- Escalations (${s.escalations.length} total, ${pending} pending) ---\n`);
           for (const e of s.escalations) {
-            const st = e.answered ? `Answered: ${e.answer}` : 'Pending';
-            lines.push(`[${e.id}] ${e.agentName || e.agent_name}: "${e.question}" -> ${st}`);
+            const who = e.agentName || e.agent_name;
+            // A pending escalation is the reason to poll, so it is never
+            // trimmed: the caller has to read the question to answer it. An
+            // answered one is text the caller wrote, and repeating it on every
+            // poll is the cost this change exists to remove.
+            if (!e.answered) {
+              lines.push(`[${e.id}] ${who}: "${e.question}" -> Pending`);
+            } else if (includeMessages) {
+              lines.push(`[${e.id}] ${who}: "${e.question}" -> Answered: ${e.answer}`);
+            } else {
+              lines.push(`[${e.id}] ${who}: "${trim(e.question, 120)}" -> Answered`);
+            }
           }
           lines.push('');
         }

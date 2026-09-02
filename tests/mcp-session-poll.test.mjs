@@ -20,12 +20,17 @@ const SID = 'pollsess0001';
 // Two phases, three agents, one long message each, so a full transcript is
 // unmistakably larger than a status read.
 const BODY = 'x'.repeat(400);
+// A real problem statement runs to thousands of characters, and an answered
+// escalation carries the caller's own long answer. Both used to ride along on
+// every poll.
+const PROBLEM = `should we rewrite the router ${'p'.repeat(900)}`;
+const ANSWER = `yes, two weeks ${'a'.repeat(900)}`;
 
 function seed(dbPath) {
   const db = new Database(dbPath);
   const now = Date.now();
   db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)')
-    .run(SID, 'should we rewrite the router', now, now);
+    .run(SID, PROBLEM, now, now);
   const ins = db.prepare(`INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at)
                           VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`);
   const rows = [
@@ -41,6 +46,9 @@ function seed(dbPath) {
   db.prepare(`INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, status, created_at)
               VALUES (?, ?, ?, ?, '', ?, 'pending', ?)`)
     .run('esc1', SID, 'red-teamer', 'Red Teamer', 'Do we have a rollback budget?', now + 10);
+  db.prepare(`INSERT INTO escalations (id, session_id, agent_id, agent_name, agent_emoji, question, answer, status, created_at, answered_at)
+              VALUES (?, ?, ?, ?, '', ?, ?, 'answered', ?, ?)`)
+    .run('esc2', SID, 'research-scout', 'Research Scout', 'How long may the migration take?', ANSWER, now + 12, now + 13);
   db.prepare('INSERT INTO human_messages (id, session_id, content, created_at) VALUES (?, ?, ?, ?)')
     .run('h1', SID, 'keep it under two weeks', now + 11);
   db.close();
@@ -66,6 +74,14 @@ async function assertPollContract(call) {
   assert.match(light, /Do we have a rollback budget\?/, 'escalations survive the trim');
   assert.doesNotMatch(light, new RegExp(BODY), 'the transcript must not be in the default read');
   assert.match(light, /Messages: 5/, 'the message count stands in for the transcript');
+  assert.match(light, /Escalations \(2 total, 1 pending\)/, 'the poll says how many still want an answer');
+  // A pending escalation is the reason to poll, so it arrives whole. An
+  // answered one is the caller's own text and only its verdict is worth
+  // repeating.
+  assert.doesNotMatch(light, new RegExp(ANSWER), 'an answered escalation must not repeat its body on every poll');
+  assert.match(light, /How long may the migration take\?" -> Answered/, 'but it is still listed, and named answered');
+  assert.doesNotMatch(light, new RegExp('p'.repeat(400)), 'a long problem statement is trimmed for the poll');
+  assert.match(light, /Problem: should we rewrite the router/, 'enough of it survives to identify the room');
   assert.ok(light.length < 1500, `a status read must stay small, got ${light.length} chars`);
 
   // 2. The trimmed view still tells the caller where to pick the log up.
@@ -75,6 +91,8 @@ async function assertPollContract(call) {
   const full = textOf(await call('warroom_get_session', { sessionId: SID, includeMessages: true }));
   assert.match(full, new RegExp(`m1 ${BODY}`), 'includeMessages returns the transcript');
   assert.match(full, /keep it under two weeks/, 'and the human interjections');
+  assert.match(full, new RegExp(ANSWER), 'and the answered escalation in full');
+  assert.match(full, new RegExp('p'.repeat(400)), 'and the whole problem statement');
   assert.match(full, /Status: Running/, 'without losing the status header');
 
   // 4. A cursor read returns only what landed after it.
