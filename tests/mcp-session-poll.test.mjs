@@ -79,7 +79,10 @@ async function assertPollContract(call) {
   // answered one is the caller's own text and only its verdict is worth
   // repeating.
   assert.doesNotMatch(light, new RegExp(ANSWER), 'an answered escalation must not repeat its body on every poll');
-  assert.match(light, /How long may the migration take\?" -> Answered/, 'but it is still listed, and named answered');
+  // Listing every answered escalation would grow the poll with the room's own
+  // history. The header count carries them instead.
+  assert.doesNotMatch(light, /How long may the migration take/, 'nor its question');
+  assert.match(light, /1 answered escalation\(s\) omitted/, 'but the poll says they exist');
   assert.doesNotMatch(light, new RegExp('p'.repeat(400)), 'a long problem statement is trimmed for the poll');
   assert.match(light, /Problem: should we rewrite the router/, 'enough of it survives to identify the room');
   assert.ok(light.length < 1500, `a status read must stay small, got ${light.length} chars`);

@@ -239,21 +239,23 @@ function registerTools(server, rawOps) {
           }
         }
         if (s.escalations?.length) {
-          const pending = s.escalations.filter(e => !e.answered).length;
-          lines.push(`--- Escalations (${s.escalations.length} total, ${pending} pending) ---\n`);
-          for (const e of s.escalations) {
-            const who = e.agentName || e.agent_name;
-            // A pending escalation is the reason to poll, so it is never
-            // trimmed: the caller has to read the question to answer it. An
-            // answered one is text the caller wrote, and repeating it on every
-            // poll is the cost this change exists to remove.
-            if (!e.answered) {
-              lines.push(`[${e.id}] ${who}: "${e.question}" -> Pending`);
-            } else if (includeMessages) {
-              lines.push(`[${e.id}] ${who}: "${e.question}" -> Answered: ${e.answer}`);
-            } else {
-              lines.push(`[${e.id}] ${who}: "${trim(e.question, 120)}" -> Answered`);
+          const answered = s.escalations.filter(e => e.answered);
+          const pending = s.escalations.filter(e => !e.answered);
+          lines.push(`--- Escalations (${s.escalations.length} total, ${pending.length} pending) ---\n`);
+          // A pending escalation is the reason to poll, so it always arrives
+          // whole: the caller has to read the question to answer it. An
+          // answered one is a question the caller already answered, and listing
+          // every one of them would grow the poll with the room's own history,
+          // so by default the header count carries them and nothing else does.
+          for (const e of pending) {
+            lines.push(`[${e.id}] ${e.agentName || e.agent_name}: "${e.question}" -> Pending`);
+          }
+          if (includeMessages) {
+            for (const e of answered) {
+              lines.push(`[${e.id}] ${e.agentName || e.agent_name}: "${e.question}" -> Answered: ${e.answer}`);
             }
+          } else if (answered.length) {
+            lines.push(`(${answered.length} answered escalation(s) omitted; set includeMessages: true to read them)`);
           }
           lines.push('');
         }
