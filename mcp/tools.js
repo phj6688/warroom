@@ -104,11 +104,19 @@ function registerTools(server, rawOps) {
 
   // How long ago the room last spoke. A poll asks "is this thing still moving"
   // and a bare timestamp makes the reader do the subtraction.
+  // Finite is not the same as renderable: Date tops out at +/-8.64e15, so a
+  // stamp written in microseconds or nanoseconds is a number JS accepts and
+  // toISOString() then throws on. Null and '' coerce to 0, which would date the
+  // room's last word to 1970 rather than admit the stamp is missing.
   function isoAt(ts) {
+    if (ts === null || ts === undefined || ts === '') return null;
     const n = Number(ts);
-    return Number.isFinite(n) ? new Date(n).toISOString() : null;
+    if (!Number.isFinite(n)) return null;
+    const d = new Date(n);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
   function ago(ts) {
+    if (ts === null || ts === undefined || ts === '') return null;
     const ms = Date.now() - Number(ts);
     if (!Number.isFinite(ms) || ms < 0) return null;
     const mins = Math.floor(ms / 60000);

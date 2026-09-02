@@ -109,6 +109,40 @@ async function assertPollContract(call) {
   assert.doesNotMatch(filtered, /m1 /, 'the phase filter still applies');
 }
 
+// A stamp outside Date's range is still a finite number, so `new Date(n)`
+// accepts it and `toISOString()` throws. A row written in nanoseconds rather
+// than milliseconds would then take the whole status line down with it — the
+// one line a poller depends on.
+test('a message stamp outside Date range costs one detail, not the status line', async () => {
+  const server = await spawnServer({ env: { WAR_ROOM_TOKEN: '', MCP_API_KEY: `${mcpKey}-clock` } });
+  try {
+    const db = new Database(server.dbPath);
+    const now = Date.now();
+    db.prepare('INSERT INTO sessions (id, problem, phase, active, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)')
+      .run('badclock001', 'stamped in nanoseconds', now, now);
+    db.prepare(`INSERT INTO messages (id, session_id, agent_id, agent_name, agent_emoji, agent_color, content, phase, created_at)
+                VALUES ('bc1', 'badclock001', 'red-teamer', 'Red Teamer', '', '', 'said something', 'Divergence', ?)`)
+      .run(now * 1e6);
+    db.close();
+
+    const client = new Client({ name: 'session-poll-clock-test', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${server.baseUrl}/mcp?key=${mcpKey}-clock`)));
+    try {
+      const res = await client.callTool({ name: 'warroom_get_session', arguments: { sessionId: 'badclock001' } });
+      const text = textOf(res);
+      assert.notEqual(res.isError, true, text);
+      assert.match(text, /Status: Running/, 'the status line survives a bad stamp');
+      assert.match(text, /Messages: 1/, 'and so does the count');
+      assert.match(text, /latest: Red Teamer \[Divergence\]/, 'who spoke last is still named');
+      assert.doesNotMatch(text, /1970-01-01/, 'a missing or unusable stamp is omitted, not dated to the epoch');
+    } finally {
+      await client.close();
+    }
+  } finally {
+    await server.dispose();
+  }
+});
+
 test('HTTP transport: session detail polls cheap and messages take a cursor', async () => {
   const server = await spawnServer({ env: { WAR_ROOM_TOKEN: '', MCP_API_KEY: mcpKey } });
   try {
