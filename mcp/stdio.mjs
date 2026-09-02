@@ -17,6 +17,7 @@ import WebSocket from 'ws';
 const require = createRequire(import.meta.url);
 const { registerTools } = require('./tools.js');
 const { mergeRouting } = require('../lib/agent-routing.js');
+const { windowMessages, summarizeMessages } = require('../lib/message-window.js');
 
 const BASE_URL = process.env.WAR_ROOM_URL || 'http://localhost:8090';
 // Deployments with WAR_ROOM_TOKEN set gate every /api/* route. Without this the
@@ -152,8 +153,14 @@ const ops = {
       createdAt: s.createdAt,
     }));
   },
-  async getSession(sessionId) {
+  async getSession(sessionId, { includeMessages = false } = {}) {
     const s = await api(`/api/sessions/${sessionId}`);
+    // REST hands back the whole session either way, so the saving here is in
+    // what crosses MCP, not what crosses HTTP. Summarize with the same helper
+    // the HTTP transport uses, or the two adapters render different answers to
+    // the same question.
+    const messages = s.messages || [];
+    const humanMessages = s.humanMessages || [];
     return {
       id: s.id, problem: s.problem, phase: s.phase,
       phaseName: `Phase ${s.phase}`, active: s.active,
@@ -166,9 +173,10 @@ const ops = {
       totalPhases: s.totalPhases ?? null,
       qualityScore: s.qualityScore ?? null,
       totalTokens: s.totalTokens ?? null,
-      messages: s.messages || [],
+      messageSummary: summarizeMessages(messages),
+      humanMessageCount: humanMessages.length,
       escalations: s.escalations || [],
-      humanMessages: s.humanMessages || [],
+      ...(includeMessages ? { messages, humanMessages } : {}),
     };
   },
   async createSession(problem, files, fileIds, presetId, continuesFromSessionId) {
@@ -368,12 +376,9 @@ const ops = {
     }
     return pending;
   },
-  async getMessages(sessionId, agentId, phase) {
+  async getMessages(sessionId, opts = {}) {
     const s = await api(`/api/sessions/${sessionId}`);
-    let messages = s.messages || [];
-    if (agentId) messages = messages.filter(m => m.agentId === agentId);
-    if (phase) messages = messages.filter(m => m.phase === phase);
-    return messages;
+    return windowMessages(s.messages || [], opts);
   },
   async askQuestion(sessionId, question) {
     // Send as human message and wait for the follow-up response

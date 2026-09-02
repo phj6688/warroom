@@ -15,6 +15,7 @@ const { answerEscalationById } = require('../lib/escalation');
 const { improverSystemPrompt, improverUserMessage } = require('../lib/improve');
 const { buildJsonExport } = require('../lib/export');
 const { embed } = require('../lib/embeddings');
+const { windowMessages, summarizeMessages } = require('../lib/message-window');
 
 const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('hex');
 process.env.MCP_API_KEY = MCP_API_KEY;
@@ -110,7 +111,7 @@ function setupMCPServer(app, deps) {
         };
       });
     },
-    async getSession(sessionId) {
+    async getSession(sessionId, { includeMessages = false } = {}) {
       const s = stmts.getSession.get(sessionId);
       if (!s) return null;
       const messages = stmts.getSessionMessages.all(sessionId);
@@ -140,9 +141,16 @@ function setupMCPServer(app, deps) {
         qualityScore: s.quality_score ?? null,
         costBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.cost_breakdown),
         tokenBreakdown: (function (j) { if (!j) return null; try { return JSON.parse(j); } catch { return null; } })(s.token_breakdown),
-        messages: messages.map(m => ({ agentEmoji: m.agent_emoji, agentName: m.agent_name, phase: m.phase, content: m.content })),
+        // A poll wants the state, not the deliberation. Summarize the log by
+        // default and hand back the cursor that reads the rest incrementally;
+        // the transcript only crosses the wire when the caller asks for it.
+        messageSummary: summarizeMessages(messages),
+        humanMessageCount: humanMsgs.length,
         escalations: escalations.map(e => ({ id: e.id, agentName: e.agent_name, question: e.question, answer: e.answer, answered: e.status === 'answered' })),
-        humanMessages: humanMsgs.map(h => ({ content: h.content })),
+        ...(includeMessages ? {
+          messages: messages.map(m => ({ agentEmoji: m.agent_emoji, agentName: m.agent_name, phase: m.phase, content: m.content })),
+          humanMessages: humanMsgs.map(h => ({ content: h.content })),
+        } : {}),
       };
     },
     async createSession(problem, files, fileIds, presetId, continuesFromSessionId) {
@@ -238,11 +246,8 @@ function setupMCPServer(app, deps) {
       if (sessionId) return stmts.getPendingEscalations.all(sessionId);
       return stmts.getAllPendingEscalations.all();
     },
-    async getMessages(sessionId, agentId, phase) {
-      let messages = stmts.getSessionMessages.all(sessionId);
-      if (agentId) messages = messages.filter(m => m.agent_id === agentId);
-      if (phase) messages = messages.filter(m => m.phase === phase);
-      return messages;
+    async getMessages(sessionId, opts = {}) {
+      return windowMessages(stmts.getSessionMessages.all(sessionId), opts);
     },
     async askQuestion(sessionId, question) {
       const s = stmts.getSession.get(sessionId);

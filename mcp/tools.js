@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { DEFAULT_LIMIT, MAX_LIMIT } = require('../lib/message-window');
 
 /**
  * Register all War Room MCP tools on a server instance.
@@ -101,6 +102,37 @@ function registerTools(server, rawOps) {
     return `phase ${reached} of ${total} reached`;
   }
 
+  // How long ago the room last spoke. A poll asks "is this thing still moving"
+  // and a bare timestamp makes the reader do the subtraction.
+  function ago(ts) {
+    const ms = Date.now() - Number(ts);
+    if (!Number.isFinite(ms) || ms < 0) return null;
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  }
+
+  // The transcript stand-in for a status poll: how much the room has said,
+  // where, when it last spoke, and the cursor that reads the rest.
+  function messageSummaryLines(sum) {
+    const lines = [];
+    if (!sum) return lines;
+    lines.push(`Messages: ${sum.total} | Cursor: ${sum.cursor}`);
+    if (sum.byPhase?.length) {
+      lines.push(`  by phase: ${sum.byPhase.map(p => `${p.phase} ${p.count}`).join(', ')}`);
+    }
+    if (sum.latest) {
+      const when = sum.latest.at ? ` — ${new Date(Number(sum.latest.at)).toISOString()}` : '';
+      const rel = sum.latest.at ? ago(sum.latest.at) : null;
+      const emoji = sum.latest.agentEmoji ? `${sum.latest.agentEmoji} ` : '';
+      lines.push(`  latest: ${emoji}${sum.latest.agentName} [${sum.latest.phase}]${when}${rel ? ` (${rel})` : ''}`);
+    }
+    return lines;
+  }
+
   // One absent-cost token across list and detail. Sub-dollar costs keep 4
   // decimals so a fraction-of-a-cent session does not round to $0.00 (the live
   // panel shows the real value via the same precision rule).
@@ -139,11 +171,14 @@ function registerTools(server, rawOps) {
   // 2. warroom_get_session
   server.tool(
     'warroom_get_session',
-    'Get full session detail: messages, escalations, human interjections',
-    { sessionId: z.string().describe('Session ID') },
-    async ({ sessionId }) => {
+    'Check one session: status, phase, cost, and every escalation, without the transcript. This is the poll — it stays the same small size while the deliberation grows, so call it every 1-2 min on a running room. Set includeMessages: true only when you actually want to read the deliberation. To follow a room as it talks, take the Cursor from this reply and pass it to warroom_get_messages as `since`, which returns only what the room said after that point.',
+    {
+      sessionId: z.string().describe('Session ID'),
+      includeMessages: z.boolean().optional().describe('Include the full transcript and the human interjections. Default false: the reply is a status read plus a message summary and a cursor. Turn it on to read the deliberation, not to poll it.'),
+    },
+    async ({ sessionId, includeMessages = false }) => {
       try {
-        const s = await ops.getSession(sessionId);
+        const s = await ops.getSession(sessionId, { includeMessages });
         if (!s) return err(`Session ${sessionId} not found`);
         const lines = [
           `Session: ${s.id}`,
@@ -163,7 +198,14 @@ function registerTools(server, rawOps) {
           if (parts.length) lines.push(`  by route: ${parts.join(', ')}`);
         }
         lines.push('');
-        if (s.messages?.length) {
+        lines.push(...messageSummaryLines(s.messageSummary));
+        if (s.humanMessageCount) lines.push(`Human interjections: ${s.humanMessageCount}`);
+        if (!includeMessages) {
+          const cursor = s.messageSummary?.cursor ?? 0;
+          lines.push(`Transcript omitted. Set includeMessages: true to read it, or call warroom_get_messages with since: ${cursor} to read only what the room says next.`);
+        }
+        lines.push('');
+        if (includeMessages && s.messages?.length) {
           lines.push(`--- Messages (${s.messages.length}) ---\n`);
           for (const m of s.messages) {
             lines.push(`${m.agentEmoji || ''} ${m.agentName || m.agent_name} [${m.phase}]:`);
@@ -179,7 +221,7 @@ function registerTools(server, rawOps) {
           }
           lines.push('');
         }
-        if (s.humanMessages?.length) {
+        if (includeMessages && s.humanMessages?.length) {
           lines.push(`--- Human Interjections (${s.humanMessages.length}) ---\n`);
           for (const h of s.humanMessages) lines.push(`- ${h.content}`);
         }
@@ -205,7 +247,7 @@ function registerTools(server, rawOps) {
   // 3. warroom_create_session
   server.tool(
     'warroom_create_session',
-    'Start a new multi-agent deliberation. 8 agents work through 5 phases: Framing → Divergence → Convergence → Red Team → Synthesis. Runs async — poll warroom_get_session every 1-2 min and answer pending escalations with warroom_answer_escalation while the room waits (an unanswered escalation resolves to the agent\'s stated default after 5 minutes, so a late answer costs quality, not the session). Read the Status line to know where a run ended: Running, Complete, Stopped, Failed, or Crashed, with the phases it got through. Only Complete means the room reached Synthesis. Use for decisions worth real deliberation: weeks-of-work commitments, post-failure adversarial reads, genuine 2-3 option uncertainty. NOT for routine questions answerable in a single response. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
+    'Start a new multi-agent deliberation. 8 agents work through 5 phases: Framing → Divergence → Convergence → Red Team → Synthesis. Runs async — poll warroom_get_session every 1-2 min (it returns status and escalations without the transcript) and answer pending escalations with warroom_answer_escalation while the room waits (an unanswered escalation resolves to the agent\'s stated default after 5 minutes, so a late answer costs quality, not the session). Read the Status line to know where a run ended: Running, Complete, Stopped, Failed, or Crashed, with the phases it got through. Only Complete means the room reached Synthesis. Use for decisions worth real deliberation: weeks-of-work commitments, post-failure adversarial reads, genuine 2-3 option uncertainty. NOT for routine questions answerable in a single response. Attach text context via `files` (inline name+content, uploaded to files-service) or `fileIds` (already in files-service).',
     {
       problem: z.string().describe('Problem statement. Agents see this verbatim every turn — it is the largest single quality lever. Strong statements include: (1) context, (2) the core question or decision, (3) hard constraints, (4) success criteria for a good answer, (5) explicit intent — comparison, recommendation, design, analysis, or decision. Name the tradeoffs and stakeholder perspectives that matter. Keep short problems short; add structure only when it aids clarity. Do not invent requirements that were not stated.'),
       files: z.array(z.object({
@@ -343,20 +385,37 @@ function registerTools(server, rawOps) {
   // 9. warroom_get_messages
   server.tool(
     'warroom_get_messages',
-    'Get messages from a session, optionally filtered by agent or phase',
+    'Read a session\'s messages, in order, optionally filtered by agent or phase. Pass `since` with the Cursor from a previous reply to get only the messages added after it — that is how you follow a live room without re-reading what you already have. Every reply ends with the next Cursor, so a poll loop is: read, keep the Cursor, pass it back. `limit` pages a long log.',
     {
       sessionId: z.string().describe('Session ID'),
       agentId: z.string().optional().describe('Filter by agent ID'),
       phase: z.string().optional().describe('Filter by phase name'),
+      since: z.number().int().optional().describe('Cursor from an earlier reply. Returns only messages after that point. It counts the session\'s whole log, so the same cursor means the same thing with or without a filter.'),
+      limit: z.number().int().optional().describe(`Maximum messages in this page (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}). The reply says how many remain.`),
     },
-    async ({ sessionId, agentId, phase }) => {
+    async ({ sessionId, agentId, phase, since, limit }) => {
       try {
-        const messages = await ops.getMessages(sessionId, agentId, phase);
-        if (!messages.length) return ok('No messages matching filters.');
+        const page = await ops.getMessages(sessionId, { agentId, phase, since, limit });
+        const { messages, total, nextCursor, truncated, remaining } = page;
+        // Always hand back the cursor, including on an empty page: a poll that
+        // finds nothing still has to advance, or it rescans the same tail
+        // forever. `truncated` is what the limit cut; `remaining` is every
+        // unread position, matching or not.
+        const foot = [`Cursor: ${nextCursor} — pass since: ${nextCursor} to read only messages added after this page.`];
+        if (remaining > 0) foot.push(`${remaining} more message(s) in the log after this page.${truncated ? ' Raise `limit` or poll again with the cursor.' : ''}`);
+
+        if (!messages.length) {
+          const why = total === 0 ? 'This session has no messages yet.'
+            : page.since >= total ? `No new messages after cursor ${page.since} (the session has ${total}).`
+            : 'No messages matching filters.';
+          return ok(`${why}\n${foot.join(' ')}`);
+        }
+
+        const head = `Messages ${messages[0].seq}-${messages[messages.length - 1].seq} of ${total}:`;
         const lines = messages.map(m =>
-          `${m.agent_emoji || m.agentEmoji || ''} ${m.agent_name || m.agentName} [${m.phase}]:\n${m.content}`
+          `#${m.seq} ${m.agent_emoji || m.agentEmoji || ''} ${m.agent_name || m.agentName} [${m.phase}]:\n${m.content}`
         );
-        return ok(lines.join('\n\n---\n\n'));
+        return ok(`${head}\n\n${lines.join('\n\n---\n\n')}\n\n${foot.join(' ')}`);
       } catch (e) { return err(e.message); }
     }
   );
