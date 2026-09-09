@@ -1896,6 +1896,23 @@ html, body {
 }
 .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 
+/* ─── Auth posture notice ─────────────────────────────── */
+/* Shown once, on load, when the instance enforces a bearer token this page
+   cannot send. It stays put rather than fading: the condition does not pass. */
+.auth-notice {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  padding: 10px 16px;
+  padding-top: calc(10px + var(--safe-top));
+  background: var(--accent-subtle);
+  border-bottom: 1px solid var(--accent);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 /* ─── Command Palette ─────────────────────────────────── */
 .cmd-overlay {
   position: fixed; inset: 0;

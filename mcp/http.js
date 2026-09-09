@@ -17,6 +17,8 @@ const { buildJsonExport } = require('../lib/export');
 const { embed } = require('../lib/embeddings');
 const { windowMessages, summarizeMessages } = require('../lib/message-window');
 
+// Captured before the fallback overwrites the variable below.
+const MCP_API_KEY_CONFIGURED = (process.env.MCP_API_KEY || '').trim() !== '';
 const MCP_API_KEY = process.env.MCP_API_KEY || crypto.randomBytes(32).toString('hex');
 process.env.MCP_API_KEY = MCP_API_KEY;
 
@@ -550,6 +552,14 @@ function setupMCPServer(app, deps) {
 
   // Never print the key: this line lands in docker logs on a public-repo app.
   console.log('MCP server mounted at /mcp (auth required: MCP_API_KEY via ?key= or Authorization: Bearer)');
+  // /mcp is exempt from the WAR_ROOM_TOKEN gate, so this key is the only thing
+  // in front of it. Say which of the two it is. An unset MCP_API_KEY means a
+  // fresh random key on every boot, which nobody holds, so the route is
+  // unreachable rather than open. That is safe and it is also silent, which is
+  // the property this app has already been bitten by once.
+  if (!MCP_API_KEY_CONFIGURED) {
+    log.warn('MCP_API_KEY unset: /mcp is gated by a random per-boot key and no client can reach it. Set MCP_API_KEY to use the HTTP transport.');
+  }
   return { MCP_API_KEY };
 }
 

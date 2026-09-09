@@ -95,8 +95,17 @@ Release checklist:
 ```bash
 cp .env.example .env
 npm install
+
+# Pick one before starting: the server will not run without a decision.
+# Working on the web UI, or anything driven from a browser:
+echo 'WAR_ROOM_ALLOW_ANONYMOUS=true' >> .env
+# Working on the auth gate itself, or anything driven over HTTP or MCP:
+echo "WAR_ROOM_TOKEN=$(openssl rand -hex 32)" >> .env
+
 node server.js
 ```
+
+Neither one set exits `78` and prints why. See "Auth gate" in `README.md`.
 
 Tests:
 

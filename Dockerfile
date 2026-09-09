@@ -19,9 +19,12 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENV HOME=/tmp
 
-# Marks this artifact as a deployed one. lib/auth.js refuses to honour
-# WAR_ROOM_ALLOW_ANONYMOUS here, so the local-development escape hatch cannot
-# travel into a running container even if the variable reaches it. Set after
+# Marks this artifact as a deployed one, so lib/auth.js refuses to honour
+# WAR_ROOM_ALLOW_ANONYMOUS in a container built from this file. It is a default,
+# not a seal: an image ENV loses to compose `environment:` / `env_file:` and to
+# `docker run --env`, so a run that sets NODE_ENV to something else alongside the
+# opt-in does get an open instance. That takes two deliberate variables and never
+# an absence of one, which is the property that matters here. Set after
 # `npm ci --production` so the install is unaffected.
 ENV NODE_ENV=production
 

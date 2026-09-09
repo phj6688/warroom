@@ -3459,6 +3459,28 @@ document.getElementById('settings-force').addEventListener('click', () => saveSe
 document.getElementById('settings-dryrun').addEventListener('click', runDryRun);
 document.getElementById('settings-overlay').addEventListener('click', e => { if (e.target.id === 'settings-overlay') closeSettings(); });
 
+// ─── Auth posture notice ─────────────────────────────────
+// This page sends no credential: every fetch here goes out without an
+// Authorization header, and the socket carries no token. On an instance with
+// WAR_ROOM_TOKEN set, all of them answer 401 while the page itself still loads,
+// because express.static sits ahead of the gate. Read the posture off /health,
+// which is auth-exempt, and say so once. An empty shell that looks like a slow
+// load is the worst way to report this.
+(async () => {
+  try {
+    const res = await fetch(apiUrl('/health'), { cache: 'no-store' });
+    if (!res.ok) return;
+    const health = await res.json();
+    if (health.auth !== 'enforced') return;
+    const bar = document.createElement('div');
+    bar.className = 'auth-notice';
+    bar.textContent = 'This instance requires a bearer token. The browser cannot send one yet, so the session list, the live feed and every action on this page will fail. Use an MCP client or an authenticated HTTP client until the browser gains a token path.';
+    document.body.prepend(bar);
+  } catch (_) {
+    // A probe that cannot run must never be the reason the page breaks.
+  }
+})();
+
 connect();
 </script>
 </body>
