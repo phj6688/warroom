@@ -77,6 +77,13 @@ export async function spawnServer({ env = {}, readyTimeoutMs = 8000 } = {}) {
       // Disable LLM noise during boot — tests don't make LLM calls.
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || 'test-key-no-real-calls',
       WAR_ROOM_DB_PATH: dbPath,
+      // The server refuses to start without WAR_ROOM_TOKEN, and most of the
+      // suite drives an open instance. Anonymous access is opt-in by name and
+      // refused under NODE_ENV=production, so pin both here instead of
+      // inheriting whatever the developer's shell exports. Tests that exercise
+      // the gate itself override either one.
+      NODE_ENV: 'test',
+      WAR_ROOM_ALLOW_ANONYMOUS: 'true',
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

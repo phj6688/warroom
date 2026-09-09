@@ -15,7 +15,7 @@ const { runWithTools } = require('./lib/agents/tool-loop');
 const { WEB_SEARCH_TOOL, formatToolResult } = require('./lib/tools/web-search');
 const { setupRoutes } = require('./lib/routes');
 const { setupWebSocket } = require('./lib/ws-handler');
-const { requireAuthWS } = require('./lib/auth');
+const { requireAuthWS, assertAuthGateConfigured } = require('./lib/auth');
 const { setupMCPServer } = require('./mcp/http');
 const { createMemoryManager } = require('./lib/memory');
 const { createQualityManager } = require('./lib/quality');
@@ -50,6 +50,12 @@ process.on('uncaughtException', (err) => {
   log.fatal({ err: err && err.stack || err }, 'uncaughtException');
   try { shutdown(); } catch (_) { process.exit(1); }
 });
+
+// ─── Auth gate (F1 / S01) ───────────────────────────────────
+// Before anything binds a port or accepts a socket. An instance with no
+// WAR_ROOM_TOKEN stops here rather than serving /api/* and the WebSocket
+// upgrade to anonymous callers, and says why on stderr.
+assertAuthGateConfigured();
 
 const PORT = process.env.PORT || 8090;
 
