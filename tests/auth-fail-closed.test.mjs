@@ -64,10 +64,13 @@ async function startAndAwaitExit(env, { timeoutMs = 15000 } = {}) {
   proc.stdout.on('data', (d) => { output += d.toString(); });
   proc.stderr.on('data', (d) => { output += d.toString(); });
 
+  // The losing timer is cleared rather than left pending: a referenced 15s
+  // timer per spawn would hold the runner open long after the assertions ran.
+  let timer;
   const exitCode = await Promise.race([
     new Promise((resolve) => proc.once('exit', (code) => resolve(code))),
-    delay(timeoutMs).then(() => null),
-  ]);
+    new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); }),
+  ]).finally(() => clearTimeout(timer));
 
   if (exitCode === null) {
     proc.kill('SIGKILL');
@@ -247,6 +250,9 @@ describe('a configured token outranks the escape hatch', () => {
       const health = await (await fetch(`${server.baseUrl}/health`)).json();
       assert.equal(health.auth, 'enforced');
 
+      // The status comes from the HTTP response the upgrade got, never from the
+      // close event. A socket that dies without answering would otherwise read
+      // as a 401 and let a real regression pass.
       const wsRejected = await new Promise((resolve) => {
         const ws = new WebSocket(server.wsUrl);
         let opened = false;
@@ -256,10 +262,10 @@ describe('a configured token outranks the escape hatch', () => {
           try { ws.terminate(); } catch {}
         });
         ws.on('error', () => {});
-        ws.on('close', () => resolve({ opened, status: opened ? 200 : 401 }));
+        ws.on('close', () => resolve({ opened, status: null }));
       });
       assert.equal(wsRejected.opened, false, 'the opt-in must not open the socket either');
-      assert.equal(wsRejected.status, 401);
+      assert.equal(wsRejected.status, 401, 'the upgrade must be answered with 401, not merely dropped');
     } finally {
       await server.dispose();
     }

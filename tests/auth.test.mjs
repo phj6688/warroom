@@ -100,8 +100,11 @@ describe('F1 WS — auth gate matrix', () => {
         try { ws.terminate(); } catch {}
       });
       ws.on('error', () => { /* swallow — close handler reports */ });
+      // A rejected upgrade reports the status of the HTTP response it got, and
+      // nothing else. Deriving 401 from a close event would make the rejection
+      // assertions pass on a socket that was dropped without an answer.
       ws.on('close', (code, reason) => {
-        resolve({ status: opened ? 200 : 401, opened, code, reason: reason?.toString() });
+        resolve({ status: opened ? 200 : null, opened, code, reason: reason?.toString() });
       });
     });
   }
