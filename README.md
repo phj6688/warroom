@@ -137,7 +137,12 @@ open http://localhost:8090
 
 ```bash
 npm install
-node server.js
+
+# Either give the instance a token
+WAR_ROOM_TOKEN=$(openssl rand -hex 32) node server.js
+
+# or ask for an open instance by name (local development only)
+WAR_ROOM_ALLOW_ANONYMOUS=true node server.js
 ```
 
 ---
@@ -163,6 +168,46 @@ MODEL=claude-sonnet-4-5
 TAVILY_API_KEY=tvly-...
 
 PORT=8090
+```
+
+### Auth gate
+
+`WAR_ROOM_TOKEN` gates every `/api/*` route and the WebSocket upgrade with a
+bearer token. Three paths are exempt: `/health` and `/metrics`, so a probe can
+read them, and `/mcp`, which carries its own gate (`MCP_API_KEY`, checked inside
+`mcp/http.js`). The exemption is an exact path match, never a prefix.
+
+> **The web UI cannot authenticate yet.** The page sends no credential: no
+> `Authorization` header on any request, no token on the socket. Set
+> `WAR_ROOM_TOKEN` and the browser interface goes dark, every call answering 401
+> while the page itself still loads, because static files are served ahead of the
+> gate. The page detects this on load and says so instead of showing an empty
+> shell. Until the browser gains a token path, a gated instance is driven over
+> MCP or by an HTTP client that can send the bearer. Run the UI locally with
+> `WAR_ROOM_ALLOW_ANONYMOUS=true`.
+
+The server **refuses to start** when `WAR_ROOM_TOKEN` is absent, empty or
+whitespace. It exits with code `78` (`EX_CONFIG`) and prints the reason on
+stderr. A deployment that loses the secret therefore fails loudly instead of
+serving every route and every socket to anonymous callers.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `WAR_ROOM_TOKEN` | unset | The bearer token. Required to start. |
+| `WAR_ROOM_ALLOW_ANONYMOUS` | `false` | Set to the literal `true` to run without a token. Refused when `NODE_ENV=production`, which the container image sets as a default. A token, when present, always wins. |
+| `MCP_API_KEY` | random per boot | The gate on `/mcp`, independent of `WAR_ROOM_TOKEN`. Unset means a key nobody holds, so the transport is unreachable rather than open, and the server warns at boot. |
+
+The `NODE_ENV` guard is a default, not a seal. An image `ENV` loses to compose
+`environment:` / `env_file:` and to `docker run --env`, so a run that sets both
+`WAR_ROOM_ALLOW_ANONYMOUS=true` and a non-production `NODE_ENV` does get an open
+container. That takes two deliberate variables and never the absence of one.
+
+A running instance reports its own posture, so nobody has to send a probe
+request to find out:
+
+```bash
+curl -s localhost:8090/health   | jq .auth   # "enforced" or "anonymous"
+curl -s localhost:8090/metrics  | grep auth  # war_room_auth_enforced 1 or 0
 ```
 
 ---
