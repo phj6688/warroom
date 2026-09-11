@@ -12,8 +12,6 @@
 
 ## How it works
 
-A problem is submitted. Eight agents convene. They deliberate across five structured phases. A synthesis emerges.
-
 ```
 Problem Statement
        │
@@ -135,7 +133,7 @@ echo "WAR_ROOM_TOKEN=$(openssl rand -hex 32)" > .env
 node --env-file=.env server.js
 ```
 
-The server listens on port 8090. Set `PORT` to use another port.
+The server listens on port 8090 on all network interfaces. Set `PORT` to use another port. No variable changes the bind address.
 
 5. Check the server from a second terminal in the same directory.
 
@@ -148,6 +146,8 @@ curl -s -H "Authorization: Bearer $(sed -n 's/^WAR_ROOM_TOKEN=//p' .env)" localh
 The first command returns JSON with `"auth":"enforced"`. The second command prints `401`. The third command returns the 8 core agents.
 
 **Web UI.** The browser cannot send the token yet. To use the UI on your own machine, start an open instance. First, stop the server from step 4. An empty `WAR_ROOM_TOKEN` in the shell overrides the value in `.env`.
+
+> **Warning:** An open instance gives full read and write access to every host that can reach its port. That includes settings changes, session deletes, and LLM calls on your keys. Use an open instance only on a trusted network, or behind a host firewall.
 
 ```bash
 WAR_ROOM_TOKEN= WAR_ROOM_ALLOW_ANONYMOUS=true node --env-file=.env server.js
@@ -163,7 +163,8 @@ The `Dockerfile` and `docker-compose.yml` target a self-hosted stack: Infisical 
 
 | The container needs | Reason | Result without it |
 |---|---|---|
-| An Infisical project id and a machine identity (universal auth) | `docker/entrypoint.sh` logs in to Infisical and starts the server under `infisical run`, which injects the secrets as environment variables. | The entrypoint exits with code 1 (`missing Infisical bootstrap`). |
+| An Infisical project id and a machine identity (universal auth) | `docker/entrypoint.sh` logs in to Infisical and starts the server under `infisical run`, which injects the secrets as environment variables. | Compose or the entrypoint refuses to start. |
+| An Infisical server that the container reaches as `infisical:8080` | Compose sets `INFISICAL_DOMAIN=http://infisical:8080` under `environment:`, so `.env` cannot change it. | The Infisical login fails, and the entrypoint exits. |
 | `WAR_ROOM_TOKEN` in the environment of the container | The image sets `NODE_ENV=production`, so the server refuses `WAR_ROOM_ALLOW_ANONYMOUS`. | The server exits with code 78, and `restart: unless-stopped` starts it again in a loop. |
 | The Docker network `platform-net` | Compose declares it as an external network. | Compose does not start the service. |
 | A `.env` file | Compose reads it through `env_file`, and for `${INFISICAL_PROJECT_ID}`. | Compose does not start the service. |
@@ -179,7 +180,7 @@ To deploy:
 1. Create the network once with `docker network create platform-net`.
 2. Write the machine identity to `secrets/infisical_client_id` and `secrets/infisical_client_secret`.
 3. Add `INFISICAL_PROJECT_ID=<project id>` to `.env`.
-4. Store `WAR_ROOM_TOKEN`, `MCP_API_KEY`, and your LLM keys in the Infisical environment that `INFISICAL_ENV` selects.
+4. Store `WAR_ROOM_TOKEN`, `MCP_API_KEY`, and your LLM keys in the Infisical project, in the `prod` environment. Compose sets `INFISICAL_ENV=prod`.
 5. Build the image with the commit in it, and start the container.
 
 ```bash
@@ -207,7 +208,7 @@ The server reads its startup configuration from environment variables. `node ser
 | Variable | Required | Default | Effect |
 |---|---|---|---|
 | `WAR_ROOM_TOKEN` | Yes, unless the anonymous opt-in applies | unset | Bearer token for every `/api/*` route and the WebSocket upgrade. `mcp/stdio.mjs` also sends it. |
-| `WAR_ROOM_ALLOW_ANONYMOUS` | No | `false` | `true` (case-insensitive) starts an open instance when no token is set. See [Auth gate](#auth-gate). |
+| `WAR_ROOM_ALLOW_ANONYMOUS` | No | `false` | `true` (case-insensitive) starts an open instance when no token is set. Use it only on a trusted network. See [Auth gate](#auth-gate). |
 | `MCP_API_KEY` | For `/mcp` | random per start | Key for the `/mcp` HTTP transport, separate from `WAR_ROOM_TOKEN`. |
 | `NODE_ENV` | No | unset (the image sets `production`) | `production` makes the server refuse the anonymous opt-in. |
 
@@ -227,7 +228,7 @@ The server reads its startup configuration from environment variables. `node ser
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434/v1` | Endpoint of the `ollama-local` route. |
 | `OLLAMA_API_KEY` | No | `ollama` | Bearer for the `ollama-local` route. |
 | `QUALITY_MODEL` | No | unset (`MODEL` applies) | Model for the fingerprint classifier, memory analyzer, adversarial twin, and quality evaluator. |
-| `AGENT_MODEL_<agentId>` | No | unset | Model for one agent, for example `AGENT_MODEL_red-teamer`. Each agent id contains a hyphen. `node --env-file` passes such names, but `infisical run` in the container drops them. In the container, use a [per-agent override](#per-agent-overrides). |
+| `AGENT_MODEL_<agentId>` | No | unset | Model for one agent, for example `AGENT_MODEL_red-teamer`. Each agent id contains a hyphen. `node --env-file` passes such names. The container entrypoint is a `/bin/sh` script, and it drops such names when they come from compose or `.env`. In the container, use a [per-agent override](#per-agent-overrides). |
 
 ### Limits and timeouts
 
@@ -256,7 +257,7 @@ The server reads its startup configuration from environment variables. `node ser
 
 | Variable | Required | Default | Effect |
 |---|---|---|---|
-| `EMBED_GATEWAY_URL` | No | `http://embed-gateway:8200` | OpenAI-style embeddings endpoint (`POST /v1/embeddings`). Memory recall and semantic search use it, and they return no results when it fails. |
+| `EMBED_GATEWAY_URL` | No | `http://embed-gateway:8200` | OpenAI-style embeddings endpoint (`POST /v1/embeddings`). Memory recall and semantic search use it. When it fails, memory recall and the REST semantic search return no results. Over `/mcp`, `warroom_semantic_search` returns an error. |
 | `EMBED_MODEL` | No | `nomic-embed-text` | Embedding model name. |
 | `EMBEDDING_DIM` | No | `768` | Expected vector length. The vector table has 768 dimensions. |
 | `EMBEDDING_TIMEOUT_MS` | No | `10000` | Deadline for one embedding call. |
@@ -299,8 +300,8 @@ File features need both `FILES_SERVICE_URL` and `FILES_SERVICE_TOKEN`. War Room 
 | `INFISICAL_PROJECT_ID` | Yes | unset | Infisical project that holds the secrets. |
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` | Yes | contents of `/run/secrets/infisical_client_id` | Client id of the machine identity. |
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | Yes | contents of `/run/secrets/infisical_client_secret` | Client secret of the machine identity. |
-| `INFISICAL_DOMAIN` | No | `http://infisical:8080` | URL of the Infisical server. |
-| `INFISICAL_ENV` | No | `prod` | Infisical environment to read. |
+| `INFISICAL_DOMAIN` | No | `http://infisical:8080` | URL of the Infisical server. Compose sets this value, so `.env` cannot change it. The entrypoint default applies only outside compose. |
+| `INFISICAL_ENV` | No | `prod` | Infisical environment to read. Compose sets this value, so `.env` cannot change it. |
 | `WARROOM_HOST` | No | `warroom.localhost` | Host rule of the Traefik router. |
 
 Compose gives defaults to `SEARCH_PROVIDER`, `SEARXNG_URL`, `SCOUT_USE_TOOL`, `AGENT_SEARCH_EXPANSION`, `SESSION_QUERY_BUDGET`, `EMBED_GATEWAY_URL`, `EMBED_MODEL`, and `IMPROVER_SYSTEM_PROMPT`. It also sets `BASELINE_LOG=data/baseline-usage.jsonl`.
@@ -319,7 +320,9 @@ The gate accepts the token in these places:
 | WebSocket upgrade | `Authorization: Bearer <WAR_ROOM_TOKEN>`, the `?token=` query parameter, or the `Sec-WebSocket-Protocol` header |
 | `/mcp` | `MCP_API_KEY` as the `?key=` query parameter, or `Authorization: Bearer <MCP_API_KEY>` |
 
-> **The web UI cannot authenticate yet.** The page sends no credential: no `Authorization` header on a request, and no token on the socket. When `WAR_ROOM_TOKEN` is set, every call from the page answers 401. The page itself still loads, because static files load ahead of the gate. The page reads `/health` on load and shows a notice instead of an empty page. To drive a gated instance, use the `/mcp` HTTP transport, or a client that sends the token on HTTP and on the WebSocket. The REST API cannot stop or delete a session, send a message, or answer an escalation. Only the WebSocket and MCP can. To run the UI locally, use `WAR_ROOM_ALLOW_ANONYMOUS=true`.
+> **The web UI cannot authenticate yet.** The page sends no credential: no `Authorization` header on a request, and no token on the socket. When `WAR_ROOM_TOKEN` is set, every call from the page answers 401. The page itself still loads, because static files load ahead of the gate. The page reads `/health` on load and shows a notice instead of an empty page.
+>
+> To drive a gated instance, use the `/mcp` HTTP transport, or a client that sends the token on HTTP and on the WebSocket. The REST API cannot stop or delete a session, send a message, or answer an escalation. Only the WebSocket and MCP can. To run the UI locally, use `WAR_ROOM_ALLOW_ANONYMOUS=true` on a trusted network.
 
 The server **refuses to start** when `WAR_ROOM_TOKEN` is absent, empty, or whitespace, unless the anonymous opt-in applies. It exits with code `78` (`EX_CONFIG`) and writes the reason to stderr. So a deployment that loses the secret stops, and it does not serve every route and every socket to anonymous callers.
 
@@ -328,6 +331,8 @@ The anonymous opt-in applies only when all three conditions are true:
 - `WAR_ROOM_TOKEN` is empty. A token always wins.
 - `WAR_ROOM_ALLOW_ANONYMOUS` is `true` (case-insensitive).
 - `NODE_ENV` is not `production`. The container image sets `NODE_ENV=production` as a default.
+
+An open instance accepts every HTTP call and every WebSocket upgrade. The server listens on all network interfaces, and no variable changes that. Use an open instance only on a trusted network, or behind a host firewall.
 
 The `NODE_ENV` guard is only a default. Compose `environment:`, `env_file:`, and `docker run --env` override an image `ENV`. A run that sets `WAR_ROOM_ALLOW_ANONYMOUS=true` and a different `NODE_ENV` gets an open container. That takes two deliberate variables, never the absence of one.
 
@@ -378,7 +383,9 @@ To find a model id, use `GET /api/settings/models?route=<route>` or `warroom_lis
 
 ### Preflight dry run
 
-The server tests a model change before it stores it. The dry run covers each agent of the 5 phases, every specialist template, and 5 support calls. The support calls are the fingerprint classifier, memory analyzer, problem improver, adversarial twin, and quality evaluator. It sends one real minimal completion for each distinct route, model, and probe kind. The `tools` probe covers agent turns, which always send a tools array. The `chat` probe covers the support calls. A route that falls back to another route counts as a failure.
+The server tests a model change before it stores it. The dry run covers each agent of the 5 phases, every specialist template, and 5 support calls. The support calls are the fingerprint classifier, memory analyzer, problem improver, adversarial twin, and quality evaluator.
+
+The dry run sends one real minimal completion for each distinct route, model, and probe kind. The `tools` probe covers agent turns, which always send a tools array. The `chat` probe covers the support calls. A route that falls back to another route counts as a failure.
 
 - `PUT /api/settings/agent-routing` answers `409` with `"error": "preflight_failed"` and the report, and it stores nothing.
 - `"force": true` stores the change after a failed dry run. `"skipPreflight": true` stores it without a dry run.
@@ -554,9 +561,9 @@ The `outcome` field records how a run ended:
 | Outcome | Description |
 |---|---|
 | `complete` | Every phase ran, and the Synthesis message exists. Only a complete session gets a quality score. |
-| `stopped` | The run ended without a verdict: a stop, a delete, a server shutdown, or a Synthesis turn without a message. |
+| `stopped` | The run ended without a verdict: a stop request, SIGTERM or SIGINT, an uncaught exception, or a Synthesis turn without a message. |
 | `failed` | The server abandoned the run after consecutive failed turns, or the run produced no message. `/metrics` counts these sessions. |
-| `crashed` | The server restarted during the run. At start, the server marks such sessions and does not resume them. |
+| `crashed` | The process ended without its shutdown handler, for example after SIGKILL or an out-of-memory kill. At the next start, the server marks the sessions that were still active and does not resume them. |
 | `null` | The session runs now, or it is an older finished session from before the outcome column. A resume also clears the outcome. |
 
 ### Billing and cost
@@ -581,7 +588,7 @@ At each start, the server compares the billing configuration with the configurat
 
 ### Session continuation
 
-To continue from an earlier decision, pass `continuesFromSessionId` when you create a session. The HTTP body, the WebSocket `new-session` message, and `warroom_create_session` accept it. The server adds a summary of the earlier session to the agent context, ahead of the memory from similar sessions. When the earlier session does not exist, the new session starts without it. The MCP tool refuses an unknown id.
+To continue from an earlier decision, pass `continuesFromSessionId` when you create a session. The HTTP body, the WebSocket `new-session` message, and `warroom_create_session` accept it. The server adds a summary of the earlier session to the Problem Framing turn of the Process Architect, ahead of the memory from similar sessions. The later agents see it only through that message. When the earlier session does not exist, the new session starts without it. The MCP tool refuses an unknown id.
 
 ### Role presets
 
@@ -594,7 +601,9 @@ A role preset seeds the specialists, the example prompts of the UI, and the head
 
 ### Memory and quality
 
-After a session ends, background jobs store its memory and score a complete session. A new session receives memory from up to 3 similar past sessions. Memory needs the embedding endpoint. At creation, the server also asks one model for a shadow answer. The quality score compares the synthesis with that answer. To record a human rating, use `POST /api/sessions/:id/quality` or `warroom_rate_session`.
+After a session ends, background jobs store its memory and score a complete session. A new session receives memory from up to 3 similar past sessions. The Process Architect receives that memory in its Problem Framing turn, and the later agents see it only through that message. Memory needs the embedding endpoint.
+
+At creation, the server also asks one model for a shadow answer. The quality score is a composite of phase completion, escalation efficiency, synthesis structure, cross-references, and the shadow delta. The shadow delta is the structure score of the synthesis minus the structure score of the shadow answer. To record a human rating, use `POST /api/sessions/:id/quality` or `warroom_rate_session`.
 
 ---
 
@@ -648,8 +657,6 @@ warroom/
 - **Technical tradeoffs:** Which database fits this workload?
 - **Risk analysis:** What can go wrong with this plan?
 - **Research synthesis:** What does the literature say about X?
-
-Use the War Room for any problem that deserves hard thought.
 
 ---
 
