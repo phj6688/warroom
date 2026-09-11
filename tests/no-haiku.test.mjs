@@ -67,6 +67,7 @@ const appConfig = require('./lib/app-config');
 const routing = {
   // Rows written before the ruling, or edited by hand.
   'red-teamer': { model: 'claude-haiku-4-5' },
+  'adversarial-twin': { model: 'claude-haiku-4-5' },
   'quality-evaluator': { route: 'ollama-local', model: 'anthropic/claude-3.5-haiku' },
   // A support call routed to an allowed model.
   'memory-analyzer': { route: 'ollama-local', model: 'qwen3:30b-a3b' },
@@ -101,8 +102,10 @@ assert.match(mergeRouting({}, { 'quality-evaluator': { model: 'claude-haiku-4-5'
   assert.equal(probe.ok, false);
   assert.equal(probe.error, HAIKU_REFUSAL);
 
-  // The dry run on the stored rows names the skipped Haiku model as the cause
-  // of the fallback, not a missing credential. The probe itself is mocked.
+  // The dry run fails every stored Haiku row, with or without a route, and
+  // names the skipped model as the cause, not a missing credential. A
+  // model-only row keeps its route, so fellBack alone would call it healthy.
+  // The probe itself is mocked.
   const { createPreflight } = require('./lib/preflight');
   const preflight = createPreflight({
     AGENTS: [], PHASES: [], specialist: null, appConfig, log: null, getSearchConfigForAgent: null,
@@ -114,7 +117,11 @@ assert.match(mergeRouting({}, { 'quality-evaluator': { model: 'claude-haiku-4-5'
   assert.equal(qeRow.ok, false, 'a stored Haiku row that falls back is a failure');
   assert.match(qeRow.error, /anthropic\\/claude-3\\.5-haiku is skipped/);
   assert.doesNotMatch(qeRow.error, /no credentials/);
+  const twinRow = report.support.find(s => s.id === 'adversarial-twin');
+  assert.equal(twinRow.ok, false, 'a stored model-only Haiku row is a failure too');
+  assert.match(twinRow.error, /claude-haiku-4-5 is skipped/);
   assert.equal(report.support.find(s => s.id === 'memory-analyzer').ok, true);
+  assert.equal(report.ok, false);
 })().catch((err) => { console.error(err); process.exit(1); });
 `, { ...NO_LLM_ENV, MODEL: '', QUALITY_MODEL: 'gpt-5.6-sol' });
 });
@@ -122,12 +129,13 @@ assert.match(mergeRouting({}, { 'quality-evaluator': { model: 'claude-haiku-4-5'
 // Scanned: everything that ships and could set or suggest a model. Left out on
 // purpose: CHANGELOG.md records what production ran before the ruling;
 // lib/cost.js keeps the Haiku price so Haiku tokens that old sessions recorded
-// are not re-priced at the fallback rate; tests/ feed Haiku ids in to prove
-// they are refused; public/vendor/ is third-party fonts and scripts.
+// are not re-priced at the fallback rate; lib/tokens.js keeps its Haiku rows,
+// which only size a context budget and select nothing; tests/ feed Haiku ids in
+// to prove they are refused; public/vendor/ is third-party fonts and scripts.
 const HAIKU_ID = /claude-[a-z0-9.-]*haiku[a-z0-9.-]*/i;
 const ROOT_FILES = ['.env.example', 'README.md', 'CONTRIBUTING.md', 'CONTEXT.md', 'Dockerfile', 'docker-compose.yml', 'server.js', 'db.js', 'index.html', 'package.json'];
 const DIRS = ['lib', 'mcp', 'docker', 'docs', 'prompts', 'public', 'scripts', 'migrations'];
-const SKIP = new Set(['lib/cost.js', 'public/vendor']);
+const SKIP = new Set(['lib/cost.js', 'lib/tokens.js', 'public/vendor']);
 const TEXT = /\.(js|mjs|cjs|md|html|css|sh|sql|ya?ml|json)$/;
 
 function shippedFiles() {
