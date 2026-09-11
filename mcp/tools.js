@@ -551,9 +551,9 @@ function registerTools(server, rawOps) {
   // 15. warroom_set_model
   server.tool(
     'warroom_set_model',
-    'Set the model (and optionally the provider route) an agent uses. Pass agentId "all" to apply one pair to every agent. This is a SERVER-WIDE setting shared with the web UI and with any session already running — it is not scoped to your session or client.\n\nEVERY change is dry-run before it is stored. The call blocks for a few seconds while the server walks all five phases, the specialists and the support calls on the candidate configuration and fires one real minimal completion per distinct model. WAIT for the result and read it: if the dry run fails, NOTHING IS SAVED, the old configuration is still live, and the report names which phase and which agent could not run. Fix the model id or the route and call again — do not start a session on the assumption the change landed. Use force:true only to store a configuration you know fails right now (a provider that is down, being configured ahead of time). The default server model is claude-opus-5; clear:true drops an override back to it.',
+    'Set the model (and optionally the provider route) an agent uses. Pass agentId "all" to apply one pair to every agent. This is a SERVER-WIDE setting shared with the web UI and with any session already running — it is not scoped to your session or client.\n\nEVERY change is dry-run before it is stored. The call blocks for a few seconds while the server walks all five phases, the specialists and the support calls on the candidate configuration and fires one real minimal completion per distinct model. WAIT for the result and read it: if the dry run fails, NOTHING IS SAVED, the old configuration is still live, and the report names which phase and which agent could not run. Fix the model id or the route and call again — do not start a session on the assumption the change landed. Use force:true only to store a configuration you know fails right now (a provider that is down, being configured ahead of time). The default server model is claude-opus-5; clear:true drops an override back to it. Claude Haiku models are refused.',
     {
-      agentId: z.string().describe('Agent id from warroom_list_agents (e.g. "red-teamer"), or "all" for every agent'),
+      agentId: z.string().describe('Agent id from warroom_get_model_config (e.g. "red-teamer", or a support call such as "quality-evaluator"), or "all" for every agent'),
       model: z.string().optional().describe('Model id as the provider expects it (e.g. "claude-opus-5", "x-ai/grok-2", "gpt-4o-mini"). Required unless clear:true.'),
       route: z.string().optional().describe('Provider route: anthropic-api, openai-api, openrouter, subscription, or ollama-local. Omit to keep the server default route. A non-default route REQUIRES an explicit model.'),
       clear: z.boolean().optional().describe('Remove this agent\'s override so it reverts to the server default model and route'),
@@ -632,7 +632,7 @@ function registerTools(server, rawOps) {
   // 17. warroom_list_models
   server.tool(
     'warroom_list_models',
-    'List the model ids a provider route actually serves, fetched live from the provider. Use it to pick a real id for warroom_set_model instead of guessing — includes every model behind the gateway (Claude, GPT, local Ollama, ...). Omit route to list the server default provider.',
+    'List the model ids a provider route actually serves, fetched live from the provider. Use it to pick a real id for warroom_set_model instead of guessing — includes every model behind the gateway (Claude, GPT, local Ollama, ...) except Claude Haiku, which War Room never runs. Omit route to list the server default provider.',
     {
       route: z.string().optional().describe('Provider route to list: anthropic-api, openai-api, openrouter, subscription, or ollama-local. Omit for this deployment\'s default provider.'),
     },
