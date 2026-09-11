@@ -318,7 +318,7 @@ The gate accepts the token in these places:
 |---|---|
 | `/api/*` | `Authorization: Bearer <WAR_ROOM_TOKEN>` |
 | WebSocket upgrade | `Authorization: Bearer <WAR_ROOM_TOKEN>`, the `?token=` query parameter, or the `Sec-WebSocket-Protocol` header |
-| `/mcp` | `MCP_API_KEY` as the `?key=` query parameter, or `Authorization: Bearer <MCP_API_KEY>` |
+| `/mcp` | `Authorization: Bearer <MCP_API_KEY>`, or `MCP_API_KEY` as the `?key=` query parameter |
 
 > **The web UI cannot authenticate yet.** The page sends no credential: no `Authorization` header on a request, and no token on the socket. When `WAR_ROOM_TOKEN` is set, every call from the page answers 401. The page itself still loads, because static files load ahead of the gate. The page reads `/health` on load and shows a notice instead of an empty page.
 >
@@ -496,7 +496,7 @@ War Room serves the same 32 MCP tools over two transports.
 
 | Transport | How it runs | Auth | Gated instance |
 |---|---|---|---|
-| Streamable HTTP | Inside the server, at `/mcp` | `MCP_API_KEY` as `?key=` or `Authorization: Bearer` | All tools work |
+| Streamable HTTP | Inside the server, at `/mcp` | `MCP_API_KEY` as `Authorization: Bearer` or `?key=` | All tools work |
 | stdio | `npm run mcp` or `node mcp/stdio.mjs` (package bin `warroom-mcp`) | Sends `WAR_ROOM_TOKEN` on REST calls | 5 tools fail (see the note below) |
 
 The HTTP transport calls the engine directly. The stdio transport is a separate process: it calls the REST API and the WebSocket of the server in `WAR_ROOM_URL`.
@@ -508,11 +508,16 @@ To register the HTTP transport, add an entry like this one to your MCP client co
   "mcpServers": {
     "war-room": {
       "type": "http",
-      "url": "http://localhost:8090/mcp?key=<MCP_API_KEY>"
+      "url": "http://localhost:8090/mcp",
+      "headers": {
+        "Authorization": "Bearer <MCP_API_KEY>"
+      }
     }
   }
 }
 ```
+
+The server also accepts the key as `?key=<MCP_API_KEY>` for a client that cannot set a header. A query string can appear in proxy access logs, so use the header when the client supports it.
 
 To register the stdio transport, give the client the command and the environment:
 
