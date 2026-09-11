@@ -29,14 +29,14 @@ const toast1 = await page.locator('#toast').textContent();
 if (!/needs a model/.test(toast1)) fail(`missing-model guard toast, got: ${toast1}`);
 
 // Fill all: route + model.
-await page.fill('#settings-all-model', 'claude-haiku-4-5');
+await page.fill('#settings-all-model', 'claude-opus-5');
 await page.click('#settings-all-apply');
 await page.screenshot({ path: SHOT('2-applied-all') });
 for (let i = 0; i < rowCount; i++) {
   const row = page.locator('#settings-agents .settings-agent-row').nth(i);
   const route = await row.locator('.sa-route').inputValue();
   const model = await row.locator('.sa-model').inputValue();
-  if (route !== 'anthropic-api' || model !== 'claude-haiku-4-5') fail(`row ${i} not filled: ${route}/${model}`);
+  if (route !== 'anthropic-api' || model !== 'claude-opus-5') fail(`row ${i} not filled: ${route}/${model}`);
 }
 
 // Individual tweak after the fill must survive Save (the point of the design).
@@ -55,7 +55,7 @@ for (const [id, cfg] of Object.entries(saved.routing)) {
 const tweaked = saved.routing[saved.agents[0].id];
 if (tweaked.model !== 'claude-opus-4-8') fail(`individual tweak lost: ${JSON.stringify(tweaked)}`);
 const rest = Object.entries(saved.routing).filter(([id]) => id !== saved.agents[0].id);
-if (!rest.every(([, c]) => c.model === 'claude-haiku-4-5')) fail('bulk model not persisted on remaining agents');
+if (!rest.every(([, c]) => c.model === 'claude-opus-5')) fail('bulk model not persisted on remaining agents');
 console.log('persisted all-8 routing with individual tweak: OK');
 
 // Clear-all roundtrip back to defaults.

@@ -3134,9 +3134,10 @@ function renderSettings() {
     const cur = routing[a.id] || {};
     const eff = effective[a.id] || {};
     // Specialists are spawned per session, so their rows configure a template
-    // that may not appear in every run. Mark them; the roster is otherwise
-    // 19 undifferentiated names.
-    const kind = a.isSpecialist ? ' <span class="sa-kind">specialist</span>' : '';
+    // that may not appear in every run. Support calls run around the phases,
+    // not in them. Mark both; the roster is otherwise 24 undifferentiated names.
+    const kind = a.isSpecialist ? ' <span class="sa-kind">specialist</span>'
+      : a.isSupport ? ' <span class="sa-kind">support</span>' : '';
     return `<div class="settings-agent-row" data-aid="${a.id}">
       <span class="sa-name" title="${escHtml(a.role || '')}">${a.emoji || ''} ${escHtml(a.name)}${kind}</span>
       <select class="sa-route">${routeOpts(cur.route)}</select>

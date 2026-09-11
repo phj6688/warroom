@@ -227,7 +227,7 @@ The server reads its startup configuration from environment variables. `node ser
 | `CLIPROXY_GATEWAY_TOKEN` | No | unset | Bearer for the `subscription` route. |
 | `OLLAMA_BASE_URL` | No | `http://localhost:11434/v1` | Endpoint of the `ollama-local` route. |
 | `OLLAMA_API_KEY` | No | `ollama` | Bearer for the `ollama-local` route. |
-| `QUALITY_MODEL` | No | unset (`MODEL` applies) | Model for the fingerprint classifier, memory analyzer, adversarial twin, and quality evaluator. |
+| `QUALITY_MODEL` | No | unset (`MODEL` applies) | Model for the fingerprint classifier, memory analyzer, adversarial twin, and quality evaluator, for example `gpt-5.6-sol`. A stored override for one of them wins. |
 | `AGENT_MODEL_<agentId>` | No | unset | Model for one agent, for example `AGENT_MODEL_red-teamer`. Each agent id contains a hyphen. `node --env-file` passes such names. The container entrypoint is a `/bin/sh` script, and it drops such names when they come from compose or `.env`. In the container, use a [per-agent override](#per-agent-overrides). |
 
 ### Limits and timeouts
@@ -369,13 +369,15 @@ The model of an agent comes from the first source that has a value:
 
 When a call goes out with `ANTHROPIC_API_KEY`, the server removes the prefix `anthropic/` from the model id.
 
+War Room never runs a Claude Haiku model. The server ignores a Haiku id in `MODEL`, `QUALITY_MODEL`, `AGENT_MODEL_<agentId>`, or a stored override, and it logs a warning. The next source in the list then applies. A routing write or a test probe with a Haiku id fails. The model catalog leaves out Haiku ids.
+
 ### Per-agent overrides
 
-Each of the 8 core agents and each of the 11 specialist templates can have its own route and model. Set an override in one of these places:
+Each of the 8 core agents, each of the 11 specialist templates, and each of the 5 support calls can have its own route and model. The support calls are the fingerprint classifier, memory analyzer, problem improver, adversarial twin, and quality evaluator. Set an override in one of these places:
 
 - The Settings panel in the web UI.
 - `PUT /api/settings/agent-routing` with a body such as `{"routing": {"red-teamer": {"route": "openrouter", "model": "<model id>"}}}`. The body replaces the whole stored map, so include every override that you want to keep.
-- The MCP tool `warroom_set_model`. Use `agentId: "all"` to set every agent.
+- The MCP tool `warroom_set_model`. Use `agentId: "all"` to set every agent and every support call.
 
 The server stores overrides in the `app_settings` table and uses them at once, without a restart. They apply to the whole server, also to sessions that already run. A route other than the default needs an explicit model. A stored route without credentials falls back to the default route, and the server logs a warning.
 
@@ -616,7 +618,7 @@ At creation, the server also asks one model for a shadow answer. The quality sco
 
 | Command | Runner | Scope |
 |---|---|---|
-| `npm test` | `node --test tests/*.test.mjs` | 78 test files |
+| `npm test` | `node --test tests/*.test.mjs` | 80 test files |
 | `npm run test:unit` | vitest, files that match `tests/**/*.test.js` | 6 test files. `tests/e2e-integration.test.js` runs only with `E2E_REAL=1` and live services. |
 | `npm run test:e2e` | Playwright with headless Chromium, `tests/e2e/*.e2e.mjs` | 13 specs. Each spec starts its own server with a temporary database. CI does not run them. |
 

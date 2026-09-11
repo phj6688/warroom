@@ -18,8 +18,8 @@ before(async () => {
       return;
     }
     if (req.url === '/v1/models') {
-      // Unsorted, with a duplicate and a junk entry: the endpoint promises a
-      // sorted, deduped list of string ids.
+      // Unsorted, with a duplicate, a junk entry and a Claude Haiku id: the
+      // endpoint promises a sorted, deduped list of string ids without Haiku.
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ data: [
         { id: 'gpt-5.5' }, { id: 'claude-opus-5' }, { id: 'gpt-5.5' }, { id: 42 }, {},
@@ -49,13 +49,13 @@ after(async () => {
 
 const list = (qs = '') => fetch(`${server.baseUrl}/api/settings/models${qs}`);
 
-test('default route lists the gateway catalog, sorted and deduped', async () => {
+test('default route lists the gateway catalog, sorted and deduped, without Haiku', async () => {
   const res = await list();
   assert.equal(res.status, 200);
   const r = await res.json();
   assert.equal(r.ok, true);
   assert.equal(r.route, 'default');
-  assert.deepEqual(r.models, ['anthropic/claude-haiku-4-5', 'claude-opus-5', 'gpt-5.5']);
+  assert.deepEqual(r.models, ['claude-opus-5', 'gpt-5.5']);
 });
 
 test('provider failure is data, not an endpoint error', async () => {
