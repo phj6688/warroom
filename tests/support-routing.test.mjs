@@ -8,7 +8,7 @@
 // id carries a hyphen. The same writes refuse a Claude Haiku model.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnServer } from './_helpers.mjs';
+import { spawnServer, runNodeScript } from './_helpers.mjs';
 
 const SUPPORT = ['fingerprint-classifier', 'memory-analyzer', 'improver', 'adversarial-twin', 'quality-evaluator'];
 
@@ -60,4 +60,53 @@ test('support calls are listed, routable, and refuse a Haiku model', async () =>
   } finally {
     await server.dispose();
   }
+});
+
+// A quality score records the model its evaluator call ran on. Now that the
+// evaluator is routable, reading the route again after the awaited scoring let
+// a routing change made mid-evaluation relabel the row with a model that never
+// scored it. Driven via a child script against the real db.js.
+test('a quality score keeps the evaluator model it ran on when routing changes mid-call', async () => {
+  const { code, stdout, stderr } = await runNodeScript(`
+const assert = require('assert');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wr-support-label-'));
+process.env.WAR_ROOM_DB_PATH = path.join(dir, 't.db');
+const { db, stmts } = require('./db.js');
+const appConfig = require('./lib/app-config');
+appConfig.init(stmts);
+appConfig.set('agent_routing', { 'quality-evaluator': { model: 'evaluator-a' } });
+const { resolveRoute } = require('./lib/llm');
+const { createQualityManager } = require('./lib/quality.js');
+
+const now = Date.now();
+stmts.insertSession.run('s1', 'p', now, now);
+stmts.updateSessionActive.run(0, now, 's1');
+stmts.updateSessionOutcome.run('complete', now, now, 's1');
+stmts.insertMessage.run('m1', 's1', 'systems-synthesizer', 'Synthesizer', '', '', 'RECOMMENDATIONS: ship it', 'Synthesis', now);
+
+const ranOn = [];
+// Like the real transport, the call resolves its route the moment it starts.
+const callAnthropic = async (system, messages, agentId) => {
+  ranOn.push(resolveRoute(agentId).model);
+  appConfig.set('agent_routing', { 'quality-evaluator': { model: 'evaluator-b' } });
+  return 'STRUCTURE_SCORE: 0.8';
+};
+const quality = createQualityManager({ db, stmts, callAnthropic, PHASES: [], onTokenUsage: () => {} });
+
+(async () => {
+  await quality.evaluateSession('s1');
+  const row = db.prepare('SELECT evaluator_model FROM quality_scores WHERE session_id = ?').get('s1');
+  assert.deepEqual(ranOn, ['evaluator-a']);
+  assert.equal(row.evaluator_model, 'evaluator-a', 'the row names the model the evaluator ran on');
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+  console.log('support label assertions passed');
+})().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
+`, { env: { ANTHROPIC_API_KEY: 'test-anthropic', OPENAI_API_KEY: '', MODEL: '', QUALITY_MODEL: '' } });
+  assert.equal(code, 0, `script failed:\n${stdout}\n${stderr}`);
+  assert.match(stdout, /support label assertions passed/);
 });
