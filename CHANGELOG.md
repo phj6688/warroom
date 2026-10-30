@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Production dependencies updated within their current majors (`npm audit fix`, lockfile only) to clear nine advisories that the CI audit step now reports: `proxy-addr`, `zod`, `hono`, `ip-address`, `qs` and `express` among them. `npm audit --omit=dev` reports 0 vulnerabilities.
+
 ### Changed
 - War Room never runs a Claude Haiku model. This is an operator ruling, and the code now holds it at each entry point. A Haiku id in `MODEL`, `QUALITY_MODEL` or `AGENT_MODEL_<agentId>` is ignored with a warning, and the next source in the resolution order applies. `resolveRoute` also skips a Haiku model in a stored override (a row from before the ruling) or from a caller. `PUT /api/settings/agent-routing` and `warroom_set_model` refuse a Haiku model by agent id. The test probe refuses it before any provider call, and the model catalog leaves Haiku ids out. The dry run names a skipped stored Haiku model as the cause, not a missing credential. `.env.example` no longer suggests Haiku for `QUALITY_MODEL`. It gives `gpt-5.6-sol` as the example, and the code fallback for the support calls stays `MODEL`. `HAIKU_AGENTS` in `lib/llm.js` is now `SUPPORT_AGENTS`. `tests/no-haiku.test.mjs` pins each entry point and scans the shipped config, code and docs for a Haiku model id.
 - The five support calls (fingerprint classifier, memory analyzer, problem improver, adversarial twin, quality evaluator) are routable agents. The Settings panel shows them with a `support` tag. `warroom_set_model`, `warroom_get_model_config` and "Set every agent" include them. Before, their only lever was env, and `infisical run` drops the hyphenated `AGENT_MODEL_<agentId>` names. A quality score now records the model that the evaluator call resolves to, not the raw `QUALITY_MODEL` value. Covered by `tests/support-routing.test.mjs`.
