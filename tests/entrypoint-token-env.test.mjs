@@ -25,6 +25,7 @@ case "$1" in
     echo "ARGV: $*"
     if [ -n "\${INFISICAL_TOKEN:-}" ]; then echo "TOKEN_ENV: set"; else echo "TOKEN_ENV: unset"; fi
     if [ "\${INFISICAL_TOKEN:-}" = '${FAKE_TOKEN}' ]; then echo "TOKEN_MATCH: yes"; else echo "TOKEN_MATCH: no"; fi
+    if [ -n "\${INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN:-}" ]; then echo "STALE_ENV: set"; else echo "STALE_ENV: unset"; fi
     ;;
 esac
 `;
@@ -38,6 +39,7 @@ function runEntrypoint() {
       encoding: 'utf8',
       env: {
         PATH: `${dir}:${process.env.PATH}`,
+        INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN: 'stale-token',
         INFISICAL_PROJECT_ID: 'proj-test',
         INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: 'client-id-test',
         INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: 'client-secret-test',
@@ -56,4 +58,5 @@ test('entrypoint passes the access token by environment, not argv', () => {
   assert.ok(!r.stdout.includes(FAKE_TOKEN), 'token value must not appear in argv');
   assert.match(r.stdout, /TOKEN_ENV: set/);
   assert.match(r.stdout, /TOKEN_MATCH: yes/);
+  assert.match(r.stdout, /STALE_ENV: unset/);
 });

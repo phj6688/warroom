@@ -33,6 +33,8 @@ if [ -z "$INFISICAL_TOKEN" ]; then
   exit 1
 fi
 
+# The CLI prefers this variable over INFISICAL_TOKEN; drop a stale inherited value.
+unset INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN
 export INFISICAL_TOKEN
 
 exec infisical run \
