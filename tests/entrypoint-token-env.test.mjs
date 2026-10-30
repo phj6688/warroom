@@ -23,23 +23,33 @@ case "$1" in
   login) printf '%s' '${FAKE_TOKEN}' ;;
   run)
     echo "ARGV: $*"
-    if [ -n "\${INFISICAL_TOKEN:-}" ]; then echo "TOKEN_ENV: set"; else echo "TOKEN_ENV: unset"; fi
-    if [ "\${INFISICAL_TOKEN:-}" = '${FAKE_TOKEN}' ]; then echo "TOKEN_MATCH: yes"; else echo "TOKEN_MATCH: no"; fi
-    if [ -n "\${INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN:-}" ]; then echo "STALE_ENV: set"; else echo "STALE_ENV: unset"; fi
+    if [ -n "\${INFISICAL_TOKEN:-}" ]; then echo "CLI_TOKEN_ENV: set"; else echo "CLI_TOKEN_ENV: unset"; fi
+    if [ "\${INFISICAL_TOKEN:-}" = '${FAKE_TOKEN}' ]; then echo "CLI_TOKEN_MATCH: yes"; else echo "CLI_TOKEN_MATCH: no"; fi
+    if [ -n "\${INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN:-}" ]; then echo "CLI_STALE_ENV: set"; else echo "CLI_STALE_ENV: unset"; fi
+    while [ "$1" != "--" ]; do shift; done
+    shift
+    exec "$@"
     ;;
 esac
 `;
+
+const APP = [
+  'if [ -n "${INFISICAL_TOKEN:-}" ]; then echo "APP_TOKEN_ENV: set"; else echo "APP_TOKEN_ENV: unset"; fi',
+  'if [ -n "${INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN:-}" ]; then echo "APP_STALE_ENV: set"; else echo "APP_STALE_ENV: unset"; fi',
+  'echo "APP_LOG_LEVEL: ${LOG_LEVEL:-none}"',
+].join('; ');
 
 function runEntrypoint() {
   const dir = mkdtempSync(join(tmpdir(), 'wr-entry-'));
   try {
     writeFileSync(join(dir, 'infisical'), STUB);
     chmodSync(join(dir, 'infisical'), 0o755);
-    return spawnSync('sh', [ENTRYPOINT, 'true'], {
+    return spawnSync('sh', [ENTRYPOINT, 'sh', '-c', APP], {
       encoding: 'utf8',
       env: {
         PATH: `${dir}:${process.env.PATH}`,
         INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN: 'stale-token',
+        LOG_LEVEL: 'debug',
         INFISICAL_PROJECT_ID: 'proj-test',
         INFISICAL_UNIVERSAL_AUTH_CLIENT_ID: 'client-id-test',
         INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET: 'client-secret-test',
@@ -56,7 +66,21 @@ test('entrypoint passes the access token by environment, not argv', () => {
   assert.match(r.stdout, /^ARGV: run /m);
   assert.doesNotMatch(r.stdout, /--token/);
   assert.ok(!r.stdout.includes(FAKE_TOKEN), 'token value must not appear in argv');
-  assert.match(r.stdout, /TOKEN_ENV: set/);
-  assert.match(r.stdout, /TOKEN_MATCH: yes/);
-  assert.match(r.stdout, /STALE_ENV: unset/);
+  assert.match(r.stdout, /^CLI_TOKEN_ENV: set$/m);
+  assert.match(r.stdout, /^CLI_TOKEN_MATCH: yes$/m);
+  assert.match(r.stdout, /^CLI_STALE_ENV: unset$/m);
+});
+
+test('the app process never receives the access token variables', () => {
+  const r = runEntrypoint();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^APP_TOKEN_ENV: unset$/m);
+  assert.match(r.stdout, /^APP_STALE_ENV: unset$/m);
+  assert.match(r.stdout, /^APP_LOG_LEVEL: debug$/m, 'the app keeps its own LOG_LEVEL');
+});
+
+test('the CLI is pinned to a non-debug log level', () => {
+  const r = runEntrypoint();
+  assert.match(r.stdout, /^ARGV: run .*--log-level=info/m);
+  assert.doesNotMatch(r.stdout, /--log-level=(debug|trace)/);
 });

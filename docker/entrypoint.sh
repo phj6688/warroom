@@ -33,14 +33,18 @@ if [ -z "$INFISICAL_TOKEN" ]; then
   exit 1
 fi
 
-# The CLI prefers this variable over INFISICAL_TOKEN; drop a stale inherited value.
+# The CLI prefers INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN over INFISICAL_TOKEN, so drop a stale inherited value.
 unset INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN
 export INFISICAL_TOKEN
 
+# --log-level=info keeps the CLI from printing its environment (token included)
+# when the app is run with LOG_LEVEL=debug. `env -u` keeps the token out of the
+# app process, which only needs the injected secrets.
 exec infisical run \
+  --log-level=info \
   --domain="$INFISICAL_DOMAIN" \
   --projectId="$INFISICAL_PROJECT_ID" \
   --env="$INFISICAL_ENV" \
   --recursive \
   --silent \
-  -- "$@"
+  -- env -u INFISICAL_TOKEN -u INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN "$@"
