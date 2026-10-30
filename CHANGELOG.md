@@ -9,6 +9,9 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Production dependencies updated within their current majors (`npm audit fix`, lockfile only) to clear nine advisories that the CI audit step now reports: `proxy-addr`, `zod`, `hono`, `ip-address`, `qs` and `express` among them. `npm audit --omit=dev` reports 0 vulnerabilities.
+
 ### Changed
 - The Infisical access token now reaches `infisical run` through `INFISICAL_TOKEN` in the environment, not a `--token=` argument, so it no longer shows in `/proc/<pid>/cmdline`. The app runs under `env -u INFISICAL_TOKEN -u INFISICAL_UNIVERSAL_AUTH_ACCESS_TOKEN`, so only the CLI sees the token, and the CLI is pinned to `--log-level=info` because `LOG_LEVEL=debug` otherwise makes it print its environment. `tests/entrypoint-token-env.test.mjs` runs the entrypoint against a stub CLI and asserts the token is absent from argv and from the app process.
 - The token counter builds its o200k_base encoder on first use, from `js-tiktoken/lite` plus that one rank table, instead of at require time from the full package. Token counts are unchanged. An idle process saves about 210 MB of RSS until the first count.
